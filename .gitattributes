@@ -1,0 +1,7 @@
+# 리포에는 LF로 저장한다. 체크아웃 시 Windows 기본 동작에 맡긴다.
+* text=auto eol=lf
+
+# 바이너리 픽스처·baseline은 변환하지 않는다
+*.png binary
+*.obj binary
+*.zls binary

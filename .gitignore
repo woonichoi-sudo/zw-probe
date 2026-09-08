@@ -1,0 +1,33 @@
+# Node
+node_modules/
+*.tsbuildinfo
+
+# 빌드 산출물 (zwwin.exe, zwagent.dll, 픽스처 앱)
+bin/
+obj/
+build/
+*.exe
+*.dll
+*.pdb
+*.ilk
+*.exp
+*.lib
+.vs/
+
+# 실행 산출물 — 캡처, 익스포트, 리포트
+captures/
+out/
+tmp/
+*.png.actual
+*.obj.export
+
+# 픽셀 baseline은 커밋한다 (회귀 비교의 기준이므로)
+!baselines/
+!baselines/**
+
+# 로컬 설정
+.env
+.env.local
+
+# Claude Code 개인 오버라이드
+.claude/settings.local.json

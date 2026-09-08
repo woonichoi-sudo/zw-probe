@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "permissions": {
+    "deny": [
+      "Bash(cd:*)",
+      "Bash(pushd:*)",
+      "Bash(popd:*)",
+      "Edit(//D:/z-emotion/Z-Weave/**)",
+      "Write(//D:/z-emotion/Z-Weave/**)",
+      "Edit(//d:/z-emotion/Z-Weave/**)",
+      "Write(//d:/z-emotion/Z-Weave/**)",
+      "Bash(git init:*)",
+      "Bash(git clone:*)",
+      "Bash(git worktree:*)",
+      "Bash(git submodule:*)",
+      "Bash(gh repo clone:*)",
+      "Bash(gh release download:*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|NotebookEdit|Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"D:/z-emotion/zw-probe/.claude/hooks/guard-zweave.mjs\"",
+            "timeout": 10,
+            "statusMessage": "Z-Weave 쓰기 차단 검사"
+          }
+        ]
+      }
+    ]
+  }
+}
