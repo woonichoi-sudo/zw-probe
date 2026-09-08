@@ -70,8 +70,10 @@ Claude가 이 리포에 자동으로 커밋한다. 사용자 확인을 매번 �
 **대상 앱 리포 보호 — `PreToolUse` 훅이 실제 방어선이다.** [.claude/hooks/guard-zweave.mjs](.claude/hooks/guard-zweave.mjs)가 모든 `Bash`·`Write`·`Edit`·`NotebookEdit` 호출을 검사한다. **읽기는 완전히 자유, 쓰기는 0**이고, 판단이 안 서면 막는다(fail-closed).
 
 - `Write`/`Edit`/`NotebookEdit` — 대상 경로가 Z-Weave 아래면 무조건 거부.
-- `Bash` — Z-Weave를 언급하지 않으면 관여하지 않는다. 언급하면 읽기 전용 화이트리스트(`cat`·`head`·`grep`·`rg`·`find`·`ls`·`diff`·`jq`…)만 통과하고 나머지는 전부 거부한다. `sed -i`, 출력 리다이렉션, heredoc, `cp`·`mv`·`rm`·`tee`, `powershell`, `node <스크립트>`, `git init`·`clone`·`worktree`, `gh repo clone`, 파이프·`&&`·`;` 뒷단에 숨은 쓰기, 명령 치환(`$(...)`·백틱)이 모두 거부된다. `../Z-Weave/...` 상대 탈출도 잡는다.
-- 읽기 도구(`Read`·`Grep`·`Glob`)는 손대지 않는다.
+- `Bash` — **문자열 언급이 아니라 경로 해석으로 판정한다.** 토큰 중 Z-Weave 안으로 해석되는 경로가 있을 때만 발동한다(`--flag=<경로>`와 `VAR=<경로>`의 값도 본다). 발동하면 읽기 전용 화이트리스트(`cat`·`head`·`grep`·`rg`·`find`·`ls`·`diff`·`jq`…)만 통과하고 나머지는 전부 거부한다. `sed -i`·`yq -i`, 출력 리다이렉션, heredoc, `cp`·`mv`·`rm`·`tee`, `powershell`, `node <스크립트>`, 파이프·`&&`·`;` 뒷단에 숨은 쓰기, 명령 치환(`$(...)`·백틱)이 모두 거부된다. `../Z-Weave/...` 상대 탈출은 cwd 기준으로 해석해 잡는다.
+- `git` — 리포를 갈아끼우는 플래그(`-C`·`--git-dir`·`--work-tree`·`--exec-path`)가 있으면 서브명령과 무관하게 거부한다. **공백 형태와 등호 형태를 모두 잡는다** — 사용자 스코프의 `Bash(git --git-dir:*)`는 등호 형태를 잡지 못한다(2026-09-08 실측). 그 외에는 허용 목록(`commit`·`status`·`log`·`diff`·`show`·`blame`…)만 통과하므로 `init`·`clone`·`worktree`·`submodule`·`archive`·`bundle`·`config --file`이 전부 거부된다. `commit`이 허용 목록에 있는 이유는 커밋 메시지에 "Z-Weave"가 들어가는 정상 작업을 막지 않기 위해서다.
+- `gh` — 로컬 경로가 아니라 리포 지정자(`-R z-emotion/Z-Weave`)로 대상 앱에 닿으므로, gh만 문자열 언급으로도 발동해 **읽기까지 전부** 거부한다(의도된 과차단).
+- 읽기 도구(`Read`·`Grep`·`Glob`)는 손대지 않는다. 자기 프로젝트 파일은 이름에 `zweave`가 들어가도(`guard-zweave.mjs`) 관여하지 않는다.
 
 판정은 [.claude/hooks/guard-zweave.test.mjs](.claude/hooks/guard-zweave.test.mjs)로 고정해둔다: `node --test .claude/hooks/guard-zweave.test.mjs`. **훅을 고치면 이 테스트를 먼저 돌린다.**
 

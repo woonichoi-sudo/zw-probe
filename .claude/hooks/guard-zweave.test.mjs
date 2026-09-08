@@ -92,10 +92,32 @@ test('Bash — 명령 치환은 판정 불가이므로 막는다', () => {
   assertDenied(bash('cat `ls D:/z-emotion/Z-Weave`'), '백틱 치환')
 })
 
-test('Bash — git 은 읽기 서브명령만 통과한다', () => {
+test('Bash — git 은 허용 목록의 서브명령만 통과한다', () => {
   assertPassed(bash('git log --oneline -- D:/z-emotion/Z-Weave/CMakeLists.txt'), 'git log')
   assertDenied(bash('git init D:/z-emotion/Z-Weave/probe'), 'git init')
   assertDenied(bash('git add D:/z-emotion/Z-Weave/x'), 'git add')
+})
+
+// 커밋 메시지에 대상 앱 이름이 들어가는 것은 정상 작업이다. 이게 막히면
+// `[M1] Z-Weave 창 캡처` 같은 커밋을 못 하게 되므로 commit 은 허용 목록에 둔다.
+// 리포를 갈아끼우는 플래그가 없는 git 은 항상 현재 리포에서만 동작하므로 안전하다.
+test('Bash — 커밋 메시지의 Z-Weave 언급은 막지 않는다', () => {
+  assertPassed(bash('git commit -m "[M1] Z-Weave 창 캡처 구현"'), 'git commit -m')
+})
+
+// 2026-09-08 실측으로 찾은 구멍. 사용자 스코프의 `Bash(git --git-dir:*)` 는
+// 등호 형태를 잡지 못하고(`--git-dir="..."` 이 한 토큰), 훅도 서브명령이 status 라서
+// 읽기로 통과시켰다. 그 결과 대상 앱 리포의 git 상태가 실제로 읽혔다.
+test('Bash — git 을 다른 리포로 갈아끼우는 플래그를 막는다', () => {
+  assertDenied(
+    bash('git --git-dir="D:/z-emotion/Z-Weave/.git" --work-tree="D:/z-emotion/Z-Weave" status --short'),
+    '등호 형태 --git-dir + --work-tree (실측된 구멍)',
+  )
+  assertDenied(bash('git --git-dir=D:/z-emotion/Z-Weave/.git status'), '따옴표 없는 등호 형태')
+  assertDenied(bash('git --git-dir "D:/z-emotion/Z-Weave/.git" log'), '공백 형태')
+  assertDenied(bash('git --work-tree="D:/z-emotion/Z-Weave" status'), '--work-tree 단독')
+  assertDenied(bash('git -C "D:/z-emotion/Z-Weave" status'), '-C')
+  assertDenied(bash('git --exec-path="D:/z-emotion/Z-Weave" status'), '--exec-path')
 })
 
 // 목적지 경로를 인자로 받는 서브명령들. deny 목록에는 없어서 훅이 유일한 방어선이다.
@@ -113,6 +135,21 @@ test('Bash — gh 로 Z-Weave 에 쓰는 것을 막는다', () => {
   // gh 는 읽기 계열도 막힌다(과차단). 필요하면 근거를 들고 사용자에게 허용을 받는다.
   assertDenied(bash('gh pr list -R z-emotion/Z-Weave'), 'gh pr list — 과차단이지만 닫히는 방향')
   assertPassed(bash('gh pr list -R z-emotion/zw-probe'), 'Z-Weave 무관한 gh 는 관여 안 함')
+})
+
+// 자기 프로젝트 파일을 다루는 것은 이름·내용에 Z-Weave 가 들어가도 막지 않는다.
+// (훅이 자기 테스트 실행을 막는 것을 실제로 확인한 뒤 추가했다)
+test('Bash — 자기 프로젝트 작업은 이름에 zweave 가 있어도 통과한다', () => {
+  assertPassed(bash('node --test "d:/z-emotion/zw-probe/.claude/hooks/guard-zweave.test.mjs"'), '절대경로로 자기 테스트 실행')
+  assertPassed(bash('node --test .claude/hooks/guard-zweave.test.mjs'), '상대경로로 자기 테스트 실행')
+  assertPassed(bash('cat .claude/hooks/guard-zweave.mjs'), '자기 훅 읽기')
+  assertPassed(bash('sed -i "s/Z-Weave/대상 앱/" docs/WORKLOG.md'), '자기 문서 제자리 편집')
+  assertPassed(bash('echo "Z-Weave 조사" >> docs/WORKLOG.md'), '자기 문서에 리다이렉션')
+})
+
+test('Bash — 자기 경로와 Z-Weave 경로가 섞이면 막는다', () => {
+  assertDenied(bash('cp "d:/z-emotion/zw-probe/x.txt" "D:/z-emotion/Z-Weave/y.txt"'), '자기 것 → Z-Weave 복사')
+  assertDenied(bash('node "d:/z-emotion/zw-probe/write.mjs" "D:/z-emotion/Z-Weave/y"'), '자기 스크립트로 Z-Weave 쓰기')
 })
 
 test('훅 입력이 깨지면 막는다', () => {
