@@ -7,7 +7,7 @@ import { mkdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 
 import { listWindows, shot } from './win/zwwin.ts'
-import { analyze, judgeBlank } from './image/stats.ts'
+import { analyze, judgeCapture } from './image/stats.ts'
 import type { WindowFilter } from './win/zwwin.ts'
 
 function parseArgs(argv: string[]): { verb: string; flags: Map<string, string> } {
@@ -76,20 +76,22 @@ function cmdShot(flags: Map<string, string>): number {
     height: w.height,
     data: new Uint8Array(readFileSync(raw)),
   })
-  const verdict = judgeBlank(stats)
+  const verdict = judgeCapture(w, stats)
 
   console.log(
     `픽셀  검정 ${(stats.blackRatio * 100).toFixed(1)}% · ` +
       `평균 휘도 ${stats.meanLuminance.toFixed(1)} · 색상 ${stats.distinctColors}`,
   )
 
-  if (verdict.blank) {
-    console.log(`판정  빈 캡처다 — ${verdict.reason}`)
-    console.log(
-      mode === 'printwindow'
-        ? '      PrintWindow 가 내용을 못 잡았을 수 있다. --mode screen 으로 다시 시도한다.'
-        : '      화면 캡처로도 비어 있다. 창이 가려졌거나 최소화됐는지 확인한다.',
-    )
+  if (!verdict.usable) {
+    console.log(`판정  쓸 수 없다 — ${verdict.reason}`)
+    if (w.minimized) {
+      console.log('      창을 복원한 뒤 다시 찍는다.')
+    } else if (mode === 'printwindow') {
+      console.log('      PrintWindow 가 내용을 못 잡았을 수 있다. --mode screen 으로 다시 시도한다.')
+    } else {
+      console.log('      화면 캡처로도 비어 있다. 창이 다른 창에 가려졌는지 확인한다.')
+    }
     return 2
   }
 

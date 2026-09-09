@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { analyze, bgraByteLength, isWellFormed, judgeBlank, pixelAt } from './stats.ts'
+import { analyze, bgraByteLength, isWellFormed, judgeBlank, judgeCapture, pixelAt } from './stats.ts'
 import type { Bgra } from './stats.ts'
 
 /** 모든 픽셀이 같은 색인 이미지 */
@@ -130,4 +130,36 @@ test('judgeBlank — 색이 두 개뿐이면 실패로 본다', () => {
   const v = judgeBlank(analyze(twoTone))
   assert.equal(v.blank, true)
   assert.match(v.reason, /고유 색상/)
+})
+
+// 실측에서 나온 케이스. 최소화된 Z-Weave 창이 160x28 로 찍혔고, 그 조각에
+// 메뉴 글자가 들어가 색상 19개가 나와 빈 화면 검사를 그냥 통과했다.
+test('judgeCapture — 최소화된 창은 픽셀이 멀쩡해도 사용 불가다', () => {
+  const looksFine = analyze(generated(160, 28, (i) => [i % 200, (i * 7) % 180, (i * 3) % 160]))
+  assert.equal(judgeBlank(looksFine).blank, false, '전제: 픽셀만 보면 정상이다')
+
+  const v = judgeCapture({ minimized: true, width: 160, height: 28 }, looksFine)
+  assert.equal(v.usable, false)
+  assert.match(v.reason, /최소화/)
+})
+
+test('judgeCapture — 창 상태를 픽셀보다 먼저 본다', () => {
+  // 최소화이면서 검은 화면이면 최소화가 근거로 나와야 한다. 그게 원인이므로
+  const black = analyze(solid(160, 28, 0, 0, 0))
+  const v = judgeCapture({ minimized: true, width: 160, height: 28 }, black)
+  assert.match(v.reason, /최소화/)
+})
+
+test('judgeCapture — 정상 창에 정상 픽셀이면 사용 가능하다', () => {
+  const ok = analyze(generated(400, 300, (i) => [i % 255, (i * 7) % 255, (i * 13) % 255]))
+  const v = judgeCapture({ minimized: false, width: 400, height: 300 }, ok)
+  assert.equal(v.usable, true)
+  assert.equal(v.reason, '')
+})
+
+test('judgeCapture — 정상 창인데 빈 화면이면 그 근거를 낸다', () => {
+  const black = analyze(solid(400, 300, 0, 0, 0))
+  const v = judgeCapture({ minimized: false, width: 400, height: 300 }, black)
+  assert.equal(v.usable, false)
+  assert.match(v.reason, /단색/)
 })

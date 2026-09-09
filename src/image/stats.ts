@@ -122,3 +122,40 @@ export function judgeBlank(stats: ImageStats): BlankVerdict {
   }
   return { blank: false, reason: '' }
 }
+
+/** 캡처 대상 창의 상태. judgeCapture 가 픽셀만으로는 알 수 없는 것을 보기 위해 받는다. */
+export type CaptureTarget = {
+  minimized: boolean
+  width: number
+  height: number
+}
+
+export type CaptureVerdict = {
+  usable: boolean
+  /** 사람이 읽는 근거. usable 이 true 면 빈 문자열 */
+  reason: string
+}
+
+/**
+ * 이 캡처를 판정 근거로 쓸 수 있는지.
+ *
+ * 픽셀만 보면 안 된다. 최소화된 창은 실제로 찍히기는 하지만 좌상단 아이콘 조각일
+ * 뿐이고, 그 조각에도 메뉴 글자가 들어가 색이 20개쯤 나온다 — 빈 화면 검사를
+ * 그냥 통과한다(2026-09-09 실측: 160x28, 색상 19개, blank 판정 아님).
+ * 그래서 창 상태를 픽셀보다 먼저 본다.
+ */
+export function judgeCapture(target: CaptureTarget, stats: ImageStats): CaptureVerdict {
+  if (target.minimized) {
+    return {
+      usable: false,
+      reason:
+        `창이 최소화돼 있다 (${target.width}x${target.height}). ` +
+        '캡처는 성공했지만 앱의 실제 화면이 아니다.',
+    }
+  }
+
+  const blank = judgeBlank(stats)
+  if (blank.blank) return { usable: false, reason: blank.reason }
+
+  return { usable: true, reason: '' }
+}
