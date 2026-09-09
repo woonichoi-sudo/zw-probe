@@ -31,11 +31,16 @@ namespace
 // 캡처 검증용 사분면 색. WinForms 픽스처와 같은 배치로 두어 같은 판정을 쓸 수 있다.
 // 팔레트로 칠한다 — 스타일시트는 스타일 플러그인에 영향을 받을 수 있고,
 // 여기서는 **플러그인과 무관하게 고정된 픽셀**이 필요하다.
-QLabel* colorCell(const QString& name, const QColor& c)
+QLabel* colorCell(const QString& name, const QColor& c, QWidget* parent)
 {
-	auto* cell = new QLabel();
+	// **부모를 반드시 준다.** 부모 없는 QWidget 은 최상위 위젯이 되어
+	// `QApplication::topLevelWidgets()` 에 끼어든다 — 아직 화면에 없는 위젯이
+	// 최상위로 세어져 창 구조 판정을 흐린다 (2026-09-09 실측: topLevelCount 가 2).
+	auto* cell = new QLabel(parent);
 	cell->setObjectName(name);
 	cell->setAutoFillBackground(true);
+	// 네 칸이 다 자랄 수 있어야 사분면이 균등해진다. 아래 fixtureTarget 주석 참고.
+	cell->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 	QPalette p = cell->palette();
 	p.setColor(QPalette::Window, c);
 	cell->setPalette(p);
@@ -91,24 +96,23 @@ int main(int argc, char** argv)
 	auto* grid = new QGridLayout(central);
 	grid->setContentsMargins(0, 0, 0, 0);
 	grid->setSpacing(0);
-	// 사분면을 정확히 반씩 나눈다. QLabel 은 크기 힌트가 없고 QPushButton 은 있어서
-	// 그대로 두면 행 높이가 277/23 으로 갈린다 (2026-09-09 실측). 픽셀 판정을
-	// 사분면 중심으로 하려면 균등해야 한다.
-	grid->setRowStretch(0, 1);
-	grid->setRowStretch(1, 1);
-	grid->setColumnStretch(0, 1);
-	grid->setColumnStretch(1, 1);
-	grid->addWidget(colorCell("cellTopLeft", QColor(255, 0, 0)), 0, 0);
-	grid->addWidget(colorCell("cellTopRight", QColor(0, 255, 0)), 0, 1);
-	grid->addWidget(colorCell("cellBottomLeft", QColor(0, 0, 255)), 1, 0);
+	grid->addWidget(colorCell("cellTopLeft", QColor(255, 0, 0), central), 0, 0);
+	grid->addWidget(colorCell("cellTopRight", QColor(0, 255, 0), central), 0, 1);
+	grid->addWidget(colorCell("cellBottomLeft", QColor(0, 0, 255), central), 1, 0);
 
 	// 이름으로 찾아 누르는 경로(zwprobe click --name)를 검증할 버튼.
 	// 눌리면 오른쪽 아래가 검게 바뀌므로 화면으로 확인된다.
-	auto* target = new QPushButton("fixture-target");
+	auto* target = new QPushButton("fixture-target", central);
 	target->setObjectName("fixtureTarget");
+	// **QPushButton 의 수직 정책이 Fixed 라 그 행이 자라지 못한다.** 그대로 두면
+	// 행 높이가 277/23 으로 갈린다 (2026-09-09 실측). `setRowStretch` 로는 안 고쳐진다 —
+	// stretch 는 **자랄 수 있는 항목끼리** 남는 공간을 나누는 것이고, Fixed 항목이
+	// 유일한 행은 애초에 대상이 아니다. 정책을 바꿔야 사분면이 반씩 나뉜다.
+	target->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
 	grid->addWidget(target, 1, 1);
 
-	auto* black = colorCell("cellBottomRight", QColor(0, 0, 0));
+	auto* black = colorCell("cellBottomRight", QColor(0, 0, 0), central);
+	black->hide();
 	QObject::connect(target, &QPushButton::clicked, [&, black, target]() {
 		grid->replaceWidget(target, black);
 		target->hide();

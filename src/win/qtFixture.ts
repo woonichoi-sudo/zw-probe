@@ -41,6 +41,20 @@ export function qtEnv(extra: Record<string, string> = {}): Record<string, string
   }
 }
 
+/**
+ * 그 픽스처 인스턴스의 창만 고르는 필터.
+ *
+ * **pid 로 좁혀야 한다.** `node --test` 는 테스트 **파일을 병렬로** 돌리므로, 제목만
+ * 주면 다른 파일이 띄운 픽스처의 창이 섞인다 — 2026-09-09 에 실제로 겪었다
+ * (파일별로는 통과하고 전체 스위트에서만 세 개가 실패했다).
+ *
+ * 제목도 함께 주는 이유: 콘솔 서브시스템으로 빌드했으므로 같은 pid 에 콘솔 창이
+ * 딸릴 수 있다. `zwwin.exe` 의 필터는 AND 로 걸린다.
+ */
+export function qtFilter(pid: number): { pid: number; title: string } {
+  return { pid, title: QTAPP_TITLE }
+}
+
 /** 픽스처를 실행할 수 있는가. 못 하면 이유를 돌려준다 — 테스트가 skip 사유로 쓴다. */
 export function qtFixtureMissing(): string | false {
   if (!existsSync(QTAPP_EXE)) {
