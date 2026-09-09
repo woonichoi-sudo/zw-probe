@@ -11,6 +11,8 @@ import { analyze, judgeCapture } from './image/stats.ts'
 import type { WindowFilter } from './win/zwwin.ts'
 import { findConflicts, findShortcut } from './input/shortcut.ts'
 import { loadShortcuts } from './input/shortcutFile.ts'
+import { locateLog, logDir, readEntries } from './log/logFile.ts'
+import { summarize, toSeverity } from './log/parse.ts'
 
 function parseArgs(argv: string[]): { verb: string; rest: string[]; flags: Map<string, string> } {
   const verb = argv[0] !== undefined && !argv[0].startsWith('--') ? argv[0] : ''
@@ -192,6 +194,54 @@ function cmdKey(rest: string[], flags: Map<string, string>): number {
   return 0
 }
 
+function cmdLog(flags: Map<string, string>): number {
+  const found = locateLog(flags.get('app-version') || runningAppVersion(flags))
+  if (found === null) {
+    console.error(
+      `로그 파일을 찾지 못했다. ${logDir() ?? '%LOCALAPPDATA%'} 를 확인한다. ` +
+        '대상 앱을 한 번도 실행하지 않았으면 없을 수 있다.',
+    )
+    return 1
+  }
+
+  console.log(`${found.path}`)
+  console.log(
+    `  앱 버전 ${found.appVersion} (${found.how}) · 시작 ${found.startedUtc.toISOString()} (UTC) · ${(found.sizeBytes / 1024).toFixed(0)} KB`,
+  )
+  if (found.how === 'newest') {
+    console.log('주의  실행 중인 앱 버전과 일치하는 로그가 없어 전체 최신을 골랐다.')
+  }
+
+  const min = toSeverity(flags.get('min-severity') || 'WARNING')
+  const entries = readEntries(found.path)
+  const s = summarize(entries, min)
+
+  const counts = (['FATAL', 'ASSERT', 'ERROR', 'WARNING', 'INFO', 'UNKNOWN'] as const)
+    .filter((k) => s.counts[k] > 0)
+    .map((k) => `${k} ${s.counts[k]}`)
+    .join(' · ')
+  console.log(`  항목 ${s.total}개 — ${counts || '없음'}${s.worst ? ` · 최악 ${s.worst}` : ''}`)
+
+  const tailN = Number(flags.get('tail') || '0')
+  const show = flags.has('all')
+    ? entries
+    : tailN > 0
+      ? entries.slice(-tailN)
+      : s.problems
+
+  if (show.length === 0) {
+    console.log(`\n${min} 이상 항목이 없다.`)
+    return 0
+  }
+
+  console.log(`\n${flags.has('all') || tailN > 0 ? `${show.length}개` : `${min} 이상 ${show.length}개`}:`)
+  for (const e of show) {
+    const t = e.time ? e.time.toTimeString().slice(0, 8) : '--:--:--'
+    console.log(`  ${t} [${e.severity}] ${e.classContext}: ${e.message.replace(/\n/g, '\n           ')}`)
+  }
+  return 0
+}
+
 function main(): number {
   const { verb, rest, flags } = parseArgs(process.argv.slice(2))
   switch (verb) {
@@ -203,13 +253,16 @@ function main(): number {
       return cmdShortcuts(flags)
     case 'key':
       return cmdKey(rest, flags)
+    case 'log':
+      return cmdLog(flags)
     default:
       console.error(
         '사용법:\n' +
           '  zwprobe shot      [--process 이름] [--pid N] [--title 조각] [--out 경로] [--mode screen]\n' +
           '  zwprobe windows   [--process 이름] [--pid N] [--title 조각]\n' +
           '  zwprobe shortcuts [--filter 조각]\n' +
-          '  zwprobe key <기능이름> [--process 이름] [--method post]',
+          '  zwprobe key <기능이름> [--process 이름] [--method post]\n' +
+          '  zwprobe log       [--min-severity WARNING] [--tail N] [--all]',
       )
       return 1
   }
