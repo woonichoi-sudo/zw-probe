@@ -21,11 +21,21 @@ Z-Weave(C++/Qt5 데스크톱 의상 CAD)를 **외부에서 조작·관찰·판�
 
 | 이름 | 언어 | 역할 | 상태 |
 |---|---|---|---|
-| `zwprobe` | TypeScript / Node 24 | CLI, 시나리오 실행, OBJ 파싱, 픽셀 diff, 판정 | 미착수 |
-| `zwwin.exe` | C# (Windows 내장 `csc.exe`로 빌드) | 창 찾기, `PrintWindow` 캡처, `SendInput`, UIAutomation | 미착수 |
+| `zwprobe` | TypeScript / Node 24 | CLI, 시나리오 실행, OBJ 파싱, 픽셀 diff, 판정 | **동작** — `shot`·`windows`·`key`·`shortcuts`·`log` |
+| `zwwin.exe` | C# (Windows 내장 `csc.exe`로 빌드) | 창 찾기, `PrintWindow` 캡처, `SendInput`, UIAutomation | **동작** — `windows`·`shot`·`key`. UIA 미착수 |
 | `zwagent.dll` | C++ / Qt 스타일 플러그인 | 앱 프로세스 안에서 위젯 트리, `QAction::trigger()`, `QFileDialog` 자동 처리, wait-for-idle | 미착수 (M4에서 가능성 검증) |
 
 세 개가 각각 독립 실행된다. 자세한 구조는 설계문서 §4.
+
+**빌드 산출물은 커밋되지 않는다** (`.gitignore`의 `bin/`, `*.exe`). 새 세션이나 정리 후에는 먼저 빌드한다:
+
+```
+bash tools/zwwin/build.sh       → bin/zwwin.exe
+bash fixtures/winapp/build.sh   → bin/zwfixture.exe   (픽스처 통합 테스트에 필요)
+node --test                     → 전체 스위트
+```
+
+`bin/zwfixture.exe`가 없으면 픽스처 통합 테스트는 실패가 아니라 **skip** 된다. 조용히 건너뛰므로 개수를 확인한다.
 
 ## 확정 결정
 
@@ -40,7 +50,7 @@ Z-Weave(C++/Qt5 데스크톱 의상 CAD)를 **외부에서 조작·관찰·판�
 원칙: 각 단계는 그 자체로 사용 가능하고, 다음 단계가 실패해도 남는다.
 
 - [x] **M1 · 캡처** — `zwprobe shot`으로 Z-Weave 창을 PNG 저장. **이 단계만으로 수동 업로드가 없어진다** (2026-09-09. 실앱 검증 완료, 메쉬가 있는 씬은 미확인)
-- [ ] **M2 · 입력과 텍스트 상태** — 단축키·클릭, UIA 트리 덤프, 창 제목에서 파일명·dirty 읽기, 진행 다이얼로그로 작업 중 감지, 로그 tail
+- [ ] **M2 · 입력과 텍스트 상태** — ✅ 단축키 입력, ✅ 로그 tail · ⬜ 마우스 클릭, ⬜ 창 제목 파싱(파일명·dirty), ⬜ 진행 다이얼로그로 작업 중 감지, ⬜ UIA 트리 덤프
 - [ ] **M3 · 시나리오 러너 + 픽셀 baseline** — 절차를 TS로 기술해 순차 실행, 실패 지점 자동 캡처, 정상 화면과 diff
 - [ ] **M4 · 분기점** — Qt 픽스처 앱 + hello 플러그인. ABI 불확실성 소각 **+ M5·M6의 테스트 하네스 확보**
 - [ ] **M5 · `zwagent.dll` 최소 기능** — named pipe + 위젯 트리 + `QAction::trigger()` + `QWidget::grab()`
@@ -109,13 +119,30 @@ Bash(git --git-dir=*)  Bash(git --work-tree=*)  Bash(git push:*)
 
 2026-09-08: 폴더 생성, 설계문서 작성, 테스트 전략 확정(설계문서 §11).
 
-2026-09-09: **M1 동작한다.** 실행 중인 대상 앱(Qt 5.15.6 디버그 빌드)을 1920x1040으로 캡처해 UI 텍스트와 3D 뷰포트가 **둘 다** 찍히는 것을 확인했다 — `PrintWindow` + `PW_RENDERFULLCONTENT`가 통한다. 이게 M1의 유일한 실질 리스크였다. 가려진 창도 잡히므로 자동 루프에서 대상 창을 앞으로 세울 필요가 없다. 패널의 수치 라벨까지 판독된다.
+2026-09-09: **M1 완료, M2 절반.** 테스트 68개 통과(0.8초), 작업 트리 깨끗, 커밋 9개.
 
-로그 경로와 단축키도 확정했다(설계문서 §3.6). 보호 장치는 훅에서 deny 6줄로 교체했다(위 "대상 앱 리포 보호").
+**되는 것** — `zwprobe shot`으로 대상 앱을 찍고 내가 그 PNG를 직접 본다. `zwprobe key <기능이름>`으로 단축키를 보낸다. `zwprobe log`로 앱이 낸 경고·오류를 읽는다. `zwprobe shortcuts`로 매핑을 확인한다. 전부 실앱에서 검증했다.
 
-테스트 19개 통과, 0.7초, 대상 앱 없이 돈다.
+**M1의 리스크는 소각됐다.** `PrintWindow` + `PW_RENDERFULLCONTENT`가 Qt 5.15.6 디버그 빌드의 UI와 3D 뷰포트를 둘 다 잡는다. `printwindow`와 `screen` 두 모드가 3D 영역에서 동일하게 나오는 것으로 확정했다 — GPU 콘텐츠를 못 잡았다면 두 모드가 달라야 한다. 가려진 창도 잡히므로 캡처는 창을 앞으로 세울 필요가 없다.
 
-**다음 작업** — ① 실제 메쉬가 있는 3D 화면 캡처 확인(앱에 샘플을 열어야 한다. 지금까지는 빈 씬만 확인) ② M2 착수. 로그·단축키 조사는 이미 끝나 있다.
+**M2에서 정해진 제약** — 입력은 반대다. `keybd_event`가 시스템 전역이라 **창을 활성화해야 하고, 시나리오가 도는 동안 포그라운드를 점유한다.** `PostMessage`는 수식키가 실리지 않아 조용히 다른 명령을 실행하므로 쓰지 않는다(위 "대상 앱에 대해 알아야 할 것").
+
+---
+
+### 다음 세션 시작 지점
+
+**1. 먼저 빌드하고 테스트한다** (`bin/`은 커밋되지 않는다 — 위 "구성요소" 참조).
+
+**2. 다음 작업은 M2의 남은 조각. 이 순서를 권한다.**
+
+- **창 제목 파싱 + 진행 다이얼로그 감지** — 둘 다 이미 가진 `listWindows()` 데이터로 되는 **순수 판정**이라 값싸다. 제목에서 파일명과 dirty 플래그를 뽑고(`zwQtMainWindow.cpp:2005`), 진행 다이얼로그 창의 존재로 "작업 중"을 판정한다(`zwQtMainWindow.cpp:2109`). **M3 러너가 "작업이 끝났는지" 알기 위해 반드시 필요하다** — sleep 추측을 대체하는 것이 이것이다.
+- **마우스 클릭** — 단축키가 없는 것(패널 탭, 툴바 버튼)에 필요하다.
+- **UIA 트리 덤프** — `setObjectName`이 44곳뿐이라 취약하다. 마지막에 둔다.
+
+**3. 남겨둔 것 두 개.**
+
+- **실제 메쉬가 있는 3D 화면은 아직 못 찍었다.** 지금까지 확인한 것은 빈 씬(`Untitled.zls`)의 회색 그라데이션뿐이다. 사용자가 샘플을 열어주면 찍어서 M1을 완전히 닫는다.
+- **내 프로브가 앱 상태를 하나 바꿔놨다.** `post` 실험이 오른쪽 패널을 Simulation 탭에서 **Properties 탭**으로 바꿨고, 탭 선택은 단축키가 없어 되돌리지 못했다. 마우스 클릭을 구현하면 처리할 수 있다.
 
 ## 버그 판단 경계
 
@@ -162,5 +189,7 @@ Bash(git --git-dir=*)  Bash(git --work-tree=*)  Bash(git push:*)
 - **`zwagent.dll` 로드 가능성** — M4에서 검증. 현 설계의 유일한 기술적 불확실성
 - **팀 공유 여부** — 미정. 원격 없이 로컬 `main`에서만 작업한다
 - **`ActivateSelected`와 `DeactivateSelected`가 둘 다 `Shift+D`** — `shortcut.ini` 실측. 토글로 의도된 것인지 확인 필요 (M2에서 실제로 눌러보면 드러난다)
+- **앱이 정상 동작 중에도 내는 오류 — 사용자 판단 필요.** `zwprobe log`로 확인한 것: `zw3DEnvironmentManager: Environment does not exist!`(시작 시 1회), `zsRenderTarget: clearDepth=true, but no depth buffer bound to fbo!`(반복), `zwStateIdle: GetTool(): Tool object 'zwToolSelectionRect' is not attached!`. 이것들이 의도된 소음인지 실제 결함인지는 도메인 지식이 필요하다. **판정 기준을 세우기 전에 답이 필요하다** — 정상 상태에서도 ERROR가 나오면 "로그에 ERROR가 있으면 실패"라는 규칙을 쓸 수 없다
+- **메쉬가 있는 3D 화면 캡처 미확인** — 빈 씬만 찍어봤다. 샘플 프로젝트가 열린 상태에서 한 번 찍으면 닫힌다
 
 닫힌 항목: 로그 파일 경로, 단축키 목록 (2026-09-09, 설계문서 §3.6)
