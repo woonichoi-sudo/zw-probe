@@ -5,7 +5,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { clickPoint, findNodes, findOne, isClickable, readDocumentState } from './tree.ts'
+import { activePanel, clickPoint, findNodes, findOne, isClickable, readDocumentState } from './tree.ts'
 import type { UiaDump, UiaNode } from './tree.ts'
 
 function node(p: Partial<UiaNode> = {}): UiaNode {
@@ -217,4 +217,83 @@ test('findNodes — 잘리지 않은 텍스트에는 접두사 규칙을 적용�
   // "Prop" 은 "Properties" 의 접두사지만, needle 이 더 길 때 잘림 없이 맞히면
   // 엉뚱한 요소가 걸린다. 말줄임표가 있을 때만 느슨하게 본다.
   assert.deepEqual(findNodes([node({ name: 'Prop' })], { name: 'Properties' }), [])
+})
+
+/** 실측(2026-09-09)에서 나온 구조를 최소로 재현한다. */
+function panelTree(p: {
+  dockIds?: string[]
+  /** 활성 탭의 인덱스. -1 이면 닫기 버튼을 두지 않는다 */
+  activeIndex?: number
+  labels?: string[]
+} = {}) {
+  const dockIds = p.dockIds ?? ['dock_avatar']
+  const labels = p.labels ?? ['Simulation', 'Fabric', 'Avatar', 'Draping board']
+  const activeIndex = p.activeIndex ?? 2
+
+  const nodes: UiaNode[] = []
+  // 탭 컨테이너와 라벨. 실측 좌표를 닮게 둔다.
+  let x = 1372
+  labels.forEach((name, i) => {
+    const w = 54 + name.length * 3
+    nodes.push(node({ class: 'ads::CDockWidgetTab', name: '', wx: x, wy: 24, width: w, height: 35 }))
+    nodes.push(
+      node({ automationId: 'dockWidgetTabLabel', class: 'ads::CElidingLabel', name, wx: x + 8, wy: 32, width: w - 16, height: 18 }),
+    )
+    if (i === activeIndex) {
+      // 닫기 버튼은 활성 탭 안에만 있다.
+      nodes.push(node({ automationId: 'tabCloseButton', class: 'QPushButton', wx: x + w - 26, wy: 32, width: 20, height: 18 }))
+    }
+    x += w
+  })
+  for (const id of dockIds) {
+    nodes.push(node({ class: 'ads::CDockWidget', automationId: id, wx: 1372, wy: 59, width: 550, height: 947 }))
+  }
+  // 중앙 위젯도 CDockWidget 이지만 dock_ 접두사가 아니다 — 걸러져야 한다.
+  nodes.push(node({ class: 'ads::CDockWidget', automationId: 'CentralWidget', wx: -2, wy: 24, width: 1370, height: 982 }))
+  return dump(nodes)
+}
+
+test('activePanel — 열려 있는 dock id 로 활성 탭을 안다', () => {
+  // 비활성 dock 은 UIA 트리에 아예 나오지 않는다 (실측 2026-09-09).
+  const p = activePanel(panelTree())
+  assert.equal(p.dockId, 'avatar')
+  assert.equal(p.tabName, 'Avatar')
+})
+
+test('activePanel — CentralWidget 은 패널 dock 으로 세지 않는다', () => {
+  // 같은 클래스지만 dock_ 접두사가 아니다. 세면 늘 2개가 되어 판정이 죽는다.
+  assert.equal(activePanel(panelTree({ dockIds: ['dock_properties'] })).dockId, 'properties')
+})
+
+test('activePanel — 닫기 버튼이 없으면 탭 이름을 모른다고 한다', () => {
+  const p = activePanel(panelTree({ activeIndex: -1 }))
+  assert.equal(p.dockId, 'avatar')
+  assert.equal(p.tabName, null)
+  assert.match(p.reason, /활성 탭 라벨/)
+})
+
+test('activePanel — dock 이 하나도 없으면 모른다고 한다', () => {
+  const p = activePanel(panelTree({ dockIds: [] }))
+  assert.equal(p.dockId, null)
+  assert.match(p.reason, /트리가 잘렸거나 패널이 닫혀 있다/)
+})
+
+test('activePanel — dock 이 여럿이면 고르지 않고 개수를 말한다', () => {
+  // 추측하면 조용히 틀린 탭을 활성으로 보고한다.
+  const p = activePanel(panelTree({ dockIds: ['dock_avatar', 'dock_properties'] }))
+  assert.equal(p.dockId, null)
+  assert.match(p.reason, /2개/)
+  assert.match(p.reason, /dock_avatar/)
+})
+
+test('activePanel — 잘린 탭 이름도 그대로 돌려준다', () => {
+  // 판정은 dockId 로 하고 tabName 은 사람에게 보여주는 용도다.
+  const p = activePanel(panelTree({ labels: ['Simulation', 'Properti…'], activeIndex: 1 }))
+  assert.equal(p.tabName, 'Properti…')
+})
+
+test('activePanel — 빈 트리', () => {
+  const p = activePanel(dump([]))
+  assert.equal(p.dockId, null)
+  assert.equal(p.tabName, null)
 })

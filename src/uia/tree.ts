@@ -212,3 +212,91 @@ export function readDocumentState(dump: UiaDump): DocumentState {
     reason: `헤더 텍스트 "${header.name}" 에서 읽었다.`,
   }
 }
+
+/** ADS(Advanced Docking System) 클래스 이름들. 대상 앱이 오른쪽 패널에 쓴다. */
+const DOCK_WIDGET_CLASS = 'ads::CDockWidget'
+const DOCK_TAB_CLASS = 'ads::CDockWidgetTab'
+const TAB_LABEL_ID = 'dockWidgetTabLabel'
+const TAB_CLOSE_ID = 'tabCloseButton'
+/** 패널 dock 의 AutomationId 접두사. `dock_avatar`, `dock_properties` 처럼 온다. */
+const DOCK_ID_PREFIX = 'dock_'
+
+export type ActivePanel = {
+  /**
+   * 열려 있는 dock 의 이름. `dock_avatar` → `'avatar'`. 못 알아내면 null.
+   *
+   * **이것이 가장 튼튼한 신호다.** 비활성 dock 위젯은 UIA 트리에 아예 나오지
+   * 않으므로(실측 2026-09-09: Properties 활성일 때 `dock_properties` 만, Avatar
+   * 활성일 때 `dock_avatar` 만) 남아 있는 것이 활성 탭이다. 현지화되지 않고
+   * 잘리지도 않는다.
+   */
+  dockId: string | null
+  /**
+   * 활성 탭의 라벨 텍스트. 못 알아내면 null.
+   *
+   * 닫기 버튼(`tabCloseButton`)이 활성 탭 안에만 있으므로, 그것을 품은 탭
+   * 사각형 안의 라벨을 읽는다. **잘려 있을 수 있다**(`"Properti…"`) — 사람에게
+   * 보여주는 용도이고 판정은 `dockId` 로 한다.
+   */
+  tabName: string | null
+  reason: string
+}
+
+/** 점이 노드 사각형 안인가. */
+function contains(n: UiaNode, x: number, y: number): boolean {
+  return n.hasRect && x >= n.wx && y >= n.wy && x < n.wx + n.width && y < n.wy + n.height
+}
+
+/**
+ * 오른쪽 패널에서 어느 탭이 활성인가.
+ *
+ * **왜 필요한가.** 탭 라벨의 *존재* 는 그 탭이 활성이라는 뜻이 아니다. 여섯 개 라벨이
+ * 늘 다 있다. 2026-09-09 에 시나리오의 사전 조건을 `expectElement name="Simulation"`
+ * 으로 쓴 것이 통과했는데 실제로는 Avatar 탭이 활성이었다 — **거짓 확신을 준 검사였다.**
+ */
+export function activePanel(dump: UiaDump): ActivePanel {
+  // ① dock id — 비활성 dock 은 트리에 없다.
+  const docks = dump.nodes.filter(
+    (n) => n.class === DOCK_WIDGET_CLASS && n.automationId.startsWith(DOCK_ID_PREFIX),
+  )
+  const dockId =
+    docks.length === 1 ? docks[0]!.automationId.slice(DOCK_ID_PREFIX.length) || null : null
+
+  // ② 탭 이름 — 닫기 버튼을 품은 탭이 활성이다.
+  const close = dump.nodes.find((n) => n.automationId === TAB_CLOSE_ID && n.hasRect)
+  let tabName: string | null = null
+  if (close !== undefined) {
+    const cx = close.wx + Math.floor(close.width / 2)
+    const cy = close.wy + Math.floor(close.height / 2)
+    const tab = dump.nodes.find((n) => n.class === DOCK_TAB_CLASS && contains(n, cx, cy))
+    if (tab !== undefined) {
+      const label = dump.nodes.find(
+        (n) =>
+          n.automationId === TAB_LABEL_ID &&
+          n.hasRect &&
+          n.wx >= tab.wx &&
+          n.wx < tab.wx + tab.width,
+      )
+      if (label !== undefined && label.name !== '') tabName = label.name
+    }
+  }
+
+  const notes: string[] = []
+  if (dockId === null) {
+    notes.push(
+      docks.length === 0
+        ? `${DOCK_ID_PREFIX}* dock 위젯이 트리에 없다 (트리가 잘렸거나 패널이 닫혀 있다)`
+        : `${DOCK_ID_PREFIX}* dock 이 ${docks.length}개다: ${docks.map((d) => d.automationId).join(', ')}`,
+    )
+  }
+  if (tabName === null) notes.push('활성 탭 라벨을 찾지 못했다')
+
+  return {
+    dockId,
+    tabName,
+    reason:
+      notes.length === 0
+        ? `dock=${dockId}, 탭="${tabName}"`
+        : `${dockId !== null ? `dock=${dockId}` : ''}${tabName !== null ? ` 탭="${tabName}"` : ''} (${notes.join('; ')})`.trim(),
+  }
+}

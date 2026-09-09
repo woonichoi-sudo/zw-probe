@@ -61,6 +61,17 @@ export type Step =
   | { do: 'expectDoc'; fileName?: string; dirty?: boolean }
   /** 요소가 있는가 / 없는가 */
   | { do: 'expectElement'; name?: string; id?: string; class?: string; type?: string; present?: boolean }
+  /**
+   * 오른쪽 패널에서 어느 탭이 활성인가.
+   *
+   * **`expectElement` 로는 이걸 확인할 수 없다** — 탭 라벨 여섯 개가 어느 탭이
+   * 활성이든 늘 다 있다. 2026-09-09 에 시나리오 사전 조건을
+   * `expectElement name="Simulation"` 으로 썼더니 통과했는데 실제로는 Avatar 탭이
+   * 활성이었다. **거짓 확신을 주는 검사였다.**
+   *
+   * `dockId` 가 튼튼하다(현지화·잘림 없음). `tabName` 은 사람이 읽기 좋지만 잘릴 수 있다.
+   */
+  | { do: 'expectPanel'; dockId?: string; tabName?: string }
 
 export type Scenario = {
   name: string
@@ -115,6 +126,15 @@ export function describeStep(step: Step): string {
         .filter((s) => s !== '')
         .join(' ')
       return `expectDoc ${parts}`
+    }
+    case 'expectPanel': {
+      const parts = [
+        step.dockId !== undefined ? `dock=${step.dockId}` : '',
+        step.tabName !== undefined ? `탭="${step.tabName}"` : '',
+      ]
+        .filter((s) => s !== '')
+        .join(' ')
+      return `expectPanel ${parts}`
     }
     case 'expectElement': {
       const by = [
@@ -283,6 +303,12 @@ export function validateScenario(sc: Scenario, ctx: ValidationContext = {}): Val
       case 'expectElement': {
         if (!describeQueryFields(step)) {
           push('expectElement 에 name·id·class·type 중 하나는 있어야 한다.')
+        }
+        break
+      }
+      case 'expectPanel': {
+        if (step.dockId === undefined && step.tabName === undefined) {
+          push('expectPanel 에 dockId 나 tabName 중 하나는 있어야 한다.')
         }
         break
       }

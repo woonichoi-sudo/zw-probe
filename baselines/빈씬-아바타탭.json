@@ -1,0 +1,15 @@
+{
+  "format": "bgra8",
+  "width": 1920,
+  "height": 1040,
+  "takenAt": "2026-09-09T07:14:10.913Z",
+  "mode": "printwindow",
+  "window": {
+    "title": "z-weave",
+    "class": "Qt5156dQWindowIcon",
+    "pid": 7900,
+    "fileVersion": "5.0.34",
+    "width": 1920,
+    "height": 1040
+  }
+}

@@ -3,8 +3,9 @@
 //   node src/cli.ts shot [--process z-weave] [--pid N] [--title 조각] [--out 경로]
 //   node src/cli.ts windows [--process z-weave]
 
-import { mkdirSync, readFileSync, statSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 import { TARGET_PROCESS, click, listWindows, sendKey, shot, uiaTree } from './win/zwwin.ts'
 import { analyze, judgeCapture } from './image/stats.ts'
@@ -18,8 +19,10 @@ import { locateLog, logDir, readEntries } from './log/logFile.ts'
 import { summarize, toSeverity } from './log/parse.ts'
 import { judgeActivity, styleNames } from './win/windowState.ts'
 import { judgeClick } from './input/click.ts'
-import { clickPoint, findNodes, findOne, readDocumentState } from './uia/tree.ts'
+import { activePanel, clickPoint, findNodes, findOne, readDocumentState } from './uia/tree.ts'
 import type { NodeQuery } from './uia/tree.ts'
+import { BASELINE_DIR, listBaselines, runScenario } from './scenario/run.ts'
+import type { Scenario } from './scenario/steps.ts'
 
 function parseArgs(argv: string[]): { verb: string; rest: string[]; flags: Map<string, string> } {
   const verb = argv[0] !== undefined && !argv[0].startsWith('--') ? argv[0] : ''
@@ -455,6 +458,174 @@ function cmdDoc(flags: Map<string, string>): number {
   return doc.dirty === true ? 3 : 0
 }
 
+/**
+ * 시나리오 파일을 실행한다. 파일은 TS 모듈이고 `Scenario` 를 export 한다 —
+ * `export default` 또는 `export const scenario`.
+ *
+ * TS 로 둔 이유: 편집기가 단계 타입을 검사해주고, 사용자가 직접 고치는 부분이
+ * TS 라는 것이 이 프로젝트의 스택 결정이다(CLAUDE.md).
+ *
+ * 종료 코드: 0=전부 통과, 2=실패한 단계 있음, 1=시나리오를 못 읽거나 검증 거부.
+ */
+async function cmdRun(rest: string[], flags: Map<string, string>): Promise<number> {
+  const file = rest[0]
+  if (file === undefined) {
+    console.error('시나리오 파일이 필요하다: zwprobe run scenarios/foo.ts')
+    return 1
+  }
+
+  const path = resolve(file)
+  let mod: Record<string, unknown>
+  try {
+    mod = (await import(pathToFileURL(path).href)) as Record<string, unknown>
+  } catch (err) {
+    console.error(`시나리오를 읽지 못했다: ${path}\n  ${err instanceof Error ? err.message : String(err)}`)
+    return 1
+  }
+
+  const sc = (mod.default ?? mod.scenario) as Scenario | undefined
+  if (sc === undefined || typeof sc !== 'object' || !Array.isArray((sc as Scenario).steps)) {
+    console.error(
+      `${path} 가 시나리오를 export 하지 않았다.\n` +
+        '  export default { name, what, steps } 또는 export const scenario = {...} 여야 한다.',
+    )
+    return 1
+  }
+
+  console.log('주의  시나리오가 도는 동안 포그라운드를 점유한다. 다른 창을 만지면 입력이 그쪽으로 간다.')
+  console.log('')
+
+  const r = await runScenario(sc, {
+    filter: filterFrom(flags),
+    ...(flags.has('out') ? { outDir: flags.get('out')! } : {}),
+    ...(flags.has('baselines') ? { baselineDir: flags.get('baselines')! } : {}),
+    ...(flags.has('keep-going') ? { keepGoing: true } : {}),
+    onProgress: (line) => console.log(line),
+  })
+
+  if (r.rejected !== null) {
+    console.error(`\n시작하지 않았다 — 시나리오에 문제가 ${r.rejected.length}개 있다:`)
+    for (const line of r.rejected) console.error(`  ${line}`)
+    console.error('\n앱을 조작하기 전에 거부했다. 앱 상태는 그대로다.')
+    return 1
+  }
+
+  console.log('')
+  for (const line of r.summary.lines) console.log(line)
+  console.log(`\n산출물  ${r.outDir}`)
+  return r.summary.failed > 0 ? 2 : 0
+}
+
+/**
+ * baseline 을 뜬다. 지금 화면이 "정상" 이라는 것을 사람이 확인한 상태에서 부른다.
+ *
+ * **덮어쓰기는 명시해야 한다.** baseline 을 무심코 덮으면 회귀가 정상으로 굳는다 —
+ * 이 도구에서 가장 조용히 나쁜 실패다.
+ */
+function cmdBaseline(rest: string[], flags: Map<string, string>): number {
+  const dir = flags.get('dir') || BASELINE_DIR
+  const name = flags.get('save') ?? rest[0]
+
+  if (name === undefined) {
+    const names = listBaselines(dir)
+    console.log(`${resolve(dir)}`)
+    if (names.length === 0) {
+      console.log('  baseline 이 없다. `zwprobe baseline <이름>` 으로 지금 화면을 뜬다.')
+      return 0
+    }
+    for (const n of names) {
+      try {
+        const c = readCapture(join(dir, n))
+        console.log(
+          `  ${n.padEnd(24)} ${c.meta.width}x${c.meta.height}  앱 ${c.meta.window.fileVersion || '?'}  ${c.meta.takenAt}`,
+        )
+      } catch (err) {
+        console.log(`  ${n.padEnd(24)} 읽을 수 없다 — ${err instanceof Error ? err.message : String(err)}`)
+      }
+    }
+    return 0
+  }
+
+  if (!/^[A-Za-z0-9._가-힣-]+$/.test(name)) {
+    console.error(`baseline 이름에 파일 이름으로 쓸 수 없는 문자가 있다: "${name}"`)
+    return 1
+  }
+
+  const base = join(resolve(dir), name)
+  if (existsSync(`${base}.json`) && !flags.has('force')) {
+    console.error(
+      `baseline "${name}" 이 이미 있다. 덮어쓰려면 --force 를 준다.\n` +
+        '  무심코 덮으면 회귀가 정상으로 굳는다 — 지금 화면이 정말 정상인지 먼저 본다.',
+    )
+    return 1
+  }
+
+  mkdirSync(resolve(dir), { recursive: true })
+  const info = shot({ ...targetFilter(flags), png: `${base}.png`, raw: `${base}.bgra` })
+  const w = info.window
+  writeCaptureMeta(base, {
+    format: 'bgra8',
+    width: w.width,
+    height: w.height,
+    takenAt: new Date().toISOString(),
+    mode: info.mode,
+    window: {
+      title: w.title,
+      class: w.class,
+      pid: w.pid,
+      fileVersion: w.fileVersion,
+      width: w.width,
+      height: w.height,
+    },
+  })
+
+  console.log(`baseline  ${name} ← ${w.width}x${w.height} 앱 ${w.fileVersion || '?'}`)
+  console.log(`저장      ${base}.png / .bgra / .json`)
+  console.log('확인      PNG 를 직접 보고 이 화면이 정말 정상인지 판단한다.')
+  return 0
+}
+
+/**
+ * 두 캡처를 비교한다. baseline 실패를 손으로 파볼 때 쓴다.
+ *
+ * 종료 코드: 0=같다, 2=다르다, 1=비교할 수 없다.
+ */
+function cmdDiff(rest: string[], flags: Map<string, string>): number {
+  const [a, b] = rest
+  if (a === undefined || b === undefined) {
+    console.error(
+      '두 캡처가 필요하다: zwprobe diff <a> <b>\n' +
+        '  이름은 확장자 없이 준다 (.png/.bgra/.json 셋이 함께 다닌다).\n' +
+        '  baseline 은 `zwprobe diff baselines/빈씬 runs/.../03-actual` 처럼 경로로 준다.',
+    )
+    return 1
+  }
+
+  let left, right
+  try {
+    left = readCapture(a)
+    right = readCapture(b)
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err))
+    return 1
+  }
+
+  const compat = checkBaseline(left.meta, right.meta)
+  for (const w of compat.warnings) console.log(`주의  ${w}`)
+
+  const tolerance = flags.has('tolerance') ? Number(flags.get('tolerance')) : undefined
+  const d = diff(left.img, right.img, tolerance !== undefined ? { tolerance } : {})
+  const max = flags.has('max-changed') ? Number(flags.get('max-changed')) : 0
+  const v = judgeSame(d, max)
+
+  console.log(`왼쪽  ${left.meta.width}x${left.meta.height}  앱 ${left.meta.window.fileVersion || '?'}  ${left.meta.takenAt}`)
+  console.log(`오른쪽 ${right.meta.width}x${right.meta.height}  앱 ${right.meta.window.fileVersion || '?'}  ${right.meta.takenAt}`)
+  console.log(`판정  ${v.same ? '같다' : '다르다'} — ${v.reason}`)
+
+  if (!d.comparable) return 1
+  return v.same ? 0 : 2
+}
+
 function cmdLog(flags: Map<string, string>): number {
   const found = locateLog(flags.get('app-version') || runningAppVersion(flags))
   if (found === null) {
@@ -503,7 +674,7 @@ function cmdLog(flags: Map<string, string>): number {
   return 0
 }
 
-function main(): number {
+async function main(): Promise<number> {
   const { verb, rest, flags } = parseArgs(process.argv.slice(2))
   switch (verb) {
     case 'windows':
@@ -524,26 +695,38 @@ function main(): number {
       return cmdUia(flags)
     case 'doc':
       return cmdDoc(flags)
+    case 'run':
+      return cmdRun(rest, flags)
+    case 'baseline':
+      return cmdBaseline(rest, flags)
+    case 'diff':
+      return cmdDiff(rest, flags)
     default:
       console.error(
         '사용법:\n' +
-          '  zwprobe shot      [--process 이름] [--pid N] [--title 조각] [--out 경로] [--mode screen]\n' +
-          '  zwprobe windows   [--process 이름] [--pid N] [--title 조각]\n' +
-          '  zwprobe shortcuts [--filter 조각]\n' +
-          '  zwprobe key <기능이름> [--process 이름] [--method post]\n' +
-          '  zwprobe log       [--min-severity WARNING] [--tail N] [--all]\n' +
-          '  zwprobe state     [--process 이름] [--pid N]   (0=idle 3=busy 1=못 찾음)\n' +
-          '  zwprobe click <x> <y> [--button right] [--double]   좌표는 shot 의 PNG 기준\n' +
-          '  zwprobe click --name "Simulation"   UIA 로 찾아 한가운데를 누른다\n' +
-          '  zwprobe uia       [--name X] [--id X] [--class X] [--type X] [--depth N] [--max N]\n' +
-          '  zwprobe doc       열린 파일명과 dirty (0=저장됨 3=변경있음 1=못 읽음)',
+          '  관찰\n' +
+          '    zwprobe shot      [--process 이름] [--pid N] [--title 조각] [--out 경로] [--mode screen]\n' +
+          '    zwprobe windows   [--process 이름] [--pid N] [--title 조각]\n' +
+          '    zwprobe state     [--process 이름] [--pid N]   (0=idle 3=busy 1=못 찾음)\n' +
+          '    zwprobe uia       [--name X] [--id X] [--class X] [--type X] [--depth N] [--max N]\n' +
+          '    zwprobe doc       열린 파일명과 dirty (0=저장됨 3=변경있음 1=못 읽음)\n' +
+          '    zwprobe log       [--min-severity WARNING] [--tail N] [--all]\n' +
+          '  조작 — 포그라운드를 점유한다\n' +
+          '    zwprobe key <기능이름> [--process 이름] [--method post]\n' +
+          '    zwprobe shortcuts [--filter 조각]\n' +
+          '    zwprobe click <x> <y> [--button right] [--double]   좌표는 shot 의 PNG 기준\n' +
+          '    zwprobe click --name "Simulation"   UIA 로 찾아 한가운데를 누른다\n' +
+          '  시나리오\n' +
+          '    zwprobe run <파일.ts> [--out 폴더] [--keep-going]   (0=통과 2=실패 1=거부)\n' +
+          '    zwprobe baseline [<이름>] [--force] [--dir 폴더]    이름 없으면 목록\n' +
+          '    zwprobe diff <a> <b> [--tolerance N] [--max-changed 0.01]  (0=같다 2=다르다)',
       )
       return 1
   }
 }
 
 try {
-  process.exitCode = main()
+  process.exitCode = await main()
 } catch (err) {
   console.error(err instanceof Error ? err.message : String(err))
   process.exitCode = 1

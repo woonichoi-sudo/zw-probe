@@ -249,3 +249,23 @@ test('summarizeRun — 단계 번호는 1부터 보인다', () => {
   const s = summarizeRun(sc([]), [result({ stepIndex: 0, outcome: 'fail', description: 'x' })])
   assert.ok(s.lines.some((l) => /첫 실패   1번째/.test(l)))
 })
+
+test('validateScenario — expectPanel 은 확인할 것이 하나는 있어야 한다', () => {
+  assert.equal(validateScenario(sc([{ do: 'expectPanel' }])).length, 1)
+  assert.deepEqual(validateScenario(sc([{ do: 'expectPanel', dockId: 'avatar' }])), [])
+  assert.deepEqual(validateScenario(sc([{ do: 'expectPanel', tabName: 'Avatar' }])), [])
+})
+
+test('describeStep — expectPanel', () => {
+  assert.equal(describeStep({ do: 'expectPanel', dockId: 'avatar' }), 'expectPanel dock=avatar')
+  assert.equal(
+    describeStep({ do: 'expectPanel', dockId: 'avatar', tabName: 'Avatar' }),
+    'expectPanel dock=avatar 탭="Avatar"',
+  )
+  assert.doesNotMatch(describeStep({ do: 'expectPanel', tabName: 'Avatar' }), /undefined/)
+})
+
+test('expectPanel 은 동작 단계가 아니다 — 전후 비교를 붙이지 않는다', () => {
+  assert.equal(isAction({ do: 'expectPanel', dockId: 'avatar' }), false)
+  assert.equal(wantsChange({ do: 'expectPanel', dockId: 'avatar' }), false)
+})

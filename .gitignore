@@ -31,3 +31,6 @@ tmp/
 
 # Claude Code 개인 오버라이드
 .claude/settings.local.json
+
+# 시나리오 실행 산출물. baseline 은 커밋하지만 실행 결과는 안 한다
+runs/
