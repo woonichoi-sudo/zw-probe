@@ -15,6 +15,8 @@ const REAL = {
   pid: 27132,
   qtCompiled: '5.15.6',
   qtRuntime: '5.15.6',
+  attempts: 1,
+  sawUi: true,
   writtenAt: '2026-09-09T08:00:00Z',
   appFilePath: 'D:/z-emotion/zw-probe/bin/zwqtfixture.exe',
   topLevelCount: 1,

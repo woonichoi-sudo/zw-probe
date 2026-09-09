@@ -70,12 +70,26 @@ QJsonObject describeWidget(const QWidget* w, int depth, int maxDepth, int* budge
 	return o;
 }
 
+/// 보이는 최상위 위젯이 하나라도 있는가. UI 가 실제로 떴는지의 기준이다.
+bool haveVisibleUi()
+{
+	for (const QWidget* w : QApplication::topLevelWidgets())
+	{
+		if (w->isVisible()) return true;
+	}
+	return false;
+}
+
 /// 로드됐다는 사실과 위젯 트리를 파일로 남긴다.
-void writeHello(const QString& styleKey)
+void writeHello(const QString& styleKey, int attempts, bool sawUi)
 {
 	QJsonObject root;
 	root[QStringLiteral("loaded")] = true;
 	root[QStringLiteral("styleKey")] = styleKey;
+	// 몇 번째 시도에 썼는지, 그때 UI 가 실제로 떠 있었는지. 대상 앱은 스타일이
+	// 만들어진 뒤에도 한참 뒤에 메인 창이 생기므로 이 둘이 있어야 트리를 믿을 수 있다.
+	root[QStringLiteral("attempts")] = attempts;
+	root[QStringLiteral("sawUi")] = sawUi;
 	root[QStringLiteral("pid")] = static_cast<qint64>(QCoreApplication::applicationPid());
 	// **컴파일 시점과 런타임 Qt 버전을 둘 다 싣는다.** 다르면 ABI 가 어긋난 것이고,
 	// 지금은 동작해도 나중에 조용히 깨진다.
@@ -113,6 +127,35 @@ void writeHello(const QString& styleKey)
 	f.write(QJsonDocument(root).toJson(QJsonDocument::Indented));
 	f.close();
 }
+
+/// 최대 시도 횟수 × 간격 = 기다리는 시간. 대상 앱은 시작이 느리다.
+constexpr int kPollIntervalMs = 250;
+constexpr int kMaxAttempts = 60; // 15초
+
+/**
+ * UI 가 뜰 때까지 기다렸다가 보고한다.
+ *
+ * **한 번만 보면 안 된다.** 스타일은 QApplication 초기화 중에 만들어지고, 대상 앱은
+ * 그 뒤에도 메인 창이 생기기 전까지 이벤트 루프를 여러 번 돌린다
+ * (`zwAppZWeave.cpp:234` 주석이 그 사실을 말한다). 0ms 단발로 보면 빈 트리를 잡는다.
+ *
+ * 보이는 최상위 위젯이 생기면 즉시, 안 생기면 상한에서 그대로 보고한다 — **못 봤다는
+ * 사실도 보고해야 한다.** 아무 파일도 안 쓰면 밖에서는 "로드 실패" 와 구분되지 않는다.
+ */
+void scheduleHello(const QString& styleKey)
+{
+	auto* timer = new QTimer(QCoreApplication::instance());
+	timer->setInterval(kPollIntervalMs);
+	QObject::connect(timer, &QTimer::timeout, timer, [timer, styleKey, attempts = 0]() mutable {
+		attempts++;
+		const bool sawUi = haveVisibleUi();
+		if (!sawUi && attempts < kMaxAttempts) return;
+		writeHello(styleKey, attempts, sawUi);
+		timer->stop();
+		timer->deleteLater();
+	});
+	timer->start();
+}
 } // namespace
 
 class ZwAgentStylePlugin : public QStylePlugin
@@ -129,11 +172,16 @@ public:
 		}
 
 		// 위젯 트리는 지금 없다 — 스타일은 QApplication 초기화 중에 만들어진다.
-		// 이벤트 루프가 돌기 시작한 뒤로 미뤄서 본다. 0ms 단발 타이머가 그 지점이다.
-		QTimer::singleShot(0, [key]() { writeHello(key); });
+		// UI 가 뜰 때까지 기다렸다가 본다. 근거는 scheduleHello 주석.
+		scheduleHello(key);
 
 		// **화면을 바꾸지 않는다.** 프로브가 대상 앱의 외관을 바꾸면 픽셀 baseline 이
 		// 전부 무효가 된다. 구체적인 기본 스타일을 감싼 프록시를 돌려준다 —
+		//
+		// 대상 앱에서는 이것조차 쓰이지 않는다: zwAppZWeave.cpp:259 가
+		// `QApplication::setStyle(new zwStyle)` 로 스타일을 무조건 덮어쓴다. 진입은
+		// 되고(Qt 가 초기화 중에 create 를 부른다) 우리 스타일 객체만 버려지므로,
+		// 보고를 스타일 객체 수명에 묶지 않은 것이 중요하다 — 타이머는 qApp 소유다.
 		// 여기서 우리 키로 QStyleFactory::create 를 부르면 무한 재귀가 된다.
 		QStyle* base = QStyleFactory::create(QStringLiteral("windowsvista"));
 		if (base == nullptr) base = QStyleFactory::create(QStringLiteral("windows"));

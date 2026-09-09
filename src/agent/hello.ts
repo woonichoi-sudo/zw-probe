@@ -20,6 +20,15 @@ export type AgentWidget = {
 export type AgentHello = {
   loaded: boolean
   styleKey: string
+  /** 보고까지 몇 번 폴링했는가. 대상 앱은 시작이 느려 여러 번 돈다 */
+  attempts: number
+  /**
+   * 보고 시점에 보이는 최상위 위젯이 있었는가.
+   *
+   * **false 면 위젯 트리를 믿을 수 없다.** 상한까지 기다려도 UI 가 안 뜬 것이므로
+   * 트리가 비어 있는 것은 "위젯이 없다" 가 아니라 "아직 안 만들어졌다" 다.
+   */
+  sawUi: boolean
   pid: number
   /** 플러그인을 컴파일할 때의 Qt 버전 (QT_VERSION_STR) */
   qtCompiled: string
@@ -94,6 +103,8 @@ export function parseAgentHello(raw: unknown): ParsedHello {
     hello: {
       loaded: true,
       styleKey: str(h.styleKey),
+      attempts: num(h.attempts, -1),
+      sawUi: bool(h.sawUi),
       pid: num(h.pid),
       qtCompiled: str(h.qtCompiled),
       qtRuntime: str(h.qtRuntime),

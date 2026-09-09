@@ -90,6 +90,10 @@ test('zwagent.dll 이 Qt 픽스처 앱에 로드되고 위젯 트리를 본다',
     assert.ok(h.pid > 0)
 
     // ④ **살아 있는 위젯 트리를 본다. 이것이 M5 의 핵심 능력이다.**
+    // sawUi 가 false 면 트리가 빈 이유가 "위젯이 없다" 가 아니라 "아직 안 만들어졌다"
+    // 이므로 아래 단정이 의미를 잃는다. 먼저 그것을 확인한다.
+    assert.equal(h.sawUi, true, `UI 가 뜬 뒤에 보고해야 한다 (시도 ${h.attempts}회)`)
+    assert.ok(h.attempts >= 1, `시도 횟수가 실려야 한다 — 실제 ${h.attempts}`)
     assert.equal(h.topLevelCount, 1, `최상위 위젯이 하나여야 한다 — 실제 ${h.topLevelCount}개`)
     const target = findWidgets(h.topLevelWidgets, 'fixtureTarget')
     assert.equal(target.length, 1, 'fixtureTarget 을 트리에서 찾아야 한다')
