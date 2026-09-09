@@ -23,6 +23,7 @@
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -116,6 +117,11 @@ void writeHello(const QString& styleKey, int attempts, bool sawUi)
 	root[QStringLiteral("widgetBudgetLeft")] = budget;
 
 	const QString path = helloPath();
+	// 상위 폴더를 만들어 둔다. `ZWAGENT_HELLO` 로 `runs/…` 같은 경로를 받는 것이
+	// 자연스러운데 그 폴더는 커밋되지 않아 없을 수 있다. 없어서 못 쓰면 밖에서는
+	// **"로드 실패" 와 구분되지 않는다** — 원인이 전혀 다른데도 같아 보인다.
+	QDir().mkpath(QFileInfo(path).absolutePath());
+
 	QFile f(path);
 	if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate))
 	{

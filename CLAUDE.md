@@ -21,7 +21,7 @@ Z-Weave(C++/Qt5 데스크톱 의상 CAD)를 **외부에서 조작·관찰·판�
 
 | 이름 | 언어 | 역할 | 상태 |
 |---|---|---|---|
-| `zwprobe` | TypeScript / Node 24 | CLI, 시나리오 실행, OBJ 파싱, 픽셀 diff, 판정 | **동작** — 관찰 `shot`·`windows`·`state`·`uia`·`doc`·`log` / 조작 `key`·`click`·`shortcuts` / 시나리오 `run`·`baseline`·`diff` |
+| `zwprobe` | TypeScript / Node 24 | CLI, 시나리오 실행, OBJ 파싱, 픽셀 diff, 판정 | **동작** — 관찰 `shot`·`windows`·`state`·`uia`·`doc`·`log` / 조작 `key`·`click`·`shortcuts` / 시나리오 `run`·`baseline`·`diff` / 에이전트 `agent` |
 | `zwwin.exe` | C# (Windows 내장 `csc.exe`로 빌드) | 창 찾기, `PrintWindow` 캡처, `SendInput`, UIAutomation | **동작** — `windows`·`shot`·`key`·`click`·`uia` |
 | `zwagent.dll` | C++ / Qt 스타일 플러그인 | 앱 프로세스 안에서 위젯 트리, `QAction::trigger()`, `QFileDialog` 자동 처리, wait-for-idle | **로드 확인** — hello 플러그인이 Qt 픽스처에서 위젯 트리를 읽는다. 실앱 미확인(재시작 필요) |
 
@@ -128,7 +128,7 @@ Bash(git --git-dir=*)  Bash(git --work-tree=*)  Bash(git push:*)
 
 2026-09-08: 폴더 생성, 설계문서 작성, 테스트 전략 확정(설계문서 §11).
 
-2026-09-09: **M1~M4 완료. 외부 루프가 성립했고, 프로세스 안으로 들어가는 길도 확인됐다.** 테스트 212개 통과, 실앱 시나리오 10/10, 작업 트리 깨끗, 커밋 23개.
+2026-09-09: **M1~M4 완료. 외부 루프가 성립했고, 프로세스 안으로 들어가는 길도 확인됐다.** 테스트 212개 통과, 실앱 시나리오 10/10, 작업 트리 깨끗, 커밋 27개.
 
 **M4에서 확인된 것** — `zwagent.dll`이 `-style zwagent`로 로드되고, Qt 5.15.6 컴파일·런타임이 일치하고, **살아 있는 위젯 트리를 objectName·클래스·geometry까지 읽는다.** 현 설계의 유일한 기술적 불확실성이 소각됐다. Qt 픽스처(`fixtures/qtapp`)로 확인했고 **실앱은 아직 안 얹었다** — 앱 재시작이 필요하다(아래 "다음 세션 시작 지점").
 
@@ -151,6 +151,7 @@ Bash(git --git-dir=*)  Bash(git --work-tree=*)  Bash(git push:*)
 | `run <파일.ts>` | 시나리오 실행 (0=통과 2=실패 1=시작 전 거부) | ✅ 10/10 |
 | `baseline [이름]` | 지금 화면을 정답으로 저장. 이름 없으면 목록 | ✅ |
 | `diff <a> <b>` | 두 캡처 픽셀 비교 (0=같다 2=다르다) | ✅ |
+| `agent` | `zwagent.dll` 의 hello 를 읽어 로드·ABI·위젯 트리 보고 | ⬜ Qt 픽스처만 |
 
 **좌표 클릭은 실앱에서 아직 안 했다** (`--name` 은 했다). CAD 앱의 임의 좌표 클릭은 형상을 만들 수 있어 되돌리기 어렵다. 픽스처에서 좌표계까지 검증돼 있으므로 실앱 확인은 값이 낮고 위험은 실재한다. 필요할 때 좌표를 찍어 사용자 확인을 받고 한다.
 
@@ -176,30 +177,71 @@ Bash(git --git-dir=*)  Bash(git --work-tree=*)  Bash(git push:*)
 
 ### 다음 세션 시작 지점
 
-**1. 먼저 빌드하고 테스트한다** (`bin/`은 커밋되지 않는다 — 위 "구성요소" 참조).
+M1~M4가 끝났고 **막힌 것은 없다.** 다음 작업은 셋 중에 고르는 문제이고, 아래 A·B가 사용자 입력을 기다린다.
 
-**2. 갈림길이다. M5로 넘어가기 전에 M1~M3을 실제 버그에 써보는 것을 권한다.**
+**0. 먼저 빌드하고 테스트한다.** 위 "구성요소"의 네 줄 + `node --test`. `skipped 0`을 확인한다 — 빌드가 없으면 통합 테스트가 조용히 건너뛴다. 기준값: **테스트 212개 통과, 커밋 27개, 작업 트리 깨끗.**
 
-**M5의 API를 지금 확정하지 않는다는 결정**(위 "확정 결정")이 바로 이 지점을 위한 것이었다. M4로 가능성은 확인됐지만, **무엇을 만들지는 실사용이 정한다.**
+```
+bash tools/zwwin/build.sh && bash fixtures/winapp/build.sh \
+  && bash fixtures/qtapp/build.sh && bash tools/zwagent/build.sh && node --test
+```
 
-실사용에 필요한 것은 **사용자가 재현 절차를 주는 것**이다. 지금 있는 시나리오([scenarios/panel-toggle.ts](scenarios/panel-toggle.ts))는 도구를 검증하려고 쓴 것이고 실제 버그를 겨냥하지 않는다. 실제 버그 하나를 시나리오로 적어 돌려보면 부족한 단계 타입이 드러나고, 그게 M5 API 설계의 입력이다.
+---
 
-**M5가 왜 필요한지는 이미 두 군데서 분명해졌다.** ① 툴바 버튼에 이름이 없어(`zwQtButton`이 `name=""`) 이름으로 누를 수 없고 좌표뿐이다 — `QAction` 텍스트로 닿으면 해결된다. ② `state`가 진행 다이얼로그와 입력 대기 다이얼로그를 구분하지 못한다 — 프로세스 안에서는 다이얼로그 클래스를 그대로 볼 수 있다.
+#### A. 실앱에 `zwagent.dll`을 얹어 확인한다 — **사용자 승인 대기 중**
 
-**3. 실앱에 `zwagent.dll`을 얹는 것은 앱 재시작이 필요하다.** 사용자 승인을 받고 한다.
+지난 세션에서 물어봤고 답을 못 받았다. **Z-Weave를 재시작해야 하기 때문에** 내가 임의로 못 한다.
 
-절차는 이렇다. `-style zwagent`로 띄우고 `ZWAGENT_HELLO`로 보고 경로를 주면 된다. 플러그인을 찾게 하는 방법은 두 가지고, **둘 다 대상 앱 리포에 파일을 만들지 않는다**:
-- `QT_PLUGIN_PATH`에 이 리포의 `bin/plugins`를 넣는다 (권장 — 아무것도 복사하지 않는다)
-- 또는 `cmake_build/bin/Debug/styles/`에 DLL을 복사한다 (절대 규칙 2의 명시된 예외. 빌드 산출물 폴더이므로 리포와 무관하다)
+**대상 앱 리포에 파일을 만들지 않는다.** `QT_PLUGIN_PATH`에 이 리포의 `bin/plugins`를 넣으면 아무것도 복사할 필요가 없다. (배포 폴더 `cmake_build/bin/Debug/styles/`에 복사하는 길도 있고 그건 절대 규칙 2의 명시된 예외지만, 안 하는 쪽이 깨끗하다.)
 
-확인할 것: `sawUi: true`인지, `topLevelCount`와 위젯 트리가 실제 UI를 담았는지, 그리고 **얹기 전후 픽셀이 같은지**(`zwprobe baseline` → 재시작 → `zwprobe diff`). 앱이 스타일을 덮어쓰므로 같아야 한다.
+```
+# 1) 지금 화면을 baseline 으로 떠 둔다 (얹은 뒤 픽셀이 같은지 볼 기준)
+node src/cli.ts baseline 플러그인전 --force
 
-**4. 사용자에게 한 번 부탁할 것 두 개.** 사람이 앱을 조작해줘야 닫히고, 그 전에는 추측으로 메울 수 없다.
+# 2) 사용자가 Z-Weave 를 닫는다. 그 다음 이렇게 띄운다 (bash)
+QT_PLUGIN_PATH="D:/z-emotion/zw-probe/bin/plugins" \
+ZWAGENT_HELLO="D:/z-emotion/zw-probe/runs/zwagent-hello.json" \
+  "D:/z-emotion/Z-Weave/cmake_build/bin/Debug/z-weave.exe" -style zwagent
+
+# 3) 확인 — 로드·ABI·위젯 트리를 한 번에 본다
+node src/cli.ts agent --hello runs/zwagent-hello.json
+node src/cli.ts agent --hello runs/zwagent-hello.json --filter dock   # 이름으로 좁혀 보기
+
+# 4) 화면이 안 바뀌었는지 확인 (앱이 스타일을 덮어쓰므로 같아야 한다)
+node src/cli.ts shot --out runs/플러그인후.png
+node src/cli.ts diff baselines/플러그인전 runs/플러그인후
+```
+
+**볼 것**: `agent`의 종료 코드가 0이면 로드+UI 확인. 3이면 로드는 됐지만 UI를 못 봤다(15초 안에 창이 안 뜬 것 — 로그인 화면에서 멈췄을 수 있다). 1이면 못 읽었고, 그때 무엇을 확인할지는 오류 메시지가 말해준다.
+
+**로드가 안 되면** `QT_DEBUG_PLUGINS=1`을 붙여 stderr를 본다. Qt는 디버그/릴리스가 안 맞으면 **조용히 건너뛴다.**
+
+이걸 하고 나면 열린 항목 "실앱에서 `zwagent.dll` 로드"가 닫히고, **위젯 트리 실물을 보고 M5 API를 설계할 수 있다** — 지금은 픽스처의 7개 위젯만 봤고 실앱은 수백 개다.
+
+#### B. 실제 버그 하나를 시나리오로 적어 돌린다 — **사용자가 재현 절차를 줘야 한다**
+
+**M5의 API를 지금 확정하지 않는다는 결정**(위 "확정 결정")이 이 지점을 위한 것이었다. M4로 **가능성**은 확인됐지만 **무엇을 만들지**는 실사용이 정한다.
+
+지금 있는 시나리오([scenarios/panel-toggle.ts](scenarios/panel-toggle.ts))는 도구를 검증하려고 쓴 것이고 실제 버그를 겨냥하지 않는다. 실제 버그를 적어 돌려보면 **부족한 단계 타입이 드러나고 그게 M5 설계의 입력이다.**
+
+절차를 받으면 시나리오로 옮긴다. 쓸 수 있는 단계는 [src/scenario/steps.ts](src/scenario/steps.ts)의 `Step` 유니온에 다 있다 — `key`·`click`·`clickName`·`waitIdle`·`sleep`·`shot`·`checkBaseline`·`expectDoc`·`expectElement`·`expectPanel`.
+
+#### C. A도 B도 못 하면 M5를 설계로 시작한다
+
+A 없이 M5를 하면 실앱 위젯 트리를 모르는 상태로 API를 정하는 것이고, 그건 위 결정이 피하려던 것이다. 그래도 진행한다면 **A를 먼저 하는 것이 순서상 옳다** — 재시작 한 번으로 트리 실물이 나온다.
+
+M5가 왜 필요한지는 이미 두 군데서 분명하다. ① 툴바 버튼에 이름이 없어(`zwQtButton`이 `name=""`) 이름으로 누를 수 없고 좌표뿐이다 — `QAction` 텍스트로 닿으면 해결된다. ② `state`가 진행 다이얼로그와 입력 대기 다이얼로그를 구분하지 못한다 — 프로세스 안에서는 다이얼로그 클래스를 그대로 볼 수 있다. 지금 `zwagent`는 **읽기만** 하므로 M5는 여기에 명령 채널(named pipe)과 `QAction::trigger()`를 붙이는 일이다.
+
+---
+
+**사용자에게 남은 부탁 두 개.** 사람이 앱을 조작해줘야 닫히고, 그 전에는 추측으로 메울 수 없다.
 
 - **메쉬가 있는 3D 화면 캡처** — 지금까지 확인한 것은 빈 씬(`Untitled.zls`)의 회색 그라데이션뿐이다. 샘플을 열어주면 찍어서 M1을 완전히 닫는다.
 - **정상 동작 중에 나오는 ERROR 로그의 판정** — 아래 "열린 항목" 참조. 도메인 지식이 필요하다.
 
 Qt 모달 동작은 더 부탁할 필요가 없다 — **Qt 픽스처가 답했다**(모달이면 소유자가 `WS_DISABLED`). 남겨둔 Properties 탭도 되돌렸다.
+
+**`runs/`는 지워도 된다.** 실행 산출물이고 커밋되지 않는다. 통과한 단계의 생 픽셀은 러너가 알아서 지우지만 `shot`·`checkBaseline` 캡처는 8MB씩 남으므로 쌓인다.
 
 ## 버그 판단 경계
 
