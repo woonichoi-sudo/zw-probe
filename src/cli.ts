@@ -74,7 +74,10 @@ function cmdShot(flags: Map<string, string>): number {
 
   const raw = out.replace(/\.png$/i, '') + '.bgra'
   const mode = flags.get('mode') === 'screen' ? 'screen' : 'printwindow'
-  const info = shot({ ...filterFrom(flags), png: out, raw, mode })
+  // 필터가 없으면 대상 앱으로 좁힌다. 예전에는 "가장 큰 창" 규칙이 그대로 적용돼
+  // **바탕화면(두 모니터를 덮는 5360x1440)을 찍었다** — 2026-09-09 실측. 판정까지
+  // "정상" 이 나오므로 화면을 열어보기 전까지 틀린 것을 모른다.
+  const info = shot({ ...targetFilter(flags), png: out, raw, mode })
   const w = info.window
 
   console.log(`창    ${w.width}x${w.height} pid=${w.pid} "${w.title}"`)

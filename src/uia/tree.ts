@@ -83,13 +83,38 @@ export function findNodes(nodes: readonly UiaNode[], q: NodeQuery): UiaNode[] {
   return pool
 }
 
-/** 정확 일치가 있으면 그것만, 없으면 부분 일치. 빈 문자열은 아무것도 맞히지 않는다. */
+/** 말줌임표. `ads::CElidingLabel` 이 자를 때 붙인다 — 세 점 형태도 함께 본다. */
+const ELLIPSIS = /(?:…|\.\.\.)$/
+
+/**
+ * 텍스트가 잘려 있으면 잘린 앞부분이 needle 의 접두사인가.
+ *
+ * **왜 필요한가.** 대상 앱의 dock 탭 라벨은 `ads::CElidingLabel` 이라 폭이 좁으면
+ * 텍스트를 자르고 UIA 는 **자른 문자열을 그대로 보고한다.** 실측(2026-09-09):
+ * 다른 탭이 선택되자 `"Properties"` 가 `"Properti…"` 로 바뀌어 정확 일치가 실패했다.
+ * 폭은 어느 탭이 선택됐는지에 따라 변하므로, 이걸 처리하지 않으면 시나리오가
+ * 앞 단계의 결과에 따라 조용히 요소를 못 찾는다.
+ */
+function matchesElided(text: string, needle: string): boolean {
+  if (!ELLIPSIS.test(text)) return false
+  const stem = text.replace(ELLIPSIS, '')
+  // 잘린 앞부분이 비었으면(텍스트가 "…" 뿐) 아무것과도 맞다고 볼 수 없다.
+  return stem !== '' && needle.toLowerCase().startsWith(stem.toLowerCase())
+}
+
+/**
+ * 정확 일치가 있으면 그것만, 없으면 느슨한 일치(부분 일치 또는 잘린 접두사).
+ * 빈 문자열은 아무것도 맞히지 않는다.
+ */
 function narrow(pool: UiaNode[], needle: string, pick: (n: UiaNode) => string): UiaNode[] {
   if (needle === '') return []
   const exact = pool.filter((n) => pick(n) === needle)
   if (exact.length > 0) return exact
   const lower = needle.toLowerCase()
-  return pool.filter((n) => pick(n).toLowerCase().includes(lower))
+  return pool.filter((n) => {
+    const text = pick(n)
+    return text.toLowerCase().includes(lower) || matchesElided(text, needle)
+  })
 }
 
 export type FindOne =

@@ -183,3 +183,38 @@ test('readDocumentState — 헤더 텍스트가 비면 dirty 를 모른다고 �
   assert.equal(s.fileName, null)
   assert.equal(s.dirty, null)
 })
+
+test('findNodes — 잘린 라벨을 접두사로 인정한다', () => {
+  // 실측(2026-09-09): 다른 탭이 선택되자 dock 탭 라벨이 "Properties" → "Properti…"
+  // 로 바뀌어 정확 일치가 실패했다. 폭이 선택 상태에 따라 변하므로 시나리오가
+  // 앞 단계 결과에 따라 조용히 요소를 못 찾는다.
+  const elided = node({ name: 'Properti…', class: 'ads::CElidingLabel' })
+  assert.deepEqual(findNodes([elided], { name: 'Properties' }), [elided])
+})
+
+test('findNodes — 세 점 형태도 인정한다', () => {
+  const elided = node({ name: 'Draping bo...' })
+  assert.deepEqual(findNodes([elided], { name: 'Draping board' }), [elided])
+})
+
+test('findNodes — 잘린 앞부분이 needle 의 접두사가 아니면 안 맞는다', () => {
+  const elided = node({ name: 'Renderi…' })
+  assert.deepEqual(findNodes([elided], { name: 'Properties' }), [])
+})
+
+test('findNodes — 말줄임표뿐인 텍스트는 아무것과도 맞지 않는다', () => {
+  // 잘린 앞부분이 비면 접두사 판정이 늘 참이 되어 모든 needle 을 맞혀버린다.
+  assert.deepEqual(findNodes([node({ name: '…' })], { name: 'Properties' }), [])
+})
+
+test('findNodes — 정확 일치가 있으면 잘린 것을 버린다', () => {
+  const full = node({ name: 'Properties', automationId: 'full' })
+  const elided = node({ name: 'Properti…', automationId: 'elided' })
+  assert.deepEqual(findNodes([elided, full], { name: 'Properties' }), [full])
+})
+
+test('findNodes — 잘리지 않은 텍스트에는 접두사 규칙을 적용하지 않는다', () => {
+  // "Prop" 은 "Properties" 의 접두사지만, needle 이 더 길 때 잘림 없이 맞히면
+  // 엉뚱한 요소가 걸린다. 말줄임표가 있을 때만 느슨하게 본다.
+  assert.deepEqual(findNodes([node({ name: 'Prop' })], { name: 'Properties' }), [])
+})
