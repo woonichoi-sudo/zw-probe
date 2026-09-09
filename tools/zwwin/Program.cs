@@ -36,6 +36,23 @@ internal static class N
     [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
     [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr hwnd, int attr, out RECT val, int size);
 
+    // 입력
+    [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hwnd);
+    [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hwnd, int cmd);
+    [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint attachTo, uint attachFrom, bool attach);
+    [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
+    [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam);
+
+    public const int SW_RESTORE = 9;
+    public const uint KEYEVENTF_KEYUP = 0x2;
+    public const byte VK_CONTROL = 0x11;
+    public const byte VK_MENU = 0x12; // Alt
+    public const byte VK_SHIFT = 0x10;
+    public const uint WM_KEYDOWN = 0x0100;
+    public const uint WM_KEYUP = 0x0101;
+
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT { public int Left, Top, Right, Bottom; }
 
@@ -51,6 +68,10 @@ internal sealed class Win
     public string Title = "";
     public string ClassName = "";
     public bool Minimized;
+    /// 프로세스 실행 파일의 버전. 읽지 못하면 빈 문자열.
+    /// 어느 버전의 설정 디렉토리를 읽어야 하는지 TS 가 판단하는 데 쓴다.
+    public string FileVersion = "";
+    public string ExePath = "";
     public N.RECT Rect;
     public int Width { get { return Rect.Right - Rect.Left; } }
     public int Height { get { return Rect.Bottom - Rect.Top; } }
@@ -71,6 +92,7 @@ internal static class Program
             {
                 case "windows": return CmdWindows(a);
                 case "shot": return CmdShot(a);
+                case "key": return CmdKey(a);
                 default:
                     return Fail("알 수 없는 명령: '" + verb + "'. shot 또는 windows 를 쓴다.");
             }
@@ -104,6 +126,17 @@ internal static class Program
             N.RECT rect;
             if (!BestRect(hwnd, out rect)) return true;
 
+            string exePath = "", fileVersion = "";
+            // 다른 프로세스의 모듈 정보는 권한·비트수 차이로 못 읽을 수 있다.
+            // 실패는 빈 문자열로 보고하고 판단은 하지 않는다.
+            try
+            {
+                var proc = Process.GetProcessById((int)pid);
+                exePath = proc.MainModule.FileName;
+                fileVersion = FileVersionInfo.GetVersionInfo(exePath).FileVersion ?? "";
+            }
+            catch { }
+
             found.Add(new Win
             {
                 Hwnd = hwnd,
@@ -111,6 +144,8 @@ internal static class Program
                 Title = title.ToString(),
                 ClassName = cls.ToString(),
                 Minimized = N.IsIconic(hwnd),
+                FileVersion = fileVersion,
+                ExePath = exePath,
                 Rect = rect,
             });
             return true;
@@ -227,6 +262,98 @@ internal static class Program
         return 0;
     }
 
+    // 창을 포그라운드로 올린다. SendInput/keybd_event 는 시스템 전역이라
+    // 포커스된 창으로 가기 때문에, 입력에는 캡처와 달리 활성화가 필요하다.
+    //
+    // SetForegroundWindow 는 호출한 프로세스가 포그라운드가 아니면 조용히 실패한다.
+    // 대상 창의 입력 스레드에 붙는 통상적인 우회를 쓰고, 실패 여부를 사실로 보고한다
+    // (판단하지 않는다 — 몇 번 재시도했고 결과가 무엇인지만 알린다).
+    private static bool Activate(IntPtr hwnd, int attempts, int waitMs)
+    {
+        if (N.IsIconic(hwnd)) N.ShowWindow(hwnd, N.SW_RESTORE);
+
+        uint targetPid;
+        uint targetThread = N.GetWindowThreadProcessId(hwnd, out targetPid);
+        uint ownThread = N.GetCurrentThreadId();
+
+        for (int i = 0; i < attempts; i++)
+        {
+            if (N.GetForegroundWindow() == hwnd) return true;
+
+            bool attached = N.AttachThreadInput(ownThread, targetThread, true);
+            N.SetForegroundWindow(hwnd);
+            if (attached) N.AttachThreadInput(ownThread, targetThread, false);
+
+            System.Threading.Thread.Sleep(waitMs);
+        }
+        return N.GetForegroundWindow() == hwnd;
+    }
+
+    private static int CmdKey(Dictionary<string, string> a)
+    {
+        string vkS = Get(a, "vk");
+        if (vkS == null) return Fail("--vk <가상키코드> 가 필요하다. 키 문자열 해석은 zwprobe(TS) 가 한다.");
+
+        int vk;
+        if (!int.TryParse(vkS, out vk) || vk <= 0 || vk > 255) return Fail("--vk 는 1~255 정수여야 한다: " + vkS);
+
+        bool ctrl = a.ContainsKey("ctrl");
+        bool alt = a.ContainsKey("alt");
+        bool shift = a.ContainsKey("shift");
+        string method = Get(a, "method") ?? "send";
+        int holdMs = 0;
+        int.TryParse(Get(a, "hold") ?? "0", out holdMs);
+
+        var wins = Filter(Enumerate(), a);
+        if (wins.Count == 0) return Fail("조건에 맞는 창을 찾지 못했다.");
+        var w = wins[0];
+
+        bool activated = false;
+        if (method == "send")
+        {
+            activated = Activate(w.Hwnd, 10, 40);
+            if (activated) System.Threading.Thread.Sleep(60); // 포커스 전환이 앉도록
+
+            if (ctrl) N.keybd_event(N.VK_CONTROL, 0, 0, UIntPtr.Zero);
+            if (alt) N.keybd_event(N.VK_MENU, 0, 0, UIntPtr.Zero);
+            if (shift) N.keybd_event(N.VK_SHIFT, 0, 0, UIntPtr.Zero);
+
+            N.keybd_event((byte)vk, 0, 0, UIntPtr.Zero);
+            if (holdMs > 0) System.Threading.Thread.Sleep(holdMs);
+            N.keybd_event((byte)vk, 0, N.KEYEVENTF_KEYUP, UIntPtr.Zero);
+
+            if (shift) N.keybd_event(N.VK_SHIFT, 0, N.KEYEVENTF_KEYUP, UIntPtr.Zero);
+            if (alt) N.keybd_event(N.VK_MENU, 0, N.KEYEVENTF_KEYUP, UIntPtr.Zero);
+            if (ctrl) N.keybd_event(N.VK_CONTROL, 0, N.KEYEVENTF_KEYUP, UIntPtr.Zero);
+        }
+        else if (method == "post")
+        {
+            // 창을 지정할 수 있어 포커스가 필요 없지만, 수식키 상태가 실리지 않는다.
+            // GetKeyState 로 Ctrl/Shift 를 읽는 앱에서는 수식키 조합이 통하지 않는다.
+            N.PostMessage(w.Hwnd, N.WM_KEYDOWN, (IntPtr)vk, IntPtr.Zero);
+            N.PostMessage(w.Hwnd, N.WM_KEYUP, (IntPtr)vk, IntPtr.Zero);
+        }
+        else
+        {
+            return Fail("--method 는 send 또는 post 여야 한다: " + method);
+        }
+
+        var sb = new StringBuilder();
+        sb.Append("{\"ok\":true,\"method\":");
+        AppendStr(sb, method);
+        sb.Append(",\"vk\":").Append(vk);
+        sb.Append(",\"ctrl\":").Append(ctrl ? "true" : "false");
+        sb.Append(",\"alt\":").Append(alt ? "true" : "false");
+        sb.Append(",\"shift\":").Append(shift ? "true" : "false");
+        sb.Append(",\"activated\":").Append(activated ? "true" : "false");
+        sb.Append(",\"foregroundAfter\":").Append(N.GetForegroundWindow().ToInt64());
+        sb.Append(",\"window\":");
+        AppendWin(sb, w);
+        sb.Append('}');
+        Console.Out.Write(sb.ToString());
+        return 0;
+    }
+
     // 판정용 원시 픽셀. PNG 는 사람이 보는 것이고, 이 파일은 TS 가 읽는 것이다.
     // 위에서 아래로, 행당 width*4 바이트, BGRA 순서.
     private static void SaveRaw(Bitmap bmp, string path)
@@ -260,6 +387,8 @@ internal static class Program
         sb.Append(",\"title\":"); AppendStr(sb, w.Title);
         sb.Append(",\"class\":"); AppendStr(sb, w.ClassName);
         sb.Append(",\"minimized\":").Append(w.Minimized ? "true" : "false");
+        sb.Append(",\"fileVersion\":"); AppendStr(sb, w.FileVersion);
+        sb.Append(",\"exePath\":"); AppendStr(sb, w.ExePath);
         sb.Append(",\"x\":").Append(w.Rect.Left).Append(",\"y\":").Append(w.Rect.Top);
         sb.Append(",\"width\":").Append(w.Width).Append(",\"height\":").Append(w.Height);
         sb.Append('}');

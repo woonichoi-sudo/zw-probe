@@ -6,20 +6,26 @@
 import { mkdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 
-import { listWindows, shot } from './win/zwwin.ts'
+import { listWindows, sendKey, shot } from './win/zwwin.ts'
 import { analyze, judgeCapture } from './image/stats.ts'
 import type { WindowFilter } from './win/zwwin.ts'
+import { findConflicts, findShortcut } from './input/shortcut.ts'
+import { loadShortcuts } from './input/shortcutFile.ts'
 
-function parseArgs(argv: string[]): { verb: string; flags: Map<string, string> } {
+function parseArgs(argv: string[]): { verb: string; rest: string[]; flags: Map<string, string> } {
   const verb = argv[0] !== undefined && !argv[0].startsWith('--') ? argv[0] : ''
+  const rest: string[] = []
   const flags = new Map<string, string>()
-  for (let i = 0; i < argv.length; i++) {
+  for (let i = verb === '' ? 0 : 1; i < argv.length; i++) {
     const a = argv[i]!
-    if (!a.startsWith('--')) continue
+    if (!a.startsWith('--')) {
+      rest.push(a)
+      continue
+    }
     const next = argv[i + 1]
     flags.set(a.slice(2), next !== undefined && !next.startsWith('--') ? (i++, next) : '')
   }
-  return { verb, flags }
+  return { verb, rest, flags }
 }
 
 function filterFrom(flags: Map<string, string>): WindowFilter {
@@ -99,15 +105,112 @@ function cmdShot(flags: Map<string, string>): number {
   return 0
 }
 
+/** 실행 중인 대상 앱의 버전. 창을 못 찾으면 undefined — 그러면 최신 디렉토리로 떨어진다. */
+function runningAppVersion(flags: Map<string, string>): string | undefined {
+  try {
+    const wins = listWindows(filterFrom(flags))
+    const v = wins[0]?.fileVersion
+    return v !== undefined && v !== '' ? v : undefined
+  } catch {
+    return undefined
+  }
+}
+
+function warnIfVersionGuessed(file: { appVersion: string; how: string }): void {
+  if (file.how === 'newest') {
+    console.log(
+      `주의  실행 중인 앱 버전에 맞는 설정 디렉토리를 찾지 못해 최신(${file.appVersion})을 골랐다.\n` +
+        '      버전 간에 매핑이 바뀐 단축키는 다른 명령을 실행할 수 있다.',
+    )
+  }
+}
+
+function cmdShortcuts(flags: Map<string, string>): number {
+  const file = loadShortcuts(flags.get('app-version') || runningAppVersion(flags))
+  const needle = (flags.get('filter') || '').toLowerCase()
+
+  console.log(
+    `${file.path}\n` +
+      `  앱 버전 ${file.appVersion} (${file.how}) · ini 스키마 Version=${file.version} · 항목 ${file.entries.length}개`,
+  )
+  warnIfVersionGuessed(file)
+  let section = ''
+  for (const e of file.entries) {
+    if (needle && !e.name.toLowerCase().includes(needle)) continue
+    if (e.section !== section) {
+      section = e.section
+      console.log(`\n[${section}]`)
+    }
+    console.log(`  ${e.name.padEnd(26)} ${e.spec}`)
+  }
+
+  if (file.unparsed.length > 0) {
+    console.log(`\n못 읽은 줄 ${file.unparsed.length}개:`)
+    for (const u of file.unparsed) console.log(`  ${u.line}행 ${u.text} — ${u.reason}`)
+  }
+
+  const conflicts = findConflicts(file)
+  if (conflicts.length > 0) {
+    console.log('\n같은 키에 묶인 기능:')
+    for (const c of conflicts) console.log(`  ${c.spec} → ${c.names.join(', ')}`)
+  }
+  return 0
+}
+
+function cmdKey(rest: string[], flags: Map<string, string>): number {
+  const name = rest[0]
+  if (name === undefined) {
+    console.error('기능 이름이 필요하다. 목록은 `zwprobe shortcuts` 로 본다.')
+    return 1
+  }
+
+  const file = loadShortcuts(flags.get('app-version') || runningAppVersion(flags))
+  warnIfVersionGuessed(file)
+
+  const entry = findShortcut(file, name)
+  if (entry === undefined) {
+    console.error(`"${name}" 을 ${file.path} 에서 찾지 못했다. \`zwprobe shortcuts --filter ${name}\` 로 확인한다.`)
+    return 1
+  }
+
+  const method = flags.get('method') === 'post' ? 'post' : 'send'
+  const r = sendKey({ ...filterFrom(flags), stroke: entry.stroke, method })
+
+  console.log(`전송  ${entry.name} = ${entry.spec}  (vk=${r.vk}${r.ctrl ? ' +ctrl' : ''}${r.alt ? ' +alt' : ''}${r.shift ? ' +shift' : ''})`)
+  console.log(`대상  pid=${r.window.pid} "${r.window.title}"`)
+
+  if (method === 'post') {
+    console.log('주의  post 는 수식키를 싣지 못한다. 수식키가 있는 단축키는 다른 명령이 실행된다.')
+    return 0
+  }
+
+  if (!r.activated) {
+    console.log('실패  창을 포그라운드로 올리지 못했다. 키가 다른 창으로 갔을 수 있다.')
+    return 2
+  }
+  console.log('활성  포그라운드 확보됨')
+  return 0
+}
+
 function main(): number {
-  const { verb, flags } = parseArgs(process.argv.slice(2))
+  const { verb, rest, flags } = parseArgs(process.argv.slice(2))
   switch (verb) {
     case 'windows':
       return cmdWindows(flags)
     case 'shot':
       return cmdShot(flags)
+    case 'shortcuts':
+      return cmdShortcuts(flags)
+    case 'key':
+      return cmdKey(rest, flags)
     default:
-      console.error('사용법: zwprobe <shot|windows> [--process 이름] [--pid N] [--title 조각] [--out 경로]')
+      console.error(
+        '사용법:\n' +
+          '  zwprobe shot      [--process 이름] [--pid N] [--title 조각] [--out 경로] [--mode screen]\n' +
+          '  zwprobe windows   [--process 이름] [--pid N] [--title 조각]\n' +
+          '  zwprobe shortcuts [--filter 조각]\n' +
+          '  zwprobe key <기능이름> [--process 이름] [--method post]',
+      )
       return 1
   }
 }

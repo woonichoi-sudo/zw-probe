@@ -7,6 +7,8 @@ import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 
+import type { KeyStroke } from '../input/shortcut.ts'
+
 const HERE = dirname(fileURLToPath(import.meta.url))
 export const ZWWIN_EXE = resolve(HERE, '../../bin/zwwin.exe')
 
@@ -16,6 +18,9 @@ export type WindowInfo = {
   title: string
   class: string
   minimized: boolean
+  /** 프로세스 실행 파일 버전. 못 읽으면 빈 문자열. 설정 디렉토리를 고를 때 쓴다 */
+  fileVersion: string
+  exePath: string
   x: number
   y: number
   width: number
@@ -98,4 +103,39 @@ export function shot(opts: ShotOptions): ShotInfo {
   if (opts.raw !== undefined) args.push('--raw', opts.raw)
   if (opts.mode !== undefined) args.push('--mode', opts.mode)
   return run(args) as ShotInfo
+}
+
+export type KeyResult = {
+  method: string
+  vk: number
+  ctrl: boolean
+  alt: boolean
+  shift: boolean
+  /** 창을 포그라운드로 올리는 데 성공했는가. method='post' 면 항상 false */
+  activated: boolean
+  foregroundAfter: number
+  window: WindowInfo
+}
+
+export type SendKeyOptions = WindowFilter & {
+  stroke: KeyStroke
+  /**
+   * 'send' — keybd_event + 창 활성화. **이것만 쓴다.**
+   * 'post' — PostMessage. 창을 지정할 수 있고 포커스가 필요 없지만 **수식키가 실리지 않는다.**
+   *   2026-09-09 실측: `Shift+P` 가 평범한 `P` 로 전달돼 다른 명령(핀 도구)이 실행됐다.
+   *   비교·진단용으로만 남긴다.
+   */
+  method?: 'send' | 'post'
+  holdMs?: number
+}
+
+export function sendKey(opts: SendKeyOptions): KeyResult {
+  const { stroke } = opts
+  const args = ['key', '--vk', String(stroke.vk), ...filterArgs(opts)]
+  if (stroke.ctrl) args.push('--ctrl')
+  if (stroke.alt) args.push('--alt')
+  if (stroke.shift) args.push('--shift')
+  if (opts.method !== undefined) args.push('--method', opts.method)
+  if (opts.holdMs !== undefined) args.push('--hold', String(opts.holdMs))
+  return run(args) as KeyResult
 }
