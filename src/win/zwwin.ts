@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 
 import type { KeyStroke } from '../input/shortcut.ts'
+import type { UiaDump } from '../uia/tree.ts'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 export const ZWWIN_EXE = resolve(HERE, '../../bin/zwwin.exe')
@@ -200,4 +201,27 @@ export function click(opts: ClickOptions): ClickResult {
   if (opts.double === true) args.push('--double')
   if (opts.holdMs !== undefined) args.push('--hold', String(opts.holdMs))
   return run(args) as ClickResult
+}
+
+export type UiaOptions = WindowFilter & {
+  /** 몇 단계까지 내려갈지. 기본 24 */
+  depth?: number
+  /** 노드 상한. 닿으면 truncated 가 true 로 온다. 기본 2000 */
+  max?: number
+}
+
+export type UiaDumpResult = UiaDump & { window: WindowInfo }
+
+/**
+ * 창의 UIA 트리를 평평한 목록으로 읽는다.
+ *
+ * **Raw view 로 순회한다** — 기본 Control view 는 Qt 위젯 대부분을 걸러낸다
+ * (2026-09-09 실측: Control view 25노드 vs Raw view 152노드, 탭이 Raw 에서만 나왔다).
+ * 이건 zwwin.exe 안에 박혀 있고 선택 옵션이 아니다.
+ */
+export function uiaTree(opts: UiaOptions = {}): UiaDumpResult {
+  const args = ['uia', ...filterArgs(opts)]
+  if (opts.depth !== undefined) args.push('--depth', String(opts.depth))
+  if (opts.max !== undefined) args.push('--max', String(opts.max))
+  return run(args) as UiaDumpResult
 }

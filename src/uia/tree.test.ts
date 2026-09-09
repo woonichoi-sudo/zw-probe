@@ -1,0 +1,185 @@
+// 1단 순수 단위 테스트 — 의존성 0.
+//
+//   node --test src/uia/tree.test.ts
+
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+
+import { clickPoint, findNodes, findOne, isClickable, readDocumentState } from './tree.ts'
+import type { UiaDump, UiaNode } from './tree.ts'
+
+function node(p: Partial<UiaNode> = {}): UiaNode {
+  return {
+    depth: p.depth ?? 1,
+    controlType: p.controlType ?? 'Text',
+    name: p.name ?? '',
+    automationId: p.automationId ?? '',
+    class: p.class ?? 'QLabel',
+    enabled: p.enabled ?? true,
+    offscreen: p.offscreen ?? false,
+    hasRect: p.hasRect ?? true,
+    screenX: p.screenX ?? 100,
+    screenY: p.screenY ?? 100,
+    width: p.width ?? 60,
+    height: p.height ?? 20,
+    wx: p.wx ?? 10,
+    wy: p.wy ?? 20,
+  }
+}
+
+function dump(nodes: UiaNode[], p: Partial<UiaDump> = {}): UiaDump {
+  return {
+    elapsedMs: p.elapsedMs ?? 100,
+    maxDepth: p.maxDepth ?? 24,
+    maxNodes: p.maxNodes ?? 2000,
+    truncated: p.truncated ?? false,
+    nodes,
+  }
+}
+
+test('clickPoint — 사각형 한가운데. 창 기준 좌표를 쓴다', () => {
+  const p = clickPoint(node({ wx: 1380, wy: 32, width: 65, height: 18 }))
+  assert.deepEqual(p, { x: 1412, y: 41 })
+})
+
+test('clickPoint — 홀수 크기에서도 창 안에 남는다', () => {
+  const p = clickPoint(node({ wx: 0, wy: 0, width: 1, height: 1 }))
+  assert.deepEqual(p, { x: 0, y: 0 })
+})
+
+test('isClickable — 사각형 없음·화면 밖·크기 0 을 걸러낸다', () => {
+  assert.equal(isClickable(node()), true)
+  assert.equal(isClickable(node({ hasRect: false })), false)
+  assert.equal(isClickable(node({ offscreen: true })), false)
+  assert.equal(isClickable(node({ width: 0 })), false)
+  assert.equal(isClickable(node({ height: 0 })), false)
+  // 비활성 요소는 좌표가 유효하므로 누를 수는 있다. 눌러도 반응이 없다는 것은
+  // 다른 문제이고, 여기서 걸러버리면 "왜 못 찾았나" 를 설명할 수 없다.
+  assert.equal(isClickable(node({ enabled: false })), true)
+})
+
+test('findNodes — 정확 일치가 있으면 부분 일치를 버린다', () => {
+  // 이 규칙이 없으면 "Properties" 를 찾을 때 "Properties panel" 이 늘 섞여 모호해진다.
+  const exact = node({ name: 'Properties' })
+  const partial = node({ name: 'Properties panel' })
+  const hits = findNodes([partial, exact], { name: 'Properties' })
+  assert.deepEqual(hits, [exact])
+})
+
+test('findNodes — 정확 일치가 없으면 부분 일치, 대소문자 무시', () => {
+  const n = node({ name: 'Draping board' })
+  assert.deepEqual(findNodes([n], { name: 'draping' }), [n])
+})
+
+test('findNodes — 빈 문자열은 아무것도 맞히지 않는다', () => {
+  // 빈 needle 을 부분 일치로 흘리면 전부 맞아버린다.
+  assert.deepEqual(findNodes([node({ name: 'x' })], { name: '' }), [])
+})
+
+test('findNodes — 조건 여러 개는 모두 만족해야 한다', () => {
+  const tab = node({ name: 'Properties', automationId: 'dockWidgetTabLabel', class: 'ads::CElidingLabel' })
+  const title = node({ name: 'Properties', automationId: 'HeaderWidget.TitleLabel', class: 'QLabel' })
+  const hits = findNodes([tab, title], { name: 'Properties', class: 'QLabel' })
+  assert.deepEqual(hits, [title])
+})
+
+test('findNodes — clickableOnly 는 이름 조건과 함께 걸린다', () => {
+  const shown = node({ name: 'Go' })
+  const hidden = node({ name: 'Go', offscreen: true })
+  assert.deepEqual(findNodes([shown, hidden], { name: 'Go', clickableOnly: true }), [shown])
+})
+
+test('findNodes — controlType 은 정확 일치', () => {
+  const btn = node({ name: 'Go', controlType: 'Button' })
+  const txt = node({ name: 'Go', controlType: 'Text' })
+  assert.deepEqual(findNodes([btn, txt], { name: 'Go', controlType: 'Button' }), [btn])
+})
+
+test('findOne — 하나면 고른다', () => {
+  const n = node({ name: 'Simulation' })
+  const r = findOne(dump([n]), { name: 'Simulation' })
+  assert.equal(r.found, true)
+  assert.equal(r.found === true && r.node, n)
+})
+
+test('findOne — 여럿이면 거부하고 후보를 보여준다', () => {
+  // 2026-09-09 실측: 대상 앱의 "Properties" 는 탭 라벨과 패널 제목 둘에 있다.
+  // 첫 번째를 집으면 조용히 다른 것을 누른다.
+  const tab = node({ name: 'Properties', automationId: 'dockWidgetTabLabel', wx: 1759, wy: 32 })
+  const title = node({ name: 'Properties', automationId: 'HeaderWidget.TitleLabel', wx: 1398, wy: 64 })
+  const r = findOne(dump([tab, title]), { name: 'Properties' })
+
+  assert.equal(r.found, false)
+  assert.equal(r.found === false && r.candidates.length, 2)
+  assert.match(r.reason, /2개/)
+  assert.match(r.reason, /dockWidgetTabLabel/)
+  assert.match(r.reason, /HeaderWidget\.TitleLabel/)
+})
+
+test('findOne — 후보가 많으면 앞의 여섯 개만 나열한다', () => {
+  const many = Array.from({ length: 9 }, (_, i) => node({ name: 'Go', automationId: `id${i}` }))
+  const r = findOne(dump(many), { name: 'Go' })
+  assert.equal(r.found, false)
+  assert.match(r.reason, /9개/)
+  assert.match(r.reason, /id5/)
+  assert.doesNotMatch(r.reason, /id6/)
+  assert.match(r.reason, /\.\.\./)
+})
+
+test('findOne — 없으면 없다고 한다', () => {
+  const r = findOne(dump([node({ name: 'Simulation' })]), { name: 'Fabric' })
+  assert.equal(r.found, false)
+  assert.match(r.reason, /없다/)
+  assert.doesNotMatch(r.reason, /잘렸/)
+})
+
+test('findOne — 트리가 잘렸으면 "없다" 를 단정하지 않는다', () => {
+  // 못 찾은 것과 안 본 것은 다르다. 섞으면 "그 요소는 없다" 라는 틀린 결론이 나온다.
+  const r = findOne(dump([], { truncated: true, maxNodes: 50 }), { name: 'Fabric' })
+  assert.equal(r.found, false)
+  assert.match(r.reason, /잘렸/)
+  assert.match(r.reason, /50개/)
+})
+
+test('readDocumentState — 헤더에서 파일명을 읽는다', () => {
+  // 2026-09-09 실측: id="zwQtMainWindow.FramelessWindowHeader", name="Untitled.zls"
+  const header = node({
+    automationId: 'zwQtMainWindow.FramelessWindowHeader',
+    name: 'Untitled.zls',
+    class: 'zwQtWindowHeader',
+  })
+  const s = readDocumentState(dump([node({ name: 'z-weave', depth: 0 }), header]))
+  assert.equal(s.fileName, 'Untitled.zls')
+  assert.equal(s.dirty, false)
+})
+
+test('readDocumentState — dirty 는 " *" 로 붙는다', () => {
+  // zwQtFramelessWindow.cpp:47 — dirtyString = (dirty ? " *" : "")
+  const header = node({
+    automationId: 'zwQtMainWindow.FramelessWindowHeader',
+    name: 'Shirt.zls *',
+  })
+  const s = readDocumentState(dump([header]))
+  assert.equal(s.fileName, 'Shirt.zls')
+  assert.equal(s.dirty, true)
+})
+
+test('readDocumentState — 파일명 없이 dirty 표시만 있는 경우', () => {
+  // 같은 파일 55행: filename 이 비면 헤더 텍스트가 dirtyString 뿐이다.
+  const s = readDocumentState(dump([node({ automationId: 'FramelessWindowHeader', name: ' *' })]))
+  assert.equal(s.fileName, null)
+  assert.equal(s.dirty, true)
+})
+
+test('readDocumentState — 헤더가 없으면 모른다고 한다', () => {
+  const s = readDocumentState(dump([node({ name: 'z-weave', depth: 0 })]))
+  assert.equal(s.fileName, null)
+  assert.equal(s.dirty, null)
+  assert.match(s.reason, /FramelessWindowHeader/)
+})
+
+test('readDocumentState — 헤더 텍스트가 비면 dirty 를 모른다고 한다', () => {
+  const s = readDocumentState(dump([node({ automationId: 'FramelessWindowHeader', name: '' })]))
+  assert.equal(s.fileName, null)
+  assert.equal(s.dirty, null)
+})

@@ -10,6 +10,7 @@
 //   zwwin.exe windows [--process z-weave]
 //   zwwin.exe key --vk N [--ctrl] [--shift] [--alt] [--process z-weave]
 //   zwwin.exe click --x N --y N [--button right] [--double] [--process z-weave]   창 왼쪽 위 기준
+//   zwwin.exe uia [--depth N] [--max N] [--process z-weave]
 
 using System;
 using System.Collections.Generic;
@@ -20,6 +21,7 @@ using System.Globalization;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Windows.Automation;
 
 internal static class N
 {
@@ -82,6 +84,22 @@ internal static class N
     public const int DWMWA_EXTENDED_FRAME_BOUNDS = 9;
 }
 
+internal sealed class UiaNode
+{
+    public int Depth;
+    public string Name = "";
+    public string AutomationId = "";
+    public string ClassName = "";
+    public string ControlType = "";
+    public bool Enabled;
+    public bool Offscreen;
+    /// 사각형을 읽지 못했으면 false. 좌표는 0 으로 남으므로 이 플래그로 갈라야 한다.
+    public bool HasRect;
+    public int ScreenX, ScreenY, Width, Height;
+    /// 창 왼쪽 위 기준 — click 이 받는 좌표계.
+    public int Wx, Wy;
+}
+
 internal sealed class Win
 {
     public IntPtr Hwnd;
@@ -123,8 +141,9 @@ internal static class Program
                 case "shot": return CmdShot(a);
                 case "key": return CmdKey(a);
                 case "click": return CmdClick(a);
+                case "uia": return CmdUia(a);
                 default:
-                    return Fail("알 수 없는 명령: '" + verb + "'. windows, shot, key, click 중 하나를 쓴다.");
+                    return Fail("알 수 없는 명령: '" + verb + "'. windows, shot, key, click, uia 중 하나를 쓴다.");
             }
         }
         catch (Exception ex)
@@ -329,6 +348,124 @@ internal static class Program
     //
     // 판단은 하지 않는다. 누른 자리에 어떤 창이 있었는지(WindowFromPoint)를 사실로
     // 보고할 뿐이고, 그게 대상 창이 맞는지는 TS 가 따진다.
+    // UIA 트리를 평평한 목록으로 뱉는다. 계층은 depth 로 실린다 — 중첩 JSON 보다
+    // 걸러내기 쉽고, 판정하는 쪽(TS)이 부모를 되짚을 필요가 거의 없다.
+    //
+    // **Raw view 여야 한다.** 기본 Control view 로는 dock 탭 바 안쪽이 보이지 않는다
+    // (2026-09-09 실측: Control view 25노드 vs Raw view 152노드. 탭 6개가 Raw 에서만
+    // 나왔다). 접근성 뷰를 걸러내는 것이 UIA 의 기본값인데 Qt 위젯이 대부분 거기서
+    // 빠진다.
+    //
+    // 좌표는 두 벌 싣는다. UIA 의 BoundingRectangle 은 화면 절대 좌표이고 원점이
+    // **캡처 사각형과 다르다** (실측: 창 UIA 는 3432,-8 1936x1048, BestRect 는
+    // 3440,0 1920x1040 — 보이지 않는 리사이즈 테두리 8px 차이). 그래서 click 이 쓰는
+    // 창 기준 좌표(wx, wy)를 BestRect 원점으로 함께 계산해 둔다. 좌표계 변환을 한 곳에
+    // 모아두지 않으면 호출자마다 8px 씩 다르게 틀린다.
+    private static int CmdUia(Dictionary<string, string> a)
+    {
+        var wins = Filter(Enumerate(), a);
+        if (wins.Count == 0) return Fail("조건에 맞는 창을 찾지 못했다.");
+        var w = wins[0];
+
+        int maxDepth = 24, maxNodes = 2000;
+        int.TryParse(Get(a, "depth") ?? "24", out maxDepth);
+        int.TryParse(Get(a, "max") ?? "2000", out maxNodes);
+        if (maxDepth < 0) return Fail("--depth 는 0 이상이어야 한다.");
+        if (maxNodes < 1) return Fail("--max 는 1 이상이어야 한다.");
+
+        AutomationElement root;
+        try
+        {
+            root = AutomationElement.FromHandle(w.Hwnd);
+        }
+        catch (Exception ex)
+        {
+            return Fail("UIA 가 창을 열지 못했다: " + ex.GetType().Name + ": " + ex.Message);
+        }
+        if (root == null) return Fail("UIA 가 창을 열지 못했다 (FromHandle 이 null).");
+
+        var walker = TreeWalker.RawViewWalker;
+        var nodes = new List<UiaNode>();
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        WalkUia(walker, root, 0, maxDepth, maxNodes, nodes, w.Rect);
+        sw.Stop();
+
+        var sb = new StringBuilder();
+        sb.Append("{\"ok\":true");
+        sb.Append(",\"elapsedMs\":").Append(sw.ElapsedMilliseconds);
+        sb.Append(",\"maxDepth\":").Append(maxDepth);
+        sb.Append(",\"maxNodes\":").Append(maxNodes);
+        // 상한에 닿았으면 트리가 잘렸다. 못 찾은 것을 "없다" 로 읽지 않게 알린다.
+        sb.Append(",\"truncated\":").Append(nodes.Count >= maxNodes ? "true" : "false");
+        sb.Append(",\"window\":");
+        AppendWin(sb, w);
+        sb.Append(",\"nodes\":[");
+        for (int i = 0; i < nodes.Count; i++)
+        {
+            if (i > 0) sb.Append(',');
+            var n = nodes[i];
+            sb.Append("{\"depth\":").Append(n.Depth);
+            sb.Append(",\"controlType\":"); AppendStr(sb, n.ControlType);
+            sb.Append(",\"name\":"); AppendStr(sb, n.Name);
+            sb.Append(",\"automationId\":"); AppendStr(sb, n.AutomationId);
+            sb.Append(",\"class\":"); AppendStr(sb, n.ClassName);
+            sb.Append(",\"enabled\":").Append(n.Enabled ? "true" : "false");
+            sb.Append(",\"offscreen\":").Append(n.Offscreen ? "true" : "false");
+            sb.Append(",\"hasRect\":").Append(n.HasRect ? "true" : "false");
+            sb.Append(",\"screenX\":").Append(n.ScreenX).Append(",\"screenY\":").Append(n.ScreenY);
+            sb.Append(",\"width\":").Append(n.Width).Append(",\"height\":").Append(n.Height);
+            // 창 기준 좌표 — click 이 받는 것과 같은 좌표계다. 창 밖이면 음수가 될 수 있다.
+            sb.Append(",\"wx\":").Append(n.Wx).Append(",\"wy\":").Append(n.Wy);
+            sb.Append('}');
+        }
+        sb.Append("]}");
+        Console.Out.Write(sb.ToString());
+        return 0;
+    }
+
+    private static void WalkUia(TreeWalker walker, AutomationElement e, int depth, int maxDepth,
+        int maxNodes, List<UiaNode> outp, N.RECT captureRect)
+    {
+        if (e == null || outp.Count >= maxNodes || depth > maxDepth) return;
+
+        var n = new UiaNode { Depth = depth };
+        // 속성마다 따로 감싼다. 하나가 던져도 나머지는 건진다 —
+        // 다른 프로세스의 UIA 는 타이밍에 따라 개별 속성에서 실패한다.
+        try { n.Name = e.Current.Name ?? ""; } catch { }
+        try { n.AutomationId = e.Current.AutomationId ?? ""; } catch { }
+        try { n.ClassName = e.Current.ClassName ?? ""; } catch { }
+        try { n.ControlType = e.Current.ControlType.ProgrammaticName.Replace("ControlType.", ""); } catch { }
+        try { n.Enabled = e.Current.IsEnabled; } catch { }
+        try { n.Offscreen = e.Current.IsOffscreen; } catch { }
+        try
+        {
+            var r = e.Current.BoundingRectangle;
+            if (!r.IsEmpty && !double.IsInfinity(r.Width) && !double.IsInfinity(r.Height))
+            {
+                n.HasRect = true;
+                n.ScreenX = (int)Math.Round(r.X);
+                n.ScreenY = (int)Math.Round(r.Y);
+                n.Width = (int)Math.Round(r.Width);
+                n.Height = (int)Math.Round(r.Height);
+                n.Wx = n.ScreenX - captureRect.Left;
+                n.Wy = n.ScreenY - captureRect.Top;
+            }
+        }
+        catch { }
+        outp.Add(n);
+
+        try
+        {
+            var k = walker.GetFirstChild(e);
+            while (k != null && outp.Count < maxNodes)
+            {
+                WalkUia(walker, k, depth + 1, maxDepth, maxNodes, outp, captureRect);
+                k = walker.GetNextSibling(k);
+            }
+        }
+        catch { }
+    }
+
     private static int CmdClick(Dictionary<string, string> a)
     {
         string xS = Get(a, "x"), yS = Get(a, "y");

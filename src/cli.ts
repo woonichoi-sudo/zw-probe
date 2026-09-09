@@ -6,7 +6,7 @@
 import { mkdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 
-import { TARGET_PROCESS, click, listWindows, sendKey, shot } from './win/zwwin.ts'
+import { TARGET_PROCESS, click, listWindows, sendKey, shot, uiaTree } from './win/zwwin.ts'
 import { analyze, judgeCapture } from './image/stats.ts'
 import type { WindowFilter } from './win/zwwin.ts'
 import { findConflicts, findShortcut } from './input/shortcut.ts'
@@ -15,6 +15,8 @@ import { locateLog, logDir, readEntries } from './log/logFile.ts'
 import { summarize, toSeverity } from './log/parse.ts'
 import { judgeActivity, styleNames } from './win/windowState.ts'
 import { judgeClick } from './input/click.ts'
+import { clickPoint, findNodes, findOne, readDocumentState } from './uia/tree.ts'
+import type { NodeQuery } from './uia/tree.ts'
 
 function parseArgs(argv: string[]): { verb: string; rest: string[]; flags: Map<string, string> } {
   const verb = argv[0] !== undefined && !argv[0].startsWith('--') ? argv[0] : ''
@@ -256,24 +258,56 @@ function cmdState(flags: Map<string, string>): number {
  * 거부한다.
  */
 function cmdClick(rest: string[], flags: Map<string, string>): number {
-  // 위치 인자 "x y" 도 받는다 — 좌표를 두 번 타이핑하는 것이 성가시기 때문이다.
-  const xs = flags.get('x') ?? rest[0]
-  const ys = flags.get('y') ?? rest[1]
-  if (xs === undefined || ys === undefined) {
-    console.error('좌표가 필요하다: zwprobe click <x> <y>  (창 왼쪽 위 기준, shot 의 PNG 좌표와 같다)')
-    return 1
-  }
-
-  const x = Number(xs)
-  const y = Number(ys)
-  if (!Number.isInteger(x) || !Number.isInteger(y)) {
-    console.error(`좌표는 정수여야 한다: "${xs}" "${ys}"`)
-    return 1
-  }
-
   const f = filterFrom(flags)
   if (f.process === undefined && f.pid === undefined && f.title === undefined) {
     f.process = TARGET_PROCESS
+  }
+
+  // 좌표를 직접 주는 길과 UIA 로 요소를 찾아 그 한가운데를 누르는 길이 있다.
+  // **이름으로 누르는 쪽이 눈대중 좌표보다 낫다** — 창 크기나 레이아웃이 바뀌어도
+  // 따라간다. 다만 이름이 없는 요소(툴바 버튼)는 여전히 좌표뿐이다.
+  const q = queryFrom(flags)
+  let x: number
+  let y: number
+
+  if (q !== undefined) {
+    if (rest.length > 0 || flags.has('x') || flags.has('y')) {
+      console.error('좌표와 요소 질의를 함께 줄 수 없다. 어느 쪽을 눌러야 하는지 정할 수 없다.')
+      return 1
+    }
+    // 누를 수 있는 것만 본다 — 크기 0 이나 화면 밖 요소는 좌표가 있어도 못 누른다.
+    const dump = uiaTree({ ...f, ...(flags.has('max') ? { max: Number(flags.get('max')) } : {}) })
+    const hit = findOne(dump, { ...q, clickableOnly: true })
+    if (!hit.found) {
+      console.error(`요소를 특정하지 못했다 — ${hit.reason}`)
+      return 1
+    }
+    const p = clickPoint(hit.node)
+    x = p.x
+    y = p.y
+    console.log(
+      `요소  [${hit.node.controlType}] "${hit.node.name}"` +
+        `${hit.node.automationId ? ` id="${hit.node.automationId}"` : ''} cls=${hit.node.class}` +
+        ` (${hit.node.wx},${hit.node.wy}) ${hit.node.width}x${hit.node.height}`,
+    )
+  } else {
+    // 위치 인자 "x y" 도 받는다 — 좌표를 두 번 타이핑하는 것이 성가시기 때문이다.
+    const xs = flags.get('x') ?? rest[0]
+    const ys = flags.get('y') ?? rest[1]
+    if (xs === undefined || ys === undefined) {
+      console.error(
+        '좌표나 요소 질의가 필요하다:\n' +
+          '  zwprobe click <x> <y>            창 왼쪽 위 기준. shot 의 PNG 좌표와 같다\n' +
+          '  zwprobe click --name "Simulation"  UIA 로 찾아 한가운데를 누른다',
+      )
+      return 1
+    }
+    x = Number(xs)
+    y = Number(ys)
+    if (!Number.isInteger(x) || !Number.isInteger(y)) {
+      console.error(`좌표는 정수여야 한다: "${xs}" "${ys}"`)
+      return 1
+    }
   }
 
   const buttonArg = flags.get('button') || 'left'
@@ -300,6 +334,101 @@ function cmdClick(rest: string[], flags: Map<string, string>): number {
     console.log('주의  커서를 원래 자리로 돌려놓지 못했다.')
   }
   return v.onTarget ? 0 : 2
+}
+
+/** 필터를 주지 않았으면 대상 앱으로 좁힌다. 화면의 모든 창을 섞으면 의미가 없다. */
+function targetFilter(flags: Map<string, string>): WindowFilter {
+  const f = filterFrom(flags)
+  if (f.process === undefined && f.pid === undefined && f.title === undefined) {
+    f.process = TARGET_PROCESS
+  }
+  return f
+}
+
+/** CLI 플래그에서 노드 질의를 만든다. 아무것도 없으면 undefined. */
+function queryFrom(flags: Map<string, string>): NodeQuery | undefined {
+  const q: NodeQuery = {}
+  const name = flags.get('name')
+  const id = flags.get('id')
+  const cls = flags.get('class')
+  const type = flags.get('type')
+  if (name) q.name = name
+  if (id) q.automationId = id
+  if (cls) q.class = cls
+  if (type) q.controlType = type
+  if (flags.has('clickable')) q.clickableOnly = true
+  return Object.keys(q).length > 0 ? q : undefined
+}
+
+/**
+ * UIA 트리를 덤프하거나 질의로 걸러 보여준다.
+ *
+ * 좌표는 **창 기준**으로 찍는다 — `click` 이 받는 것과 같은 좌표계이므로 그대로
+ * 넘길 수 있다. UIA 의 화면 좌표는 원점이 캡처 사각형과 달라(실측 8px) 직접 쓰면 어긋난다.
+ */
+function cmdUia(flags: Map<string, string>): number {
+  const dump = uiaTree({
+    ...targetFilter(flags),
+    ...(flags.has('depth') ? { depth: Number(flags.get('depth')) } : {}),
+    ...(flags.has('max') ? { max: Number(flags.get('max')) } : {}),
+  })
+
+  const q = queryFrom(flags)
+  const shown = q === undefined ? dump.nodes : findNodes(dump.nodes, q)
+
+  console.log(
+    `창    ${dump.window.width}x${dump.window.height} hwnd=${dump.window.hwnd} "${dump.window.title}"`,
+  )
+  console.log(
+    `트리  노드 ${dump.nodes.length}개 · ${dump.elapsedMs}ms · depth<=${dump.maxDepth}` +
+      (q === undefined ? '' : ` · 질의에 맞는 것 ${shown.length}개`),
+  )
+  if (dump.truncated) {
+    console.log(`주의  노드 ${dump.maxNodes}개에서 잘렸다. 없는 것을 없다고 단정할 수 없다 — --max 를 올린다.`)
+  }
+
+  const doc = readDocumentState(dump)
+  if (doc.fileName !== null) {
+    console.log(`문서  ${doc.fileName}${doc.dirty === true ? '  [저장 안 됨]' : ''}`)
+  }
+
+  console.log('')
+  for (const n of shown) {
+    const indent = q === undefined ? '  '.repeat(n.depth) : ''
+    const rect = n.hasRect ? `(${n.wx},${n.wy}) ${n.width}x${n.height}` : '사각형 없음'
+    const marks = `${n.enabled ? '' : ' [비활성]'}${n.offscreen ? ' [화면 밖]' : ''}`
+    console.log(
+      `${indent}[${n.controlType}] "${n.name}"` +
+        `${n.automationId ? ` id="${n.automationId}"` : ''}` +
+        ` cls=${n.class} ${rect}${marks}`,
+    )
+  }
+
+  if (q !== undefined && shown.length === 0) {
+    console.log('질의에 맞는 요소가 없다.')
+    return 1
+  }
+  return 0
+}
+
+/**
+ * 열린 파일명과 dirty 플래그를 읽는다.
+ *
+ * OS 창 제목에는 없는 정보다 — Windows 빌드는 커스텀 헤더 위젯에만 넣는다.
+ * 종료 코드: 0=읽었고 저장됨, 3=읽었고 저장 안 됨, 1=못 읽음.
+ */
+function cmdDoc(flags: Map<string, string>): number {
+  const dump = uiaTree({ ...targetFilter(flags), depth: 3 })
+  const doc = readDocumentState(dump)
+
+  if (doc.fileName === null) {
+    console.log(`문서  못 읽었다 — ${doc.reason}`)
+    return 1
+  }
+  console.log(`문서  ${doc.fileName}`)
+  console.log(`저장  ${doc.dirty === true ? '안 됨 (변경 있음)' : '됨'}`)
+  console.log(`근거  ${doc.reason}`)
+  return doc.dirty === true ? 3 : 0
 }
 
 function cmdLog(flags: Map<string, string>): number {
@@ -367,6 +496,10 @@ function main(): number {
       return cmdState(flags)
     case 'click':
       return cmdClick(rest, flags)
+    case 'uia':
+      return cmdUia(flags)
+    case 'doc':
+      return cmdDoc(flags)
     default:
       console.error(
         '사용법:\n' +
@@ -376,7 +509,10 @@ function main(): number {
           '  zwprobe key <기능이름> [--process 이름] [--method post]\n' +
           '  zwprobe log       [--min-severity WARNING] [--tail N] [--all]\n' +
           '  zwprobe state     [--process 이름] [--pid N]   (0=idle 3=busy 1=못 찾음)\n' +
-          '  zwprobe click <x> <y> [--button right] [--double]   좌표는 shot 의 PNG 기준',
+          '  zwprobe click <x> <y> [--button right] [--double]   좌표는 shot 의 PNG 기준\n' +
+          '  zwprobe click --name "Simulation"   UIA 로 찾아 한가운데를 누른다\n' +
+          '  zwprobe uia       [--name X] [--id X] [--class X] [--type X] [--depth N] [--max N]\n' +
+          '  zwprobe doc       열린 파일명과 dirty (0=저장됨 3=변경있음 1=못 읽음)',
       )
       return 1
   }

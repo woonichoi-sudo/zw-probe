@@ -19,10 +19,11 @@ import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { dirname } from 'node:path'
 
-import { click, listWindows, shot, ZWWIN_EXE } from './zwwin.ts'
+import { click, listWindows, shot, uiaTree, ZWWIN_EXE } from './zwwin.ts'
 import { analyze, judgeBlank, pixelAt } from '../image/stats.ts'
 import { isInteractive, judgeActivity, styleNames } from './windowState.ts'
 import { judgeClick } from '../input/click.ts'
+import { clickPoint, findOne, isClickable } from '../uia/tree.ts'
 import type { Bgra, Rgb } from '../image/stats.ts'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -245,6 +246,97 @@ test('창 밖 좌표는 거부한다', { skip }, async () => {
     assert.throws(() => click({ title: FIXTURE_TITLE, x: w.width, y: 10 }), /창 밖 좌표/)
     assert.throws(() => click({ title: FIXTURE_TITLE, x: 10, y: w.height }), /창 밖 좌표/)
     assert.throws(() => click({ title: FIXTURE_TITLE, x: -1, y: 10 }), /창 밖 좌표/)
+  } finally {
+    child.kill()
+  }
+})
+
+test('UIA 트리를 읽고 창 기준 좌표로 변환한다', { skip }, async () => {
+  const child = spawn(FIXTURE_EXE, [], { detached: false, stdio: 'ignore' })
+  try {
+    const w = await waitForFixture()
+    const dump = uiaTree({ title: FIXTURE_TITLE })
+
+    assert.ok(dump.nodes.length >= 2, `창과 버튼이 나와야 한다 — 실제 ${dump.nodes.length}개`)
+    assert.equal(dump.truncated, false)
+
+    const root = dump.nodes[0]!
+    assert.equal(root.depth, 0)
+    assert.equal(root.controlType, 'Window')
+    assert.equal(root.name, FIXTURE_TITLE)
+
+    // 창 기준 좌표는 캡처 사각형 원점을 뺀 값이다. 루트 창의 UIA 사각형이
+    // 캡처 사각형과 같으면 (0,0) 이 된다 — 테두리 없는 WinForms 창이 그렇다.
+    // (대상 앱은 8px 어긋난다. 그래서 변환을 한 곳에 모아둔다.)
+    assert.equal(root.screenX - w.x, root.wx)
+    assert.equal(root.screenY - w.y, root.wy)
+
+    const btn = dump.nodes.find((n) => n.name === 'fixture-target')
+    assert.notEqual(btn, undefined, 'UIA 에 이름 있는 버튼이 보여야 한다')
+    assert.equal(btn!.controlType, 'Button')
+    assert.equal(btn!.depth, 1)
+    assert.equal(isClickable(btn!), true)
+    // 버튼은 (10,10) 90x22 에 놓았다 — 창 기준 좌표가 그대로 나와야 한다.
+    assert.deepEqual({ x: btn!.wx, y: btn!.wy }, { x: 10, y: 10 })
+    assert.deepEqual(clickPoint(btn!), { x: 55, y: 21 })
+  } finally {
+    child.kill()
+  }
+})
+
+test('이름으로 찾아 누르는 전 경로가 돈다', { skip }, async () => {
+  // findOne → clickPoint → click 이 한 줄로 이어지는지 본다. 픽스처 버튼은
+  // 눌리면 **우하단** 사분면을 검게 만든다 — 버튼 자신은 좌상단에 있으므로
+  // 확인할 픽셀이 버튼에 가려지지 않는다.
+  const dir = mkdtempSync(join(tmpdir(), 'zwprobe-uia-'))
+  const child = spawn(FIXTURE_EXE, [], { detached: false, stdio: 'ignore' })
+
+  try {
+    const w = await waitForFixture()
+    await sleep(200)
+
+    const hit = findOne(uiaTree({ title: FIXTURE_TITLE }), {
+      name: 'fixture-target',
+      clickableOnly: true,
+    })
+    assert.equal(hit.found, true, hit.found === false ? hit.reason : '')
+    if (hit.found !== true) return
+
+    const p = clickPoint(hit.node)
+    const r = click({ title: FIXTURE_TITLE, x: p.x, y: p.y })
+    assert.equal(judgeClick(r).onTarget, true, judgeClick(r).reason)
+
+    await sleep(200)
+
+    const raw = join(dir, 'after.bgra')
+    const info = shot({ title: FIXTURE_TITLE, png: join(dir, 'after.png'), raw })
+    const img: Bgra = {
+      width: info.window.width,
+      height: info.window.height,
+      data: new Uint8Array(readFileSync(raw)),
+    }
+
+    const px = pixelAt(img, Math.floor((w.width * 3) / 4), Math.floor((w.height * 3) / 4))
+    assert.ok(
+      px.r < 20 && px.g < 20 && px.b < 20,
+      `버튼이 눌렸으면 우하단이 검어야 한다 — 실제 ${show(px)}`,
+    )
+  } finally {
+    child.kill()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('이름이 겹치면 누르지 않고 거부한다', { skip }, async () => {
+  // 픽스처에는 겹치는 이름이 없으므로, 트리를 읽어 질의를 느슨하게 줘서 확인한다.
+  // "e" 는 창 이름("zwprobe-fixture")과 버튼 이름("fixture-target") 둘에 다 들어 있다.
+  const child = spawn(FIXTURE_EXE, [], { detached: false, stdio: 'ignore' })
+  try {
+    await waitForFixture()
+    const r = findOne(uiaTree({ title: FIXTURE_TITLE }), { name: 'e' })
+    assert.equal(r.found, false)
+    assert.ok(r.found === false && r.candidates.length >= 2)
+    assert.match(r.reason, /정할 수 없다/)
   } finally {
     child.kill()
   }

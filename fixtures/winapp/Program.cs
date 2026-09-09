@@ -34,12 +34,27 @@ internal sealed class FixtureForm : Form
         ClientSize = new Size(400, 300);
         ShowInTaskbar = false;
         DoubleBuffered = true;
+
+        mTarget.Click += (s, e) => { mLastClick = new Point(ClientSize.Width - 1, ClientSize.Height - 1); Invalidate(); };
+        Controls.Add(mTarget);
     }
 
     // 클릭이 실제로 닿았는지 **화면으로** 확인하기 위한 것이다. 마지막으로 눌린
     // 사분면을 검게 칠한다. 4분면 색이 다 다르므로 어느 칸이 눌렸는지 캡처만 보고
     // 알 수 있다 — "좌표가 창 기준으로 옳게 변환됐는가" 가 이걸로 검증된다.
     private Point? mLastClick;
+
+    // 이름으로 찾아 누르는 경로(zwprobe click --name)를 검증하기 위한 버튼이다.
+    // UIA 에 이름이 실리는 자식이 하나는 있어야 findOne → clickPoint → click 전 경로를
+    // 픽스처에서 돌릴 수 있다. 눌리면 **우하단** 사분면을 검게 만든다 — 버튼 자신은
+    // 좌상단에 있으므로 확인할 픽셀이 버튼에 가려지지 않는다.
+    private readonly Button mTarget = new Button
+    {
+        Text = "fixture-target",
+        Location = new Point(10, 10),
+        Size = new Size(90, 22),
+        TabStop = false,
+    };
 
     protected override void OnMouseDown(MouseEventArgs e)
     {
