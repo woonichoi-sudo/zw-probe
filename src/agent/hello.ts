@@ -29,6 +29,26 @@ export type AgentHello = {
    * 트리가 비어 있는 것은 "위젯이 없다" 가 아니라 "아직 안 만들어졌다" 다.
    */
   sawUi: boolean
+  /**
+   * 위젯 개수가 멈춘 뒤에 쓴 스냅샷인가.
+   *
+   * **false 면 과도 상태일 수 있다.** 플러그인은 개수가 3초간 안 변하면 정착으로 보고
+   * 쓰는데, 마감(180초)까지 정착이 안 오면 그때의 상태를 그대로 쓴다. 대상 앱은
+   * 스플래시가 65초 넘게 떠 있고 그 동안 위젯이 계속 늘어난다 — 정착 전 트리는
+   * 레이아웃도 안 된 `640x480` 위젯 덩어리다 (2026-09-09 실측).
+   */
+  settled: boolean
+  /**
+   * 프로세스 안의 위젯 총 개수. 상한과 무관하게 실제 규모다.
+   *
+   * `widgetBudgetLeft` 가 0이어서 트리가 잘렸을 때 **"몇 개를 못 봤나" 를 말해준다.**
+   * 이 값이 없으면 "없다" 를 단정할 수 없다는 경고만 남고 규모를 모른다.
+   */
+  widgetTotal: number
+  /** 몇 번째 보고인가. 2 이상이면 앞의 (스플래시 시절) 스냅샷을 스스로 덮어썼다 */
+  writeCount: number
+  /** 스타일이 만들어진 뒤 보고까지의 경과 시간(ms). 대상 앱은 90초쯤 걸린다 */
+  elapsedMs: number
   pid: number
   /** 플러그인을 컴파일할 때의 Qt 버전 (QT_VERSION_STR) */
   qtCompiled: string
@@ -105,6 +125,12 @@ export function parseAgentHello(raw: unknown): ParsedHello {
       styleKey: str(h.styleKey),
       attempts: num(h.attempts, -1),
       sawUi: bool(h.sawUi),
+      // 옛 hello 에는 이 셋이 없다. 없으면 -1/false 로 둬서 **"정착했다" 를 공짜로
+      // 얻지 못하게** 한다 — 모르는 것을 좋은 쪽으로 채우면 조용히 틀린다.
+      settled: bool(h.settled),
+      widgetTotal: num(h.widgetTotal, -1),
+      writeCount: num(h.writeCount, -1),
+      elapsedMs: num(h.elapsedMs, -1),
       pid: num(h.pid),
       qtCompiled: str(h.qtCompiled),
       qtRuntime: str(h.qtRuntime),
@@ -142,6 +168,44 @@ export function judgeAbi(hello: AgentHello): AbiVerdict {
     }
   }
   return { match: true, reason: `컴파일·런타임 모두 Qt ${hello.qtRuntime}.` }
+}
+
+export type TreeVerdict = {
+  /** 이 트리를 근거로 판단해도 되는가 */
+  trustworthy: boolean
+  reason: string
+  /** 트리가 상한에 잘렸는가. trustworthy 와 별개다 — 잘려도 있는 것은 진짜다 */
+  truncated: boolean
+}
+
+/**
+ * 위젯 트리를 믿을 수 있는가.
+ *
+ * **"UI 를 봤다" 로는 부족하다.** 대상 앱은 메인 창보다 65초 먼저 스플래시를 띄우고,
+ * 그 동안 "보이는 최상위 위젯" 이 이미 존재한다. 그때 찍은 트리는 위젯이 대부분
+ * `640x480`(레이아웃 전 Qt 기본 크기)에 숨김 상태인 쓰레기다 — 2026-09-09 에 실제로
+ * 그걸 잡았다. 그래서 **개수가 멈췄다는 것(`settled`)까지 요구한다.**
+ *
+ * 잘림(`truncated`)은 신뢰와 별개다. 상한에 닿으면 **"없다" 를 단정할 수 없을** 뿐,
+ * 트리에 실려 있는 것은 여전히 진짜다. 그래서 따로 돌려준다.
+ */
+export function judgeTree(hello: AgentHello): TreeVerdict {
+  const truncated = hello.widgetBudgetLeft === 0
+  if (!hello.sawUi) {
+    return {
+      trustworthy: false,
+      reason: '상한까지 기다려도 보이는 창이 없었다. 트리가 빈 것은 "위젯이 없다" 가 아니다.',
+      truncated,
+    }
+  }
+  if (!hello.settled) {
+    return {
+      trustworthy: false,
+      reason: '위젯 개수가 멈추기 전에 찍혔다. 시작 중(스플래시) 트리일 수 있다.',
+      truncated,
+    }
+  }
+  return { trustworthy: true, reason: '개수가 멈춘 뒤에 찍혔다.', truncated }
 }
 
 /** 위젯 트리를 평평하게 펼친다. 이름으로 찾을 때 쓴다. */

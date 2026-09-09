@@ -5,7 +5,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { findWidgets, flattenWidgets, judgeAbi, parseAgentHello } from './hello.ts'
+import { findWidgets, flattenWidgets, judgeAbi, judgeTree, parseAgentHello } from './hello.ts'
 import type { AgentHello } from './hello.ts'
 
 /** 픽스처에서 실제로 나온 hello (2026-09-09). 값을 줄여 옮겼다. */
@@ -15,8 +15,12 @@ const REAL = {
   pid: 27132,
   qtCompiled: '5.15.6',
   qtRuntime: '5.15.6',
-  attempts: 1,
+  attempts: 13,
   sawUi: true,
+  settled: true,
+  widgetTotal: 7,
+  writeCount: 1,
+  elapsedMs: 3250,
   writtenAt: '2026-09-09T08:00:00Z',
   appFilePath: 'D:/z-emotion/zw-probe/bin/zwqtfixture.exe',
   topLevelCount: 1,
@@ -173,4 +177,41 @@ test('findWidgets — 빈 이름은 아무것도 맞히지 않는다', () => {
 
 test('findWidgets — 없으면 빈 목록', () => {
   assert.deepEqual(findWidgets(hello().topLevelWidgets, '없는이름'), [])
+})
+
+test('judgeTree — 개수가 멈춘 뒤에 찍혔으면 믿는다', () => {
+  const v = judgeTree(hello())
+  assert.equal(v.trustworthy, true)
+  assert.equal(v.truncated, false)
+})
+
+test('judgeTree — UI 를 못 봤으면 빈 트리를 "위젯이 없다" 로 읽지 않는다', () => {
+  const v = judgeTree(hello({ sawUi: false, settled: true }))
+  assert.equal(v.trustworthy, false)
+  assert.match(v.reason, /위젯이 없다/)
+})
+
+test('judgeTree — 정착 전 스냅샷은 믿지 않는다', () => {
+  // 대상 앱은 메인 창보다 65초 먼저 스플래시를 띄운다. 그때 트리는 레이아웃도 안 된
+  // 640x480 위젯 덩어리였다 (2026-09-09 실측). sawUi 만으로는 이것을 걸러내지 못한다.
+  const v = judgeTree(hello({ sawUi: true, settled: false }))
+  assert.equal(v.trustworthy, false)
+  assert.match(v.reason, /스플래시/)
+})
+
+test('judgeTree — 잘림은 신뢰와 별개다', () => {
+  // 상한에 닿으면 "없다" 를 단정할 수 없을 뿐, 실려 있는 것은 진짜다.
+  const v = judgeTree(hello({ widgetBudgetLeft: 0 }))
+  assert.equal(v.truncated, true)
+  assert.equal(v.trustworthy, true)
+})
+
+test('judgeTree — settled 필드가 없는 옛 hello 는 믿지 않는다', () => {
+  // 모르는 것을 좋은 쪽으로 채우면 조용히 틀린다. 필드가 없으면 정착을 확인할 수 없다.
+  const { settled: _drop, ...legacy } = REAL
+  const r = parseAgentHello(legacy)
+  assert.equal(r.ok, true)
+  if (!r.ok) return
+  assert.equal(r.hello.settled, false)
+  assert.equal(judgeTree(r.hello).trustworthy, false)
 })

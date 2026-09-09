@@ -24,7 +24,7 @@ import { activePanel, clickPoint, findNodes, findOne, readDocumentState } from '
 import type { NodeQuery } from './uia/tree.ts'
 import { BASELINE_DIR, listBaselines, runScenario } from './scenario/run.ts'
 import type { Scenario } from './scenario/steps.ts'
-import { flattenWidgets, judgeAbi, parseAgentHello } from './agent/hello.ts'
+import { flattenWidgets, judgeAbi, judgeTree, parseAgentHello } from './agent/hello.ts'
 
 function parseArgs(argv: string[]): { verb: string; rest: string[]; flags: Map<string, string> } {
   const verb = argv[0] !== undefined && !argv[0].startsWith('--') ? argv[0] : ''
@@ -673,12 +673,20 @@ function cmdAgent(flags: Map<string, string>): number {
   console.log(`ABI   ${abi.match ? '일치' : '어긋남'} — ${abi.reason}`)
 
   const flat = flattenWidgets(h.topLevelWidgets)
+  const total = h.widgetTotal >= 0 ? h.widgetTotal : flat.length
   console.log(
-    `위젯  최상위 ${h.topLevelCount}개 · 트리에 실린 것 ${flat.length}개 · ` +
-      `시도 ${h.attempts}회 · UI ${h.sawUi ? '봤다' : '못 봤다'}`,
+    `위젯  최상위 ${h.topLevelCount}개 · 전체 ${total}개 · 트리에 실린 것 ${flat.length}개`,
   )
-  if (h.widgetBudgetLeft === 0) {
-    console.log('주의  위젯 상한에 닿았다. 트리가 잘렸으니 "없다" 를 단정할 수 없다.')
+  const secs = h.elapsedMs >= 0 ? ` · ${(h.elapsedMs / 1000).toFixed(1)}초 걸림` : ''
+  const rewrote = h.writeCount > 1 ? ` · ${h.writeCount}번째 스냅샷(앞의 것을 덮었다)` : ''
+  console.log(`시점  시도 ${h.attempts}회${secs}${rewrote}`)
+
+  const tree = judgeTree(h)
+  console.log(`트리  ${tree.trustworthy ? '믿을 수 있다' : '믿을 수 없다'} — ${tree.reason}`)
+  if (tree.truncated) {
+    console.log(
+      `주의  위젯 상한에 닿았다. ${total - flat.length}개가 트리에 없으니 "없다" 를 단정할 수 없다.`,
+    )
   }
 
   // 이름 있는 위젯만 보여준다. 이름 없는 것이 대부분이고, 주소를 매길 수 있는
@@ -697,7 +705,9 @@ function cmdAgent(flags: Map<string, string>): number {
   }
 
   if (!abi.match) return 1
-  return h.sawUi ? 0 : 3
+  // **과도 상태 트리는 없는 트리와 같이 쓸 수 없다.** 그래서 sawUi 만 보지 않고
+  // judgeTree 를 쓴다 — 스플래시 시절 트리로 0을 돌려주면 조용히 틀린 판단이 나간다.
+  return tree.trustworthy ? 0 : 3
 }
 
 function cmdLog(flags: Map<string, string>): number {
