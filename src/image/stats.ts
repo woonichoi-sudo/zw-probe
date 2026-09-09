@@ -22,7 +22,18 @@ export type ImageStats = {
   uniformColor: number | null
 }
 
+export type Rgb = { r: number; g: number; b: number }
+
 const SAMPLE_STRIDE = 37 // 소수라서 규칙적인 격자 무늬와 어긋난다
+
+/** (x, y) 픽셀의 색. 범위를 벗어나면 던진다. */
+export function pixelAt(img: Bgra, x: number, y: number): Rgb {
+  if (x < 0 || y < 0 || x >= img.width || y >= img.height) {
+    throw new Error(`(${x}, ${y}) 는 ${img.width}x${img.height} 범위 밖이다`)
+  }
+  const o = (y * img.width + x) * 4
+  return { r: img.data[o + 2]!, g: img.data[o + 1]!, b: img.data[o]! }
+}
 
 export function bgraByteLength(width: number, height: number): number {
   return width * height * 4

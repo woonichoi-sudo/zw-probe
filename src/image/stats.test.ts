@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
-import { analyze, bgraByteLength, isWellFormed, judgeBlank } from './stats.ts'
+import { analyze, bgraByteLength, isWellFormed, judgeBlank, pixelAt } from './stats.ts'
 import type { Bgra } from './stats.ts'
 
 /** 모든 픽셀이 같은 색인 이미지 */
@@ -81,6 +81,21 @@ test('analyze — 절반만 검정이면 비율이 0.5 다', () => {
   const s = analyze(generated(10, 10, (i) => (i < 50 ? [0, 0, 0] : [255, 255, 255])))
   assert.equal(s.blackRatio, 0.5)
   assert.equal(s.uniformColor, null)
+})
+
+test('pixelAt — 행 우선, 좌상단이 (0,0) 이다', () => {
+  // 4x2 이미지에 인덱스를 빨강 채널로 심는다
+  const img = generated(4, 2, (i) => [i * 10, 0, 0])
+  assert.equal(pixelAt(img, 0, 0).r, 0)
+  assert.equal(pixelAt(img, 3, 0).r, 30)
+  assert.equal(pixelAt(img, 0, 1).r, 40) // 두 번째 행 시작
+  assert.equal(pixelAt(img, 3, 1).r, 70)
+})
+
+test('pixelAt — 범위를 벗어나면 던진다', () => {
+  const img = solid(4, 4, 0, 0, 0)
+  assert.throws(() => pixelAt(img, 4, 0), /범위 밖/)
+  assert.throws(() => pixelAt(img, 0, -1), /범위 밖/)
 })
 
 test('judgeBlank — 단색은 캡처 실패로 본다', () => {
