@@ -8,6 +8,9 @@ import { dirname, resolve } from 'node:path'
 
 import { TARGET_PROCESS, click, listWindows, sendKey, shot, uiaTree } from './win/zwwin.ts'
 import { analyze, judgeCapture } from './image/stats.ts'
+import { readCapture, writeCaptureMeta } from './image/captureFile.ts'
+import { checkBaseline } from './image/captureMeta.ts'
+import { diff, judgeSame } from './image/diff.ts'
 import type { WindowFilter } from './win/zwwin.ts'
 import { findConflicts, findShortcut } from './input/shortcut.ts'
 import { loadShortcuts } from './input/shortcutFile.ts'
@@ -85,6 +88,24 @@ function cmdShot(flags: Map<string, string>): number {
   if (info.candidates > 1) {
     console.log(`주의  조건에 맞는 창이 ${info.candidates} 개다. 가장 큰 창을 찍었다.`)
   }
+
+  // 사이드카를 함께 쓴다. `.bgra` 는 자기 크기를 모르므로 baseline 으로 며칠 뒤에
+  // 읽으려면 이것이 있어야 한다. 근거는 src/image/captureMeta.ts 머리말.
+  writeCaptureMeta(out, {
+    format: 'bgra8',
+    width: w.width,
+    height: w.height,
+    takenAt: new Date().toISOString(),
+    mode: info.mode,
+    window: {
+      title: w.title,
+      class: w.class,
+      pid: w.pid,
+      fileVersion: w.fileVersion,
+      width: w.width,
+      height: w.height,
+    },
+  })
 
   const stats = analyze({
     width: w.width,
