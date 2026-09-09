@@ -6,13 +6,14 @@
 import { mkdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 
-import { listWindows, sendKey, shot } from './win/zwwin.ts'
+import { TARGET_PROCESS, listWindows, sendKey, shot } from './win/zwwin.ts'
 import { analyze, judgeCapture } from './image/stats.ts'
 import type { WindowFilter } from './win/zwwin.ts'
 import { findConflicts, findShortcut } from './input/shortcut.ts'
 import { loadShortcuts } from './input/shortcutFile.ts'
 import { locateLog, logDir, readEntries } from './log/logFile.ts'
 import { summarize, toSeverity } from './log/parse.ts'
+import { judgeActivity, styleNames } from './win/windowState.ts'
 
 function parseArgs(argv: string[]): { verb: string; rest: string[]; flags: Map<string, string> } {
   const verb = argv[0] !== undefined && !argv[0].startsWith('--') ? argv[0] : ''
@@ -107,12 +108,22 @@ function cmdShot(flags: Map<string, string>): number {
   return 0
 }
 
-/** 실행 중인 대상 앱의 버전. 창을 못 찾으면 undefined — 그러면 최신 디렉토리로 떨어진다. */
+/**
+ * 실행 중인 대상 앱의 버전. 창을 못 찾으면 undefined — 그러면 최신 디렉토리로 떨어진다.
+ *
+ * 필터가 하나도 없으면 대상 프로세스로 기본값을 넣는다. 예전에는 필터 없이 첫 창의
+ * 버전을 읽어서 **엉뚱한 프로세스의 버전** 으로 shortcut.ini 를 골랐다
+ * (2026-09-09 실측: 앱은 5.0.34 인데 5.1.0 을 newest 로 골랐다). 버전이 다르면
+ * 같은 이름의 기능이 다른 키에 묶여 있을 수 있으므로 조용히 다른 명령이 나간다.
+ */
 function runningAppVersion(flags: Map<string, string>): string | undefined {
+  const f = filterFrom(flags)
+  if (f.process === undefined && f.pid === undefined && f.title === undefined) {
+    f.process = TARGET_PROCESS
+  }
   try {
-    const wins = listWindows(filterFrom(flags))
-    const v = wins[0]?.fileVersion
-    return v !== undefined && v !== '' ? v : undefined
+    // 창이 여럿이면 버전을 읽은 첫 창을 쓴다. 같은 프로세스이므로 값이 같다.
+    return listWindows(f).find((w) => w.fileVersion !== '')?.fileVersion
   } catch {
     return undefined
   }
@@ -194,6 +205,48 @@ function cmdKey(rest: string[], flags: Map<string, string>): number {
   return 0
 }
 
+/**
+ * 앱의 창 구조와 "지금 조작할 수 있는가" 를 보고한다.
+ *
+ * M3 러너가 sleep 추측 대신 물어볼 질문이 이것이다. 필터를 주지 않으면 대상 앱으로
+ * 좁힌다 — 화면의 모든 창을 섞으면 "메인 창" 이 무의미해진다.
+ *
+ * 종료 코드로도 답한다: 0=idle, 3=busy, 1=못 찾음. 셸에서 바로 분기할 수 있다.
+ */
+function cmdState(flags: Map<string, string>): number {
+  const f = filterFrom(flags)
+  if (f.process === undefined && f.pid === undefined && f.title === undefined) {
+    f.process = TARGET_PROCESS
+  }
+
+  const activity = judgeActivity(listWindows(f))
+  const { main, extras } = activity.classified
+
+  if (main === null) {
+    const shown = [
+      f.process !== undefined ? `process=${f.process}` : '',
+      f.pid !== undefined ? `pid=${f.pid}` : '',
+      f.title !== undefined ? `title=${f.title}` : '',
+    ]
+      .filter((s) => s !== '')
+      .join(' ')
+    console.log(`대상  ${shown} — 보이는 창을 찾지 못했다`)
+  } else {
+    console.log(`메인  ${main.width}x${main.height} hwnd=${main.hwnd} pid=${main.pid} "${main.title}"`)
+    console.log(`      ${styleNames(main.style, main.exStyle).join(' ')}`)
+  }
+
+  for (const e of extras) {
+    const w = e.window
+    const flag = e.interactive ? '' : ' [입력 불가]'
+    console.log(`추가  ${w.width}x${w.height} hwnd=${w.hwnd} owner=${w.owner} ${e.relation}${flag} "${w.title}"`)
+    console.log(`      ${styleNames(w.style, w.exStyle).join(' ')}`)
+  }
+
+  console.log(`판정  ${activity.state} — ${activity.reason}`)
+  return activity.state === 'idle' ? 0 : activity.state === 'busy' ? 3 : 1
+}
+
 function cmdLog(flags: Map<string, string>): number {
   const found = locateLog(flags.get('app-version') || runningAppVersion(flags))
   if (found === null) {
@@ -255,6 +308,8 @@ function main(): number {
       return cmdKey(rest, flags)
     case 'log':
       return cmdLog(flags)
+    case 'state':
+      return cmdState(flags)
     default:
       console.error(
         '사용법:\n' +
@@ -262,7 +317,8 @@ function main(): number {
           '  zwprobe windows   [--process 이름] [--pid N] [--title 조각]\n' +
           '  zwprobe shortcuts [--filter 조각]\n' +
           '  zwprobe key <기능이름> [--process 이름] [--method post]\n' +
-          '  zwprobe log       [--min-severity WARNING] [--tail N] [--all]',
+          '  zwprobe log       [--min-severity WARNING] [--tail N] [--all]\n' +
+          '  zwprobe state     [--process 이름] [--pid N]   (0=idle 3=busy 1=못 찾음)',
       )
       return 1
   }

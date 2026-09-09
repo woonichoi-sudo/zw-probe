@@ -12,12 +12,27 @@ import type { KeyStroke } from '../input/shortcut.ts'
 const HERE = dirname(fileURLToPath(import.meta.url))
 export const ZWWIN_EXE = resolve(HERE, '../../bin/zwwin.exe')
 
+/**
+ * 대상 앱의 프로세스 이름. 필터를 주지 않은 명령이 **실행 중인 앱 버전** 을 알아낼 때
+ * 쓰는 기본값이다. 필터 없이 첫 창을 집으면 엉뚱한 프로세스의 버전을 읽어 다른 버전의
+ * shortcut.ini 로 조용히 다른 명령을 보낸다 (2026-09-09 실측: 5.1.0 을 골랐고 앱은 5.0.34).
+ */
+export const TARGET_PROCESS = 'z-weave'
+
 export type WindowInfo = {
   hwnd: number
   pid: number
   title: string
   class: string
   minimized: boolean
+  /** 이 창을 소유한 창의 hwnd. 0 이면 소유자가 없다. 다이얼로그 판별의 근거 */
+  owner: number
+  /** 입력을 받을 수 있는가 (IsWindowEnabled) */
+  enabled: boolean
+  /** WS_* 비트 그대로. 해석은 windowState.ts 가 한다 */
+  style: number
+  /** WS_EX_* 비트 그대로 */
+  exStyle: number
   /** 프로세스 실행 파일 버전. 못 읽으면 빈 문자열. 설정 디렉토리를 고를 때 쓴다 */
   fileVersion: string
   exePath: string

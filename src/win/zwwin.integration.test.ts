@@ -6,6 +6,8 @@
 //   ② 상하가 뒤집히지 않았는가 (좌상단이 빨강)
 //   ③ 채널 순서가 BGRA 인가 (빨강이 초록·파랑으로 읽히지 않는가)
 //
+// 뒤이어 소유된 모달 다이얼로그를 띄워 owner·enabled·style 보고 경로를 확인한다.
+//
 //   node --test src/win/zwwin.integration.test.ts
 
 import { test } from 'node:test'
@@ -19,6 +21,7 @@ import { dirname } from 'node:path'
 
 import { listWindows, shot, ZWWIN_EXE } from './zwwin.ts'
 import { analyze, judgeBlank, pixelAt } from '../image/stats.ts'
+import { isInteractive, judgeActivity, styleNames } from './windowState.ts'
 import type { Bgra, Rgb } from '../image/stats.ts'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -111,4 +114,63 @@ test('없는 창을 요청하면 예외로 알려준다', { skip }, () => {
     () => shot({ title: '존재하지-않는-창-zzz', png: join(tmpdir(), 'never.png') }),
     /찾지 못했다/,
   )
+})
+
+test('소유된 모달 다이얼로그를 창 구조로 읽어낸다', { skip }, async () => {
+  // zwwin.exe 가 owner·enabled·style 을 옳게 보고하는지 확인한다.
+  //
+  // **이 테스트가 검증하지 않는 것**: Qt 의 모달 구현이 WinForms 와 같다는 것.
+  // WinForms 는 ShowDialog 에서 소유자에 EnableWindow(FALSE) 를 건다. Qt 는 자체
+  // 이벤트 루프로 모달을 처리할 수도 있어서, 대상 앱에서 메인 창이 실제로
+  // 비활성이 되는지는 실앱에서 다이얼로그를 한 번 띄워봐야 닫힌다.
+  // 여기서 닫히는 것은 "보고 경로가 옳다" 는 것뿐이다.
+  const child = spawn(FIXTURE_EXE, ['--dialog'], { detached: false, stdio: 'ignore' })
+
+  try {
+    await waitForFixture()
+    // 모달은 메인 창이 뜬 뒤 BeginInvoke 로 열린다. 두 창이 다 잡힐 때까지 기다린다.
+    const deadline = Date.now() + 8000
+    let wins = listWindows({ title: FIXTURE_TITLE })
+    while (wins.length < 2 && Date.now() < deadline) {
+      await sleep(100)
+      wins = listWindows({ title: FIXTURE_TITLE })
+    }
+    assert.equal(wins.length, 2, `메인 창과 다이얼로그 둘이 잡혀야 한다 — 실제 ${wins.length}개`)
+
+    const activity = judgeActivity(wins)
+    const { main, extras } = activity.classified
+
+    assert.notEqual(main, null, '메인 창을 골라내야 한다')
+    assert.equal(main!.title, FIXTURE_TITLE)
+
+    assert.equal(extras.length, 1)
+    const dialog = extras[0]!
+    assert.equal(dialog.window.title, `${FIXTURE_TITLE}-dialog`)
+    assert.equal(dialog.relation, 'owned-by-main', '다이얼로그의 소유자가 메인 창이어야 한다')
+    assert.equal(dialog.window.owner, main!.hwnd)
+
+    // WinForms 모달은 소유자를 비활성으로 만든다. 그 사실이 그대로 실려야 한다.
+    assert.equal(main!.enabled, false, '모달이 떠 있으면 소유자가 비활성이다')
+    assert.equal(isInteractive(main!), false)
+    assert.ok(styleNames(main!.style, main!.exStyle).includes('DISABLED'))
+
+    assert.equal(activity.state, 'busy')
+  } finally {
+    child.kill()
+  }
+})
+
+test('다이얼로그가 없으면 idle 로 판정한다', { skip }, async () => {
+  const child = spawn(FIXTURE_EXE, [], { detached: false, stdio: 'ignore' })
+  try {
+    const main = await waitForFixture()
+    const activity = judgeActivity(listWindows({ title: FIXTURE_TITLE }))
+
+    assert.equal(activity.state, 'idle', activity.reason)
+    assert.equal(activity.classified.main?.hwnd, main.hwnd)
+    assert.deepEqual(activity.classified.extras, [])
+    assert.equal(main.enabled, true)
+  } finally {
+    child.kill()
+  }
 })

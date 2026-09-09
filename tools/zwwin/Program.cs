@@ -34,6 +34,9 @@ internal static class N
     [DllImport("user32.dll")] public static extern bool PrintWindow(IntPtr hwnd, IntPtr hdc, uint flags);
     [DllImport("user32.dll")] public static extern bool SetProcessDPIAware();
     [DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr hwnd, uint flags);
+    [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr hwnd, uint cmd);
+    [DllImport("user32.dll")] public static extern bool IsWindowEnabled(IntPtr hwnd);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowLongW(IntPtr hwnd, int index);
     [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr hwnd, int attr, out RECT val, int size);
 
     // 입력
@@ -57,6 +60,9 @@ internal static class N
     public struct RECT { public int Left, Top, Right, Bottom; }
 
     public const uint GA_ROOT = 2;
+    public const uint GW_OWNER = 4;
+    public const int GWL_STYLE = -16;
+    public const int GWL_EXSTYLE = -20;
     public const uint PW_RENDERFULLCONTENT = 0x2;
     public const int DWMWA_EXTENDED_FRAME_BOUNDS = 9;
 }
@@ -68,6 +74,14 @@ internal sealed class Win
     public string Title = "";
     public string ClassName = "";
     public bool Minimized;
+    /// 이 창을 소유한 창의 hwnd. 0 이면 소유자가 없다 (메인 창).
+    /// 다이얼로그는 자신을 띄운 창을 소유자로 갖는다 — 창 구조를 이름·크기 추측 없이 읽는 유일한 사실.
+    public long Owner;
+    /// 입력을 받을 수 있는가. 모달 다이얼로그가 소유자를 비활성으로 만드는 구현이면 false 가 된다.
+    public bool Enabled;
+    /// WS_* / WS_EX_* 비트를 그대로 싣는다. 어떤 비트가 무슨 뜻인지는 TS 가 해석한다.
+    public uint Style;
+    public uint ExStyle;
     /// 프로세스 실행 파일의 버전. 읽지 못하면 빈 문자열.
     /// 어느 버전의 설정 디렉토리를 읽어야 하는지 TS 가 판단하는 데 쓴다.
     public string FileVersion = "";
@@ -144,6 +158,10 @@ internal static class Program
                 Title = title.ToString(),
                 ClassName = cls.ToString(),
                 Minimized = N.IsIconic(hwnd),
+                Owner = N.GetWindow(hwnd, N.GW_OWNER).ToInt64(),
+                Enabled = N.IsWindowEnabled(hwnd),
+                Style = unchecked((uint)N.GetWindowLongW(hwnd, N.GWL_STYLE)),
+                ExStyle = unchecked((uint)N.GetWindowLongW(hwnd, N.GWL_EXSTYLE)),
                 FileVersion = fileVersion,
                 ExePath = exePath,
                 Rect = rect,
@@ -387,6 +405,10 @@ internal static class Program
         sb.Append(",\"title\":"); AppendStr(sb, w.Title);
         sb.Append(",\"class\":"); AppendStr(sb, w.ClassName);
         sb.Append(",\"minimized\":").Append(w.Minimized ? "true" : "false");
+        sb.Append(",\"owner\":").Append(w.Owner);
+        sb.Append(",\"enabled\":").Append(w.Enabled ? "true" : "false");
+        sb.Append(",\"style\":").Append(w.Style);
+        sb.Append(",\"exStyle\":").Append(w.ExStyle);
         sb.Append(",\"fileVersion\":"); AppendStr(sb, w.FileVersion);
         sb.Append(",\"exePath\":"); AppendStr(sb, w.ExePath);
         sb.Append(",\"x\":").Append(w.Rect.Left).Append(",\"y\":").Append(w.Rect.Top);
