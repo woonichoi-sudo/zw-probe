@@ -21,8 +21,8 @@ Z-Weave(C++/Qt5 데스크톱 의상 CAD)를 **외부에서 조작·관찰·판�
 
 | 이름 | 언어 | 역할 | 상태 |
 |---|---|---|---|
-| `zwprobe` | TypeScript / Node 24 | CLI, 시나리오 실행, OBJ 파싱, 픽셀 diff, 판정 | **동작** — `shot`·`windows`·`key`·`shortcuts`·`log` |
-| `zwwin.exe` | C# (Windows 내장 `csc.exe`로 빌드) | 창 찾기, `PrintWindow` 캡처, `SendInput`, UIAutomation | **동작** — `windows`·`shot`·`key`. UIA 미착수 |
+| `zwprobe` | TypeScript / Node 24 | CLI, 시나리오 실행, OBJ 파싱, 픽셀 diff, 판정 | **동작** — `shot`·`windows`·`state`·`key`·`shortcuts`·`log` |
+| `zwwin.exe` | C# (Windows 내장 `csc.exe`로 빌드) | 창 찾기, `PrintWindow` 캡처, `SendInput`, UIAutomation | **동작** — `windows`(소유자·활성·스타일 비트 포함)·`shot`·`key`. UIA 미착수 |
 | `zwagent.dll` | C++ / Qt 스타일 플러그인 | 앱 프로세스 안에서 위젯 트리, `QAction::trigger()`, `QFileDialog` 자동 처리, wait-for-idle | 미착수 (M4에서 가능성 검증) |
 
 세 개가 각각 독립 실행된다. 자세한 구조는 설계문서 §4.
@@ -50,7 +50,7 @@ node --test                     → 전체 스위트
 원칙: 각 단계는 그 자체로 사용 가능하고, 다음 단계가 실패해도 남는다.
 
 - [x] **M1 · 캡처** — `zwprobe shot`으로 Z-Weave 창을 PNG 저장. **이 단계만으로 수동 업로드가 없어진다** (2026-09-09. 실앱 검증 완료, 메쉬가 있는 씬은 미확인)
-- [ ] **M2 · 입력과 텍스트 상태** — ✅ 단축키 입력, ✅ 로그 tail · ⬜ 마우스 클릭, ⬜ 창 제목 파싱(파일명·dirty), ⬜ 진행 다이얼로그로 작업 중 감지, ⬜ UIA 트리 덤프
+- [ ] **M2 · 입력과 텍스트 상태** — ✅ 단축키 입력, ✅ 로그 tail, ✅ 창 구조로 idle/busy 판정(`state`) · ⬜ 마우스 클릭, ⬜ UIA 트리 덤프 · ~~창 제목 파싱(파일명·dirty)~~ **Windows 에서 불가 — 취소.** OS 제목에 그 정보가 없다 (2026-09-09 실측). UIA 로 이관
 - [ ] **M3 · 시나리오 러너 + 픽셀 baseline** — 절차를 TS로 기술해 순차 실행, 실패 지점 자동 캡처, 정상 화면과 diff
 - [ ] **M4 · 분기점** — Qt 픽스처 앱 + hello 플러그인. ABI 불확실성 소각 **+ M5·M6의 테스트 하네스 확보**
 - [ ] **M5 · `zwagent.dll` 최소 기능** — named pipe + 위젯 트리 + `QAction::trigger()` + `QWidget::grab()`
@@ -119,13 +119,17 @@ Bash(git --git-dir=*)  Bash(git --work-tree=*)  Bash(git push:*)
 
 2026-09-08: 폴더 생성, 설계문서 작성, 테스트 전략 확정(설계문서 §11).
 
-2026-09-09: **M1 완료, M2 절반.** 테스트 68개 통과(0.8초), 작업 트리 깨끗, 커밋 9개.
+2026-09-09: **M1 완료, M2 3분의 2.** 테스트 88개 통과(1.4초), 작업 트리 깨끗, 커밋 10개.
 
-**되는 것** — `zwprobe shot`으로 대상 앱을 찍고 내가 그 PNG를 직접 본다. `zwprobe key <기능이름>`으로 단축키를 보낸다. `zwprobe log`로 앱이 낸 경고·오류를 읽는다. `zwprobe shortcuts`로 매핑을 확인한다. 전부 실앱에서 검증했다.
+**되는 것** — `zwprobe shot`으로 대상 앱을 찍고 내가 그 PNG를 직접 본다. `zwprobe key <기능이름>`으로 단축키를 보낸다. `zwprobe log`로 앱이 낸 경고·오류를 읽는다. `zwprobe shortcuts`로 매핑을 확인한다. `zwprobe state`로 지금 조작해도 되는지 묻는다(종료 코드 0=idle 3=busy 1=못 찾음). 전부 실앱에서 검증했다.
+
+**M2의 계획 하나가 전제 오류로 취소됐다** — 창 제목 파싱. 소스에서 선언만 보고 "무료 상태 신호"로 정본에 적었는데 Windows 분기에서는 제목이 비어 있었다. `zwprobe windows` 한 줄로 30초에 반증됐을 일이다. **소스에서 읽은 것과 실행해서 본 것을 갈라 적는다.** 경과는 WORKLOG.
 
 **M1의 리스크는 소각됐다.** `PrintWindow` + `PW_RENDERFULLCONTENT`가 Qt 5.15.6 디버그 빌드의 UI와 3D 뷰포트를 둘 다 잡는다. `printwindow`와 `screen` 두 모드가 3D 영역에서 동일하게 나오는 것으로 확정했다 — GPU 콘텐츠를 못 잡았다면 두 모드가 달라야 한다. 가려진 창도 잡히므로 캡처는 창을 앞으로 세울 필요가 없다.
 
 **M2에서 정해진 제약** — 입력은 반대다. `keybd_event`가 시스템 전역이라 **창을 활성화해야 하고, 시나리오가 도는 동안 포그라운드를 점유한다.** `PostMessage`는 수식키가 실리지 않아 조용히 다른 명령을 실행하므로 쓰지 않는다(위 "대상 앱에 대해 알아야 할 것").
+
+**`state`가 아직 답하지 않는 것** — 떠 있는 창이 **기다리면 사라지는 진행 다이얼로그**인지 **입력을 요구하는 다이얼로그**인지 구분하지 않는다. 러너에게는 다른 처리인데 구분할 근거가 지금 없다(제목은 임의, 크기는 배율에 흔들림). 실제로 관찰한 뒤에 붙인다 — 없는 근거로 규칙을 만들지 않는다.
 
 ---
 
@@ -135,13 +139,17 @@ Bash(git --git-dir=*)  Bash(git --work-tree=*)  Bash(git push:*)
 
 **2. 다음 작업은 M2의 남은 조각. 이 순서를 권한다.**
 
-- **창 제목 파싱 + 진행 다이얼로그 감지** — 둘 다 이미 가진 `listWindows()` 데이터로 되는 **순수 판정**이라 값싸다. 제목에서 파일명과 dirty 플래그를 뽑고(`zwQtMainWindow.cpp:2005`), 진행 다이얼로그 창의 존재로 "작업 중"을 판정한다(`zwQtMainWindow.cpp:2109`). **M3 러너가 "작업이 끝났는지" 알기 위해 반드시 필요하다** — sleep 추측을 대체하는 것이 이것이다.
-- **마우스 클릭** — 단축키가 없는 것(패널 탭, 툴바 버튼)에 필요하다.
-- **UIA 트리 덤프** — `setObjectName`이 44곳뿐이라 취약하다. 마지막에 둔다.
+- **마우스 클릭** — 단축키가 없는 것(패널 탭, 툴바 버튼)에 필요하다. 남겨둔 상태(Properties 탭)를 되돌리는 데도 이것이 필요하다. `SendInput`으로 절대 좌표를 보내고, 좌표는 `zwprobe shot`으로 찍어 눈으로 고른다.
+- **UIA 트리 덤프** — **우선순위가 올라갔다.** `setObjectName`이 44곳뿐이라 취약해서 뒤로 미뤄뒀지만, 창 제목 경로가 죽은 지금 **파일명·dirty를 외부에서 읽는 유일한 후보**다(커스텀 헤더 위젯 텍스트). 안 되면 `zwagent.dll`(M5)로 넘긴다.
 
-**3. 남겨둔 것 두 개.**
+**3. 사용자에게 한 번 부탁할 것 세 개.** 전부 사람이 앱을 한 번 조작해주면 닫히고, 그 전에는 추측으로 메울 수 없다.
 
-- **실제 메쉬가 있는 3D 화면은 아직 못 찍었다.** 지금까지 확인한 것은 빈 씬(`Untitled.zls`)의 회색 그라데이션뿐이다. 사용자가 샘플을 열어주면 찍어서 M1을 완전히 닫는다.
+- **메쉬가 있는 3D 화면 캡처** — 지금까지 확인한 것은 빈 씬(`Untitled.zls`)의 회색 그라데이션뿐이다. 샘플을 열어주면 찍어서 M1을 완전히 닫는다.
+- **다이얼로그를 아무거나 하나 띄워두기** — Qt의 모달이 소유자를 `EnableWindow(FALSE)`로 비활성화하는지 확인해야 한다. 픽스처(WinForms)는 그렇게 하지만 Qt는 자체 이벤트 루프로 처리할 수도 있고, Qt 소스가 없어 확인할 방법이 없다. 떠 있는 동안 `zwprobe state`를 한 번 돌리면 닫힌다. 진행 다이얼로그와 입력 대기 다이얼로그를 구분할 근거도 여기서 나온다.
+- **정상 동작 중에 나오는 ERROR 로그의 판정** — 아래 "열린 항목" 참조. 도메인 지식이 필요하다.
+
+**4. 남겨둔 것 하나.**
+
 - **내 프로브가 앱 상태를 하나 바꿔놨다.** `post` 실험이 오른쪽 패널을 Simulation 탭에서 **Properties 탭**으로 바꿨고, 탭 선택은 단축키가 없어 되돌리지 못했다. 마우스 클릭을 구현하면 처리할 수 있다.
 
 ## 버그 판단 경계
@@ -161,8 +169,9 @@ Bash(git --git-dir=*)  Bash(git --work-tree=*)  Bash(git push:*)
 - **Qt 5.15.6 msvc2019_64**, `d:/z-emotion/Z-Weave/external/Qt-5.15.6-lts-lgpl-msvc2019_64`
 - 디버그 실행 파일: `d:/z-emotion/Z-Weave/cmake_build/bin/Debug/z-weave.exe`. 디버그 앱은 `Qt5Cored.dll`을 쓰므로 **플러그인도 디버그 구성으로 빌드해야 한다**
 - 배포 폴더에 `styles/` 디렉토리가 이미 있다 → `zwagent.dll` 배치 위치
-- **창 제목에 파일명과 dirty 플래그가 실린다** (`zwQtMainWindow.cpp:2005`) — 외부에서 읽는 무료 상태 신호
-- **진행 다이얼로그 존재 여부로 "작업 중"을 판정한다** (`zwQtMainWindow.cpp:2109`)
+- **창 제목에는 파일명도 dirty 플래그도 없다. Windows 에서는 읽을 수 없다** (2026-09-09 실측). 제목은 `"z-weave"` 고정이다. `zwQtMainWindow.cpp:2005`는 2인자 오버로드 호출이고 실제 조립부는 `zwQtFramelessWindow.cpp:46` — `ZS_OS_WINDOWS` 분기가 파일명과 `" *"`를 **커스텀 헤더 위젯**에 넣고 `QMainWindow::setWindowTitle("")`로 OS 제목을 비운다. 제목에 싣는 것은 비 Windows 분기뿐이다. **이 정보의 유일한 외부 경로는 UIA(헤더 위젯 텍스트)이고, 안 되면 `zwagent.dll`(M5)이다**
+- **창 구조로 "지금 조작할 수 있는가"를 판정한다** — `zwprobe state`. 근거는 **소유 관계**다: 다이얼로그는 자신을 띄운 창을 소유자로 갖고 메인 창은 갖지 않는다. 제목·클래스명·크기·프레임 비트는 다 못 쓴다 (아래 "판정에 쓸 수 없는 것")
+- **진행 다이얼로그는 OS 창으로 존재하고 제목도 실린다** (`zwQtProgressDialog.cpp:63`이 `QDialog::setWindowTitle`을 그대로 부른다). 단 **제목으로 판정하면 안 된다** — 제목은 `Main_ProgressDialog_Show` 메시지의 payload 문자열로 임의·현지화 대상이다 (`zwQtMainWindow.cpp:2174-2183`). 종류도 하나가 아니다 (`zwQtThreadProgressDialog`, 제목 `"Loading.."`)
 - **Windows에는 파일 열기 인자가 없다** (`zwAppZWeave.cpp:217-244`) — 프로젝트 열기는 파일 다이얼로그를 거쳐야 하고, 이게 가장 깨지기 쉬운 부분이다
 - 로그인은 zlauncher URL 스킴 경유. 자동화는 **이미 로그인된 상태**를 전제한다
 - `setObjectName`이 44곳뿐이라 UIAutomation은 화면 텍스트에 의존 → 취약. **단축키 경로를 우선한다**
@@ -172,6 +181,7 @@ Bash(git --git-dir=*)  Bash(git --work-tree=*)  Bash(git push:*)
 - **입력은 포그라운드를 요구한다.** 캡처는 가려진 창도 잡지만, 키 입력은 `keybd_event`가 시스템 전역이라 창을 활성화해야 한다. **시나리오가 도는 동안 포그라운드를 점유한다**
 - **`PostMessage`는 쓰지 않는다.** 수식키가 실리지 않아 `Shift+P`가 평범한 `P`로 전달되고, `P`는 실제로 존재하는 다른 명령(`MainPin`)이라 **핀 도구가 켜졌다**(2026-09-09 실측). 조용히 틀린 명령을 실행하므로 "불안정"이 아니라 위험하다. 진단용으로만 남겼다
 - **틀린 키는 다른 명령이다.** 그래서 단축키 파서는 모르는 토큰을 만나면 추측하지 않고 던진다
+- **판정에 쓸 수 없는 것 넷** (2026-09-09 실측·조사). ① **창 제목** — 파일명이 없고, 다이얼로그 제목은 임의·현지화된다. ② **창 클래스 이름** — Qt가 창 플래그에 따라 조합하는데 이 PC의 Qt는 바이너리 배포뿐이라 규칙을 확인할 수 없다. 기억으로 쓰면 검증 안 된 전제다. ③ **창 크기** — DPI 배율이 곱해진다 (`DIALOG_SIZE * screenScaleFactor`). ④ **프레임 스타일 비트** — 메인 창 스타일이 `0x97CF0000`으로 **WS_CAPTION·WS_THICKFRAME을 달고 있다.** 프레임리스를 커스텀 구현했으므로 프레임 비트는 화면과 무관하다. **남는 것이 소유 관계와 활성 상태다**
 
 ## 환경
 
@@ -191,5 +201,7 @@ Bash(git --git-dir=*)  Bash(git --work-tree=*)  Bash(git push:*)
 - **`ActivateSelected`와 `DeactivateSelected`가 둘 다 `Shift+D`** — `shortcut.ini` 실측. 토글로 의도된 것인지 확인 필요 (M2에서 실제로 눌러보면 드러난다)
 - **앱이 정상 동작 중에도 내는 오류 — 사용자 판단 필요.** `zwprobe log`로 확인한 것: `zw3DEnvironmentManager: Environment does not exist!`(시작 시 1회), `zsRenderTarget: clearDepth=true, but no depth buffer bound to fbo!`(반복), `zwStateIdle: GetTool(): Tool object 'zwToolSelectionRect' is not attached!`. 이것들이 의도된 소음인지 실제 결함인지는 도메인 지식이 필요하다. **판정 기준을 세우기 전에 답이 필요하다** — 정상 상태에서도 ERROR가 나오면 "로그에 ERROR가 있으면 실패"라는 규칙을 쓸 수 없다
 - **메쉬가 있는 3D 화면 캡처 미확인** — 빈 씬만 찍어봤다. 샘플 프로젝트가 열린 상태에서 한 번 찍으면 닫힌다
+- **Qt 의 모달이 소유자를 비활성화하는가** — `zwprobe state`의 판정 신호 하나가 이것에 걸려 있다. 픽스처(WinForms)는 `EnableWindow(FALSE)`를 걸지만 Qt 는 자체 이벤트 루프로 처리할 수도 있고, 이 PC 에 Qt 소스가 없어 확인할 수 없다. **판정은 이 하나에 걸지 않았으므로** 답이 없어도 `state`는 동작한다 — 추가 창의 존재로도 `busy`가 된다. 실앱에서 다이얼로그를 한 번 띄우면 닫힌다
+- **파일명·dirty 를 UIA 로 읽을 수 있는가** — 창 제목 경로가 죽어서 이것이 유일한 외부 후보가 됐다. Qt 가 커스텀 헤더 위젯을 QAccessible 로 노출하는지에 달려 있다. 안 되면 M5 로 넘긴다
 
-닫힌 항목: 로그 파일 경로, 단축키 목록 (2026-09-09, 설계문서 §3.6)
+닫힌 항목: 로그 파일 경로, 단축키 목록 (2026-09-09, 설계문서 §3.6). 창 제목의 파일명·dirty — **없다**, Windows 에서 불가 (2026-09-09 실측)
