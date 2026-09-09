@@ -21,8 +21,8 @@ Z-Weave(C++/Qt5 데스크톱 의상 CAD)를 **외부에서 조작·관찰·판�
 
 | 이름 | 언어 | 역할 | 상태 |
 |---|---|---|---|
-| `zwprobe` | TypeScript / Node 24 | CLI, 시나리오 실행, OBJ 파싱, 픽셀 diff, 판정 | **동작** — `shot`·`windows`·`state`·`key`·`shortcuts`·`log` |
-| `zwwin.exe` | C# (Windows 내장 `csc.exe`로 빌드) | 창 찾기, `PrintWindow` 캡처, `SendInput`, UIAutomation | **동작** — `windows`(소유자·활성·스타일 비트 포함)·`shot`·`key`. UIA 미착수 |
+| `zwprobe` | TypeScript / Node 24 | CLI, 시나리오 실행, OBJ 파싱, 픽셀 diff, 판정 | **동작** — `shot`·`windows`·`state`·`key`·`click`·`shortcuts`·`log` |
+| `zwwin.exe` | C# (Windows 내장 `csc.exe`로 빌드) | 창 찾기, `PrintWindow` 캡처, `SendInput`, UIAutomation | **동작** — `windows`(소유자·활성·스타일 비트 포함)·`shot`·`key`·`click`. UIA 미착수 |
 | `zwagent.dll` | C++ / Qt 스타일 플러그인 | 앱 프로세스 안에서 위젯 트리, `QAction::trigger()`, `QFileDialog` 자동 처리, wait-for-idle | 미착수 (M4에서 가능성 검증) |
 
 세 개가 각각 독립 실행된다. 자세한 구조는 설계문서 §4.
@@ -50,7 +50,7 @@ node --test                     → 전체 스위트
 원칙: 각 단계는 그 자체로 사용 가능하고, 다음 단계가 실패해도 남는다.
 
 - [x] **M1 · 캡처** — `zwprobe shot`으로 Z-Weave 창을 PNG 저장. **이 단계만으로 수동 업로드가 없어진다** (2026-09-09. 실앱 검증 완료, 메쉬가 있는 씬은 미확인)
-- [ ] **M2 · 입력과 텍스트 상태** — ✅ 단축키 입력, ✅ 로그 tail, ✅ 창 구조로 idle/busy 판정(`state`) · ⬜ 마우스 클릭, ⬜ UIA 트리 덤프 · ~~창 제목 파싱(파일명·dirty)~~ **Windows 에서 불가 — 취소.** OS 제목에 그 정보가 없다 (2026-09-09 실측). UIA 로 이관
+- [ ] **M2 · 입력과 텍스트 상태** — ✅ 단축키 입력, ✅ 로그 tail, ✅ 창 구조로 idle/busy 판정(`state`), ✅ 마우스 클릭(`click`) · ⬜ UIA 트리 덤프 · ~~창 제목 파싱(파일명·dirty)~~ **Windows 에서 불가 — 취소.** OS 제목에 그 정보가 없다 (2026-09-09 실측). UIA 로 이관
 - [ ] **M3 · 시나리오 러너 + 픽셀 baseline** — 절차를 TS로 기술해 순차 실행, 실패 지점 자동 캡처, 정상 화면과 diff
 - [ ] **M4 · 분기점** — Qt 픽스처 앱 + hello 플러그인. ABI 불확실성 소각 **+ M5·M6의 테스트 하네스 확보**
 - [ ] **M5 · `zwagent.dll` 최소 기능** — named pipe + 위젯 트리 + `QAction::trigger()` + `QWidget::grab()`
@@ -119,9 +119,13 @@ Bash(git --git-dir=*)  Bash(git --work-tree=*)  Bash(git push:*)
 
 2026-09-08: 폴더 생성, 설계문서 작성, 테스트 전략 확정(설계문서 §11).
 
-2026-09-09: **M1 완료, M2 3분의 2.** 테스트 88개 통과(1.4초), 작업 트리 깨끗, 커밋 10개.
+2026-09-09: **M1 완료, M2 는 UIA 하나만 남았다.** 테스트 96개 통과(4.4초), 작업 트리 깨끗, 커밋 12개.
 
-**되는 것** — `zwprobe shot`으로 대상 앱을 찍고 내가 그 PNG를 직접 본다. `zwprobe key <기능이름>`으로 단축키를 보낸다. `zwprobe log`로 앱이 낸 경고·오류를 읽는다. `zwprobe shortcuts`로 매핑을 확인한다. `zwprobe state`로 지금 조작해도 되는지 묻는다(종료 코드 0=idle 3=busy 1=못 찾음). 전부 실앱에서 검증했다.
+**되는 것** — `zwprobe shot`으로 대상 앱을 찍고 내가 그 PNG를 직접 본다. `zwprobe key <기능이름>`으로 단축키를 보낸다. `zwprobe click <x> <y>`로 좌표를 누른다. `zwprobe log`로 앱이 낸 경고·오류를 읽는다. `zwprobe shortcuts`로 매핑을 확인한다. `zwprobe state`로 지금 조작해도 되는지 묻는다(종료 코드 0=idle 3=busy 1=못 찾음).
+
+**`click` 은 픽스처에서만 검증했다** — 실앱에는 아직 클릭하지 않았다. CAD 앱의 임의 좌표 클릭은 형상을 만들 수 있어 되돌리기 어렵다. 좌표를 찍어 사용자 확인을 받고 한다. 나머지는 전부 실앱에서 검증했다.
+
+**`click` 의 좌표는 `shot` 이 만든 PNG 의 좌표와 같다.** 창 왼쪽 위 기준이며 화면 절대 좌표가 아니다. 찍어서 보고, 본 자리를 그대로 넘긴다.
 
 **M2의 계획 하나가 전제 오류로 취소됐다** — 창 제목 파싱. 소스에서 선언만 보고 "무료 상태 신호"로 정본에 적었는데 Windows 분기에서는 제목이 비어 있었다. `zwprobe windows` 한 줄로 30초에 반증됐을 일이다. **소스에서 읽은 것과 실행해서 본 것을 갈라 적는다.** 경과는 WORKLOG.
 
@@ -137,10 +141,11 @@ Bash(git --git-dir=*)  Bash(git --work-tree=*)  Bash(git push:*)
 
 **1. 먼저 빌드하고 테스트한다** (`bin/`은 커밋되지 않는다 — 위 "구성요소" 참조).
 
-**2. 다음 작업은 M2의 남은 조각. 이 순서를 권한다.**
+**2. M2에 남은 것은 하나다.**
 
-- **마우스 클릭** — 단축키가 없는 것(패널 탭, 툴바 버튼)에 필요하다. 남겨둔 상태(Properties 탭)를 되돌리는 데도 이것이 필요하다. `SendInput`으로 절대 좌표를 보내고, 좌표는 `zwprobe shot`으로 찍어 눈으로 고른다.
-- **UIA 트리 덤프** — **우선순위가 올라갔다.** `setObjectName`이 44곳뿐이라 취약해서 뒤로 미뤄뒀지만, 창 제목 경로가 죽은 지금 **파일명·dirty를 외부에서 읽는 유일한 후보**다(커스텀 헤더 위젯 텍스트). 안 되면 `zwagent.dll`(M5)로 넘긴다.
+- **UIA 트리 덤프** — **우선순위가 올라갔다.** `setObjectName`이 44곳뿐이라 취약해서 뒤로 미뤄뒀지만, 창 제목 경로가 죽은 지금 **파일명·dirty를 외부에서 읽는 유일한 후보**다(커스텀 헤더 위젯 텍스트). 안 되면 `zwagent.dll`(M5)로 넘긴다. 여기까지 하면 M2가 닫히고 **M3 시나리오 러너**로 간다.
+
+`click`을 쓸 때는 좌표를 **`shot`으로 찍어 눈으로 고른다.** UIA가 되면 위젯 사각형에서 좌표를 얻어 눈대중을 대체할 수 있다 — 그게 UIA의 두 번째 값이다.
 
 **3. 사용자에게 한 번 부탁할 것 세 개.** 전부 사람이 앱을 한 번 조작해주면 닫히고, 그 전에는 추측으로 메울 수 없다.
 
