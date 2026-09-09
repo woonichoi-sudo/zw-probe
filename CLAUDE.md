@@ -21,8 +21,8 @@ Z-Weave(C++/Qt5 데스크톱 의상 CAD)를 **외부에서 조작·관찰·판�
 
 | 이름 | 언어 | 역할 | 상태 |
 |---|---|---|---|
-| `zwprobe` | TypeScript / Node 24 | CLI, 시나리오 실행, OBJ 파싱, 픽셀 diff, 판정 | **동작** — `shot`·`windows`·`state`·`key`·`click`·`shortcuts`·`log` |
-| `zwwin.exe` | C# (Windows 내장 `csc.exe`로 빌드) | 창 찾기, `PrintWindow` 캡처, `SendInput`, UIAutomation | **동작** — `windows`(소유자·활성·스타일 비트 포함)·`shot`·`key`·`click`. UIA 미착수 |
+| `zwprobe` | TypeScript / Node 24 | CLI, 시나리오 실행, OBJ 파싱, 픽셀 diff, 판정 | **동작** — `shot`·`windows`·`state`·`key`·`click`·`uia`·`doc`·`shortcuts`·`log` |
+| `zwwin.exe` | C# (Windows 내장 `csc.exe`로 빌드) | 창 찾기, `PrintWindow` 캡처, `SendInput`, UIAutomation | **동작** — `windows`·`shot`·`key`·`click`·`uia` |
 | `zwagent.dll` | C++ / Qt 스타일 플러그인 | 앱 프로세스 안에서 위젯 트리, `QAction::trigger()`, `QFileDialog` 자동 처리, wait-for-idle | 미착수 (M4에서 가능성 검증) |
 
 세 개가 각각 독립 실행된다. 자세한 구조는 설계문서 §4.
@@ -50,7 +50,7 @@ node --test                     → 전체 스위트
 원칙: 각 단계는 그 자체로 사용 가능하고, 다음 단계가 실패해도 남는다.
 
 - [x] **M1 · 캡처** — `zwprobe shot`으로 Z-Weave 창을 PNG 저장. **이 단계만으로 수동 업로드가 없어진다** (2026-09-09. 실앱 검증 완료, 메쉬가 있는 씬은 미확인)
-- [ ] **M2 · 입력과 텍스트 상태** — ✅ 단축키 입력, ✅ 로그 tail, ✅ 창 구조로 idle/busy 판정(`state`), ✅ 마우스 클릭(`click`) · ⬜ UIA 트리 덤프 · ~~창 제목 파싱(파일명·dirty)~~ **Windows 에서 불가 — 취소.** OS 제목에 그 정보가 없다 (2026-09-09 실측). UIA 로 이관
+- [x] **M2 · 입력과 텍스트 상태** — 단축키 입력, 로그 tail, 창 구조로 idle/busy 판정(`state`), 마우스 클릭(`click`), UIA 트리 + 이름 클릭 + 파일명·dirty(`uia`·`doc`). 2026-09-09. 창 제목 파싱은 Windows 에서 불가로 판명돼 UIA 가 대신했다
 - [ ] **M3 · 시나리오 러너 + 픽셀 baseline** — 절차를 TS로 기술해 순차 실행, 실패 지점 자동 캡처, 정상 화면과 diff
 - [ ] **M4 · 분기점** — Qt 픽스처 앱 + hello 플러그인. ABI 불확실성 소각 **+ M5·M6의 테스트 하네스 확보**
 - [ ] **M5 · `zwagent.dll` 최소 기능** — named pipe + 위젯 트리 + `QAction::trigger()` + `QWidget::grab()`
@@ -119,15 +119,28 @@ Bash(git --git-dir=*)  Bash(git --work-tree=*)  Bash(git push:*)
 
 2026-09-08: 폴더 생성, 설계문서 작성, 테스트 전략 확정(설계문서 §11).
 
-2026-09-09: **M1 완료, M2 는 UIA 하나만 남았다.** 테스트 96개 통과(4.4초), 작업 트리 깨끗, 커밋 12개.
+2026-09-09: **M1·M2 완료. 다음은 M3.** 테스트 118개 통과(6.4초), 작업 트리 깨끗, 커밋 14개.
 
-**되는 것** — `zwprobe shot`으로 대상 앱을 찍고 내가 그 PNG를 직접 본다. `zwprobe key <기능이름>`으로 단축키를 보낸다. `zwprobe click <x> <y>`로 좌표를 누른다. `zwprobe log`로 앱이 낸 경고·오류를 읽는다. `zwprobe shortcuts`로 매핑을 확인한다. `zwprobe state`로 지금 조작해도 되는지 묻는다(종료 코드 0=idle 3=busy 1=못 찾음).
+**되는 것** — 찍고(`shot`), 보고, 누르고(`key`·`click`), 읽는다(`log`·`doc`·`uia`·`state`). 자동 루프의 외부 절반이 성립했다.
 
-**`click` 은 픽스처에서만 검증했다** — 실앱에는 아직 클릭하지 않았다. CAD 앱의 임의 좌표 클릭은 형상을 만들 수 있어 되돌리기 어렵다. 좌표를 찍어 사용자 확인을 받고 한다. 나머지는 전부 실앱에서 검증했다.
+| 명령 | 하는 일 | 실앱 확인 |
+|---|---|---|
+| `shot` | 창을 PNG 로 찍는다. 가려진 창도 잡힌다 | ✅ (빈 씬만) |
+| `windows` | 창 목록 + 소유자·활성·스타일 비트 | ✅ |
+| `state` | 지금 조작해도 되는가 (0=idle 3=busy 1=못 찾음) | ✅ |
+| `key <기능이름>` | `shortcut.ini` 를 읽어 단축키를 보낸다 | ✅ |
+| `click <x> <y>` | 좌표를 누른다. `shot` 의 PNG 좌표와 같다 | ⬜ 픽스처만 |
+| `click --name X` | UIA 로 찾아 한가운데를 누른다 | ⬜ 픽스처만 |
+| `uia` | UIA 트리 덤프·검색. 창 기준 좌표를 함께 준다 | ✅ |
+| `doc` | 열린 파일명과 dirty (0=저장됨 3=변경있음) | ✅ |
+| `log` | 앱 로그 tail + severity 집계 | ✅ |
+| `shortcuts` | 단축키 매핑 + 충돌 | ✅ |
 
-**`click` 의 좌표는 `shot` 이 만든 PNG 의 좌표와 같다.** 창 왼쪽 위 기준이며 화면 절대 좌표가 아니다. 찍어서 보고, 본 자리를 그대로 넘긴다.
+**클릭은 실앱에서 아직 안 했다.** CAD 앱의 임의 좌표 클릭은 형상을 만들 수 있어 되돌리기 어렵다. 픽스처에서 좌표계까지 검증돼 있으므로 실앱 확인은 값이 낮고 위험은 실재한다. 필요할 때 좌표를 찍어 사용자 확인을 받고 한다.
 
-**M2의 계획 하나가 전제 오류로 취소됐다** — 창 제목 파싱. 소스에서 선언만 보고 "무료 상태 신호"로 정본에 적었는데 Windows 분기에서는 제목이 비어 있었다. `zwprobe windows` 한 줄로 30초에 반증됐을 일이다. **소스에서 읽은 것과 실행해서 본 것을 갈라 적는다.** 경과는 WORKLOG.
+**세 좌표계를 섞지 않는다.** 캡처 사각형(DWM 확장 프레임 경계), UIA 사각형(리사이즈 테두리 포함 — 실측 8px 어긋난다), 창 기준. **`click` 과 `uia` 의 `wx`·`wy` 가 같은 창 기준 좌표이고 그것이 `shot` 의 PNG 좌표다.** UIA 의 `screenX`·`screenY` 를 직접 클릭에 넘기면 8px 어긋난다.
+
+**M2의 계획 하나가 전제 오류로 취소됐다** — 창 제목 파싱. 소스에서 선언만 보고 "무료 상태 신호"로 정본에 적었는데 Windows 분기에서는 제목이 비어 있었다. `zwprobe windows` 한 줄로 30초에 반증됐을 일이다. **소스에서 읽은 것과 실행해서 본 것을 갈라 적는다.** 대신 UIA 가 그 정보를 줬고(`doc`), 결과적으로 더 많이 얻었다 — 이름으로 클릭하는 길까지 열렸다. 경과는 WORKLOG.
 
 **M1의 리스크는 소각됐다.** `PrintWindow` + `PW_RENDERFULLCONTENT`가 Qt 5.15.6 디버그 빌드의 UI와 3D 뷰포트를 둘 다 잡는다. `printwindow`와 `screen` 두 모드가 3D 영역에서 동일하게 나오는 것으로 확정했다 — GPU 콘텐츠를 못 잡았다면 두 모드가 달라야 한다. 가려진 창도 잡히므로 캡처는 창을 앞으로 세울 필요가 없다.
 
@@ -141,11 +154,17 @@ Bash(git --git-dir=*)  Bash(git --work-tree=*)  Bash(git push:*)
 
 **1. 먼저 빌드하고 테스트한다** (`bin/`은 커밋되지 않는다 — 위 "구성요소" 참조).
 
-**2. M2에 남은 것은 하나다.**
+**2. 다음은 M3 · 시나리오 러너 + 픽셀 baseline.** M2가 닫혔고 재료가 다 있다.
 
-- **UIA 트리 덤프** — **우선순위가 올라갔다.** `setObjectName`이 44곳뿐이라 취약해서 뒤로 미뤄뒀지만, 창 제목 경로가 죽은 지금 **파일명·dirty를 외부에서 읽는 유일한 후보**다(커스텀 헤더 위젯 텍스트). 안 되면 `zwagent.dll`(M5)로 넘긴다. 여기까지 하면 M2가 닫히고 **M3 시나리오 러너**로 간다.
+러너가 쓸 조각은 이미 전부 순수 함수로 나와 있다 — `judgeActivity`(기다릴지 판정), `findOne`(요소 특정), `judgeClick`(클릭이 닿았는지), `readDocumentState`(문서 상태), `summarize`(로그), `analyze`(픽셀). **러너가 새로 만들 것은 절차 기술과 실패 지점 처리뿐이다.**
 
-`click`을 쓸 때는 좌표를 **`shot`으로 찍어 눈으로 고른다.** UIA가 되면 위젯 사각형에서 좌표를 얻어 눈대중을 대체할 수 있다 — 그게 UIA의 두 번째 값이다.
+설계할 때 정할 것 세 개.
+
+- **단계 사이에서 무엇을 기다리는가.** `state`가 `idle`이 될 때까지가 기본이다. sleep 추측을 여기서 없앤다. 다만 `state`는 진행 다이얼로그와 입력 대기 다이얼로그를 구분하지 못하므로(아래) **무한 대기 상한**이 필요하다.
+- **실패를 어떻게 남기는가.** 실패 지점에서 `shot` + `uia` + `log` 를 한 번에 떠서 한 폴더에 묶는 것을 권한다. 셋이 같은 시각의 스냅샷이어야 원인을 짚을 수 있다.
+- **baseline 을 어디에 두는가.** `captures/`는 이미 `.gitignore` 대상이다. baseline 은 커밋해야 하므로 별도 폴더가 필요하다.
+
+**M3의 리스크는 포그라운드 점유다.** 시나리오가 도는 동안 키 입력이 포그라운드를 요구하므로 사용자가 다른 창을 만지면 입력이 그쪽으로 간다. 우회할 수 없는 성질이니 러너가 이를 전제로 설계돼야 한다 — 최소한 시작할 때 경고하고, 매 입력 후 `judgeClick`·`activated`로 포그라운드를 잃지 않았는지 확인한다.
 
 **3. 사용자에게 한 번 부탁할 것 세 개.** 전부 사람이 앱을 한 번 조작해주면 닫히고, 그 전에는 추측으로 메울 수 없다.
 
@@ -179,14 +198,18 @@ Bash(git --git-dir=*)  Bash(git --work-tree=*)  Bash(git push:*)
 - **진행 다이얼로그는 OS 창으로 존재하고 제목도 실린다** (`zwQtProgressDialog.cpp:63`이 `QDialog::setWindowTitle`을 그대로 부른다). 단 **제목으로 판정하면 안 된다** — 제목은 `Main_ProgressDialog_Show` 메시지의 payload 문자열로 임의·현지화 대상이다 (`zwQtMainWindow.cpp:2174-2183`). 종류도 하나가 아니다 (`zwQtThreadProgressDialog`, 제목 `"Loading.."`)
 - **Windows에는 파일 열기 인자가 없다** (`zwAppZWeave.cpp:217-244`) — 프로젝트 열기는 파일 다이얼로그를 거쳐야 하고, 이게 가장 깨지기 쉬운 부분이다
 - 로그인은 zlauncher URL 스킴 경유. 자동화는 **이미 로그인된 상태**를 전제한다
-- `setObjectName`이 44곳뿐이라 UIAutomation은 화면 텍스트에 의존 → 취약. **단축키 경로를 우선한다**
+- **UIA는 쓸 수 있다. 다만 Raw view 여야 한다** (2026-09-09 실측). 기본 Control view는 25노드만 주고 dock 탭 바 안쪽이 **아예 안 보인다** — Raw view는 152노드에 탭 6개를 이름으로 준다. 이 하나 때문에 "Qt는 UIA를 제대로 안 내놓는다"고 결론 낼 수 있었던 지점이다. `zwwin.exe`에 Raw view가 박혀 있고 옵션이 아니다
+- **AutomationId가 계층적이다** — `ViewWidget.dock_manager`, `CentralWidget.dockWidgetScrollArea.qt_scrollarea_viewport.timelineSplitter`. `setObjectName`이 44곳뿐이라 취약할 것으로 봤지만, Qt가 오브젝트 이름 경로를 조합해주므로 주소를 매길 수 있는 위젯은 훨씬 많다
+- **UIA로 읽히는 상태 신호**: 파일명·dirty(`zwQtMainWindow.FramelessWindowHeader`의 name), 상태바 모드(`StatusBarInDesignMode` = `"Design mode"`), 메뉴 항목(File/Edit/Window/Help), dock 탭 이름, 패널 라벨
+- **툴바 버튼에는 이름이 없다** — `zwQtButton`이 `name=""`으로 나온다. 이름으로 누를 수 있는 것은 탭·메뉴·라벨뿐이고 툴바는 여전히 좌표다. `zwagent.dll`(M5)에서 `QAction` 텍스트로 닿을 수 있다
+- **UIA 사각형의 원점이 캡처 사각형과 다르다** — 실측으로 창 UIA는 `3432,-8 1936x1048`, 캡처는 `3440,0 1920x1040`. 보이지 않는 리사이즈 테두리 8px 차이다. `uia`가 창 기준 `wx`·`wy`를 함께 주므로 **그것만 쓴다.** 오차가 작아서 눌러도 대충 맞는 — 조용히 틀리는 종류다
 - **로그**: `%LOCALAPPDATA%/z-emotion/z-weave/log/z-weave_{버전}_{UTC시각}.log`. **실행마다 새 파일**이므로 mtime이 가장 최근인 것을 tail한다. 항목마다 flush하므로 실시간으로 읽힌다. 파일명은 UTC, 줄 안의 시각은 로컬 — 섞으면 안 된다. 상세는 설계문서 §3.6
 - **단축키**: `%APPDATA%/z-emotion/z-weave/{버전}/shortcut.ini` (**Roaming**, 로그와 루트가 다르다). **하드코딩하지 않고 이 파일을 읽는다** — 사용자 변경까지 반영된다. `SimulationStart=SPACE`, `MainUndo=Ctrl+Z`, `CameraFit=Shift+F`, `ClearSelection=ESC` 등. 상세는 설계문서 §3.6
 - **버전 디렉토리는 실행 중인 앱 버전에 맞춰야 한다.** 최신을 고르면 안 된다 — 실측에서 `5.0.34`와 `5.1.0`이 함께 있었고 실행 중인 앱은 `5.0.34`였다. `zwwin.exe`가 프로세스 실행 파일 버전을 보고하고 그것으로 고른다
 - **입력은 포그라운드를 요구한다.** 캡처는 가려진 창도 잡지만, 키 입력은 `keybd_event`가 시스템 전역이라 창을 활성화해야 한다. **시나리오가 도는 동안 포그라운드를 점유한다**
 - **`PostMessage`는 쓰지 않는다.** 수식키가 실리지 않아 `Shift+P`가 평범한 `P`로 전달되고, `P`는 실제로 존재하는 다른 명령(`MainPin`)이라 **핀 도구가 켜졌다**(2026-09-09 실측). 조용히 틀린 명령을 실행하므로 "불안정"이 아니라 위험하다. 진단용으로만 남겼다
 - **틀린 키는 다른 명령이다.** 그래서 단축키 파서는 모르는 토큰을 만나면 추측하지 않고 던진다
-- **판정에 쓸 수 없는 것 넷** (2026-09-09 실측·조사). ① **창 제목** — 파일명이 없고, 다이얼로그 제목은 임의·현지화된다. ② **창 클래스 이름** — Qt가 창 플래그에 따라 조합하는데 이 PC의 Qt는 바이너리 배포뿐이라 규칙을 확인할 수 없다. 기억으로 쓰면 검증 안 된 전제다. ③ **창 크기** — DPI 배율이 곱해진다 (`DIALOG_SIZE * screenScaleFactor`). ④ **프레임 스타일 비트** — 메인 창 스타일이 `0x97CF0000`으로 **WS_CAPTION·WS_THICKFRAME을 달고 있다.** 프레임리스를 커스텀 구현했으므로 프레임 비트는 화면과 무관하다. **남는 것이 소유 관계와 활성 상태다**
+- **판정에 쓸 수 없는 것 넷** (UIA 가 나온 뒤에도 유효하다 — UIA 는 요소를 주고 이 넷은 **창** 을 가리는 문제다) (2026-09-09 실측·조사). ① **창 제목** — 파일명이 없고, 다이얼로그 제목은 임의·현지화된다. ② **창 클래스 이름** — Qt가 창 플래그에 따라 조합하는데 이 PC의 Qt는 바이너리 배포뿐이라 규칙을 확인할 수 없다. 기억으로 쓰면 검증 안 된 전제다. ③ **창 크기** — DPI 배율이 곱해진다 (`DIALOG_SIZE * screenScaleFactor`). ④ **프레임 스타일 비트** — 메인 창 스타일이 `0x97CF0000`으로 **WS_CAPTION·WS_THICKFRAME을 달고 있다.** 프레임리스를 커스텀 구현했으므로 프레임 비트는 화면과 무관하다. **남는 것이 소유 관계와 활성 상태다**
 
 ## 환경
 
@@ -207,6 +230,6 @@ Bash(git --git-dir=*)  Bash(git --work-tree=*)  Bash(git push:*)
 - **앱이 정상 동작 중에도 내는 오류 — 사용자 판단 필요.** `zwprobe log`로 확인한 것: `zw3DEnvironmentManager: Environment does not exist!`(시작 시 1회), `zsRenderTarget: clearDepth=true, but no depth buffer bound to fbo!`(반복), `zwStateIdle: GetTool(): Tool object 'zwToolSelectionRect' is not attached!`. 이것들이 의도된 소음인지 실제 결함인지는 도메인 지식이 필요하다. **판정 기준을 세우기 전에 답이 필요하다** — 정상 상태에서도 ERROR가 나오면 "로그에 ERROR가 있으면 실패"라는 규칙을 쓸 수 없다
 - **메쉬가 있는 3D 화면 캡처 미확인** — 빈 씬만 찍어봤다. 샘플 프로젝트가 열린 상태에서 한 번 찍으면 닫힌다
 - **Qt 의 모달이 소유자를 비활성화하는가** — `zwprobe state`의 판정 신호 하나가 이것에 걸려 있다. 픽스처(WinForms)는 `EnableWindow(FALSE)`를 걸지만 Qt 는 자체 이벤트 루프로 처리할 수도 있고, 이 PC 에 Qt 소스가 없어 확인할 수 없다. **판정은 이 하나에 걸지 않았으므로** 답이 없어도 `state`는 동작한다 — 추가 창의 존재로도 `busy`가 된다. 실앱에서 다이얼로그를 한 번 띄우면 닫힌다
-- **파일명·dirty 를 UIA 로 읽을 수 있는가** — 창 제목 경로가 죽어서 이것이 유일한 외부 후보가 됐다. Qt 가 커스텀 헤더 위젯을 QAccessible 로 노출하는지에 달려 있다. 안 되면 M5 로 넘긴다
 
-닫힌 항목: 로그 파일 경로, 단축키 목록 (2026-09-09, 설계문서 §3.6). 창 제목의 파일명·dirty — **없다**, Windows 에서 불가 (2026-09-09 실측)
+
+닫힌 항목 (전부 2026-09-09): 로그 파일 경로·단축키 목록(설계문서 §3.6). 창 제목의 파일명·dirty — **없다**, Windows 에서 불가. **파일명·dirty 를 UIA 로 읽을 수 있는가 — 읽힌다** (`zwprobe doc`, 실앱 확인). **UIA 가 쓸만한 트리를 주는가 — 준다**, Raw view 로 152노드
