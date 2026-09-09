@@ -18,13 +18,21 @@ import { findConflicts, findShortcut } from './input/shortcut.ts'
 import { loadShortcuts } from './input/shortcutFile.ts'
 import { locateLog, logDir, readEntries } from './log/logFile.ts'
 import { summarize, toSeverity } from './log/parse.ts'
-import { judgeActivity, styleNames } from './win/windowState.ts'
+import { classifyWindows, judgeActivity, styleNames } from './win/windowState.ts'
 import { judgeClick } from './input/click.ts'
 import { activePanel, clickPoint, findNodes, findOne, readDocumentState } from './uia/tree.ts'
 import type { NodeQuery } from './uia/tree.ts'
 import { BASELINE_DIR, listBaselines, runScenario } from './scenario/run.ts'
 import type { Scenario } from './scenario/steps.ts'
-import { flattenWidgets, judgeAbi, judgeTree, parseAgentHello } from './agent/hello.ts'
+import {
+  findByLabel,
+  flattenWidgets,
+  judgeAbi,
+  judgeTree,
+  parseAgentHello,
+  widgetCenter,
+  widgetLabels,
+} from './agent/hello.ts'
 
 function parseArgs(argv: string[]): { verb: string; rest: string[]; flags: Map<string, string> } {
   const verb = argv[0] !== undefined && !argv[0].startsWith('--') ? argv[0] : ''
@@ -689,19 +697,59 @@ function cmdAgent(flags: Map<string, string>): number {
     )
   }
 
-  // 이름 있는 위젯만 보여준다. 이름 없는 것이 대부분이고, 주소를 매길 수 있는
-  // 것만 보는 것이 M5 설계에 필요한 정보다.
-  const named = flat.filter((w) => w.objectName !== '')
+  const max = Number(flags.get('max') || '60')
+
+  // `--find` 는 라벨로 찾는다. objectName 뿐 아니라 text·toolTip·accessibleName·
+  // QAction 텍스트를 함께 본다 — **툴바 버튼은 objectName 이 비어 있고 라벨이 다른
+  // 곳에 있다.** 찾은 것은 누를 수 있게 창 기준 좌표까지 준다.
+  const find = flags.get('find') || ''
+  if (find !== '') {
+    const hits = findByLabel(h.topLevelWidgets, find)
+    // 캡처 사각형 원점을 살아 있는 창에서 가져온다. **hello 는 스냅샷이므로 그 뒤에
+    // 창이 움직였으면 좌표가 낡는다** — 창을 못 찾으면 좌표를 아예 내지 않는다.
+    // 틀린 좌표를 내는 것이 안 내는 것보다 나쁘다.
+    // 어느 창이 메인인지는 `classifyWindows` 가 이미 판정한다 (`state` 와 같은 규칙).
+    // 여기서 "가장 큰 창" 을 다시 쓰면 규칙이 두 벌이 된다.
+    const origin = classifyWindows(listWindows({ pid: h.pid })).main ?? undefined
+
+    console.log(`\n"${find}" 에 맞는 위젯 ${hits.length}개:`)
+    if (origin === undefined) {
+      console.log(`주의  pid=${h.pid} 의 창을 찾지 못해 창 기준 좌표를 낼 수 없다 (앱이 닫혔나).`)
+    }
+    for (const w of hits.slice(0, max)) {
+      const marks = `${w.visible ? '' : ' [숨김]'}${w.enabled ? '' : ' [비활성]'}`
+      const labels = widgetLabels(w)
+      const at =
+        origin === undefined
+          ? `화면 ${w.screenX},${w.screenY}`
+          : (() => {
+              const c = widgetCenter(w, origin)
+              return `창 기준 한가운데 ${c.x},${c.y}`
+            })()
+      console.log(`  ${w.class.padEnd(28)} ${w.width}x${w.height}${marks}  ${at}`)
+      console.log(`    라벨: ${labels.map((l) => JSON.stringify(l)).join(' · ')}`)
+    }
+    if (hits.length > max) console.log(`  ... ${hits.length - max}개 더 (--max 로 늘린다)`)
+    if (hits.length > 0 && origin !== undefined) {
+      console.log('\n누를 때는 위 "창 기준 한가운데" 를 그대로 쓴다: zwprobe click <x> <y>')
+    }
+    return tree.trustworthy ? 0 : 3
+  }
+
+  // 기본 목록은 **가리킬 수 있는 위젯**만 보여준다. 라벨이 하나도 없는 것은 주소를
+  // 매길 수 없으므로 M5 설계에 정보를 주지 않는다.
+  const named = flat.filter((w) => widgetLabels(w).length > 0)
   const needle = (flags.get('filter') || '').toLowerCase()
   const shown = needle ? named.filter((w) => w.objectName.toLowerCase().includes(needle)) : named
 
-  console.log(`\n이름 있는 위젯 ${named.length}개${needle ? ` 중 "${needle}" 에 맞는 ${shown.length}개` : ''}:`)
-  for (const w of shown.slice(0, Number(flags.get('max') || '60'))) {
+  console.log(`\n가리킬 수 있는 위젯 ${named.length}개${needle ? ` 중 "${needle}" 에 맞는 ${shown.length}개` : ''}:`)
+  for (const w of shown.slice(0, max)) {
     const marks = `${w.visible ? '' : ' [숨김]'}${w.enabled ? '' : ' [비활성]'}`
-    console.log(`  ${w.class.padEnd(28)} ${w.objectName}  ${w.width}x${w.height}${marks}`)
+    const name = w.objectName !== '' ? w.objectName : widgetLabels(w)[0]!
+    console.log(`  ${w.class.padEnd(28)} ${name}  ${w.width}x${w.height}${marks}`)
   }
-  if (shown.length > Number(flags.get('max') || '60')) {
-    console.log(`  ... ${shown.length - Number(flags.get('max') || '60')}개 더 (--max 로 늘린다)`)
+  if (shown.length > max) {
+    console.log(`  ... ${shown.length - max}개 더 (--max 로 늘린다)`)
   }
 
   if (!abi.match) return 1

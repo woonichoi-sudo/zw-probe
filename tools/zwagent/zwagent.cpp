@@ -19,7 +19,11 @@
 // 빌드: bash tools/zwagent/build.sh
 
 #include <QtGlobal>
+#include <QAbstractButton>
+#include <QAction>
 #include <QApplication>
+#include <QLabel>
+#include <QLineEdit>
 #include <QDateTime>
 #include <QDir>
 #include <QElapsedTimer>
@@ -44,6 +48,45 @@ QString helloPath()
 	return QDir::temp().filePath(QStringLiteral("zwagent-hello.json"));
 }
 
+/// 빈 문자열은 싣지 않는다. 위젯 5199개 × 라벨 후보 5개면 대부분이 빈 값이고,
+/// 그것만으로 파일이 배로 커진다.
+void putIfSet(QJsonObject& o, const char* key, const QString& v)
+{
+	if (!v.isEmpty()) o[QLatin1String(key)] = v;
+}
+
+/**
+ * 사람이 화면에서 보는 라벨.
+ *
+ * **objectName 만으로는 주소를 매길 수 없다.** 대상 앱에서 보이는 `zwQtButton` 56개 중
+ * objectName 이 있는 것은 0개다 (2026-09-09 실측) — 툴바를 이름으로 누르려면 버튼
+ * 자신의 라벨이 필요하다. 어디서 오는지 모르므로 **가능한 출처를 다 싣고 고르는 것은
+ * TS 에 맡긴다** (절대 규칙 5).
+ *
+ * `text` 는 위젯 종류마다 다른 게터에 있고 공통 기반이 없다. 그래서 캐스팅으로 훑는다.
+ * `QLineEdit` 을 넣은 것은 **값 자체가 판정 대상**이기 때문이다 — 길이·둘레가 음수이거나
+ * NaN 인 것을 잡는 것이 이 도구의 목적 중 하나다.
+ */
+void putLabels(QJsonObject& o, const QWidget* w)
+{
+	if (const auto* b = qobject_cast<const QAbstractButton*>(w)) putIfSet(o, "text", b->text());
+	else if (const auto* l = qobject_cast<const QLabel*>(w)) putIfSet(o, "text", l->text());
+	else if (const auto* e = qobject_cast<const QLineEdit*>(w)) putIfSet(o, "text", e->text());
+
+	putIfSet(o, "toolTip", w->toolTip());
+	putIfSet(o, "accessibleName", w->accessibleName());
+	putIfSet(o, "windowTitle", w->windowTitle());
+
+	// QAction 텍스트. 툴바 버튼이 라벨을 액션에만 갖고 있을 수 있다 — `QWidget::actions()`
+	// 는 종류를 안 가리므로 캐스팅 없이 닿는다. QToolButton 의 defaultAction 도 여기 든다.
+	QJsonArray acts;
+	for (const QAction* a : w->actions())
+	{
+		if (a != nullptr && !a->text().isEmpty()) acts.append(a->text());
+	}
+	if (!acts.isEmpty()) o[QStringLiteral("actions")] = acts;
+}
+
 /// 위젯 하나를 JSON 으로. 깊이 제한을 둬서 큰 앱에서 폭주하지 않게 한다.
 QJsonObject describeWidget(const QWidget* w, int depth, int maxDepth, int* budget)
 {
@@ -52,11 +95,22 @@ QJsonObject describeWidget(const QWidget* w, int depth, int maxDepth, int* budge
 	o[QStringLiteral("objectName")] = w->objectName();
 	o[QStringLiteral("visible")] = w->isVisible();
 	o[QStringLiteral("enabled")] = w->isEnabled();
+	// **부모 기준이다.** 최상위만 화면 좌표이고 자식은 부모 안에서의 위치다 — 툴바
+	// 버튼이 `3,3` 으로 나온다. 이것만으로는 누를 수 없다. 그래서 아래 절대 좌표를 함께 싣는다.
 	const QRect g = w->geometry();
 	o[QStringLiteral("x")] = g.x();
 	o[QStringLiteral("y")] = g.y();
 	o[QStringLiteral("width")] = g.width();
 	o[QStringLiteral("height")] = g.height();
+
+	// **화면 절대 좌표.** 여기서 변환하지 않는다 — 캡처 사각형 원점을 빼는 규칙이
+	// `zwwin.exe` 한 곳에 모여 있고(그래서 UIA 와 클릭이 8px 씩 어긋나지 않는다),
+	// 두 번째 변환 경로를 만들면 그 이점이 사라진다. 절대 좌표는 그 규칙의 입력이다.
+	const QPoint tl = w->mapToGlobal(QPoint(0, 0));
+	o[QStringLiteral("screenX")] = tl.x();
+	o[QStringLiteral("screenY")] = tl.y();
+
+	putLabels(o, w);
 
 	if (depth >= maxDepth) return o;
 

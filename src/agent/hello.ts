@@ -10,10 +10,24 @@ export type AgentWidget = {
   objectName: string
   visible: boolean
   enabled: boolean
+  /**
+   * **부모 기준 좌표다.** 최상위만 화면 좌표이고 자식은 부모 안에서의 위치다 —
+   * 툴바 버튼이 `3,3` 으로 나온다. 클릭에 쓰면 안 된다. `screenX`·`screenY` 를 쓴다.
+   */
   x: number
   y: number
   width: number
   height: number
+  /** 화면 절대 좌표 (`mapToGlobal`). 창 기준으로 바꾸는 것은 `toWindowPoint` */
+  screenX: number
+  screenY: number
+  /** 사람이 보는 글자. 버튼·라벨·입력칸에서 온다. 없으면 undefined */
+  text?: string
+  toolTip?: string
+  accessibleName?: string
+  windowTitle?: string
+  /** `QAction` 텍스트. 툴바 버튼이 라벨을 액션에만 가질 수 있다 */
+  actions?: string[]
   children?: AgentWidget[]
 }
 
@@ -89,6 +103,20 @@ function parseWidget(raw: unknown): AgentWidget | null {
     y: num(w.y),
     width: num(w.width),
     height: num(w.height),
+    screenX: num(w.screenX),
+    screenY: num(w.screenY),
+  }
+  // 빈 라벨은 플러그인이 아예 싣지 않는다. 여기서도 빈 문자열을 만들지 않는다 —
+  // `text: ''` 와 "text 가 없다" 를 구분해야 검색이 빈 needle 에 다 걸리지 않는다.
+  if (typeof w.text === 'string' && w.text !== '') node.text = w.text
+  if (typeof w.toolTip === 'string' && w.toolTip !== '') node.toolTip = w.toolTip
+  if (typeof w.accessibleName === 'string' && w.accessibleName !== '') {
+    node.accessibleName = w.accessibleName
+  }
+  if (typeof w.windowTitle === 'string' && w.windowTitle !== '') node.windowTitle = w.windowTitle
+  if (Array.isArray(w.actions)) {
+    const acts = w.actions.filter((a): a is string => typeof a === 'string' && a !== '')
+    if (acts.length > 0) node.actions = acts
   }
   if (Array.isArray(w.children)) {
     const kids = w.children.map(parseWidget).filter((k): k is AgentWidget => k !== null)
@@ -229,4 +257,67 @@ export function flattenWidgets(widgets: readonly AgentWidget[]): AgentWidget[] {
 export function findWidgets(widgets: readonly AgentWidget[], objectName: string): AgentWidget[] {
   if (objectName === '') return []
   return flattenWidgets(widgets).filter((w) => w.objectName === objectName)
+}
+
+/**
+ * 위젯의 화면 절대 좌표를 **창 기준 좌표**로 바꾼다.
+ *
+ * 규칙은 하나다 — **캡처 사각형의 원점을 뺀다.** `zwwin.exe` 의 `click` 이 정확히
+ * 그 역연산을 하고(`screenX = Rect.Left + x`), `uia` 의 `wx`·`wy` 도 같은 규칙으로
+ * 만들어진다. 그래서 여기서 나온 좌표가 **`shot` 의 PNG 좌표이자 `click` 이 받는 좌표**다.
+ *
+ * **원점을 UIA 사각형에서 가져오면 8px 어긋난다.** 창 UIA 사각형은 보이지 않는 리사이즈
+ * 테두리를 포함해서 실측 `3432,-8` 인데 캡처 사각형은 `3440,0` 이다. `listWindows` 가
+ * 주는 `x`·`y` 가 캡처 사각형 원점이므로 그것만 쓴다.
+ *
+ * @param origin 대상 창의 캡처 사각형 원점 (`listWindows` 의 `x`·`y`)
+ */
+export function toWindowPoint(
+  w: Pick<AgentWidget, 'screenX' | 'screenY'>,
+  origin: { x: number; y: number },
+): { wx: number; wy: number } {
+  return { wx: w.screenX - origin.x, wy: w.screenY - origin.y }
+}
+
+/** 위젯 한가운데의 창 기준 좌표. 누를 지점이다. */
+export function widgetCenter(
+  w: Pick<AgentWidget, 'screenX' | 'screenY' | 'width' | 'height'>,
+  origin: { x: number; y: number },
+): { x: number; y: number } {
+  const p = toWindowPoint(w, origin)
+  return { x: p.wx + Math.floor(w.width / 2), y: p.wy + Math.floor(w.height / 2) }
+}
+
+/**
+ * 이 위젯을 가리킬 수 있는 이름 전부.
+ *
+ * **어느 출처에 라벨이 있는지는 위젯마다 다르다.** 툴바 버튼은 objectName 이 비어 있고
+ * 툴팁이나 액션 텍스트에만 글자가 있다 (실앱에서 보이는 `zwQtButton` 56개 중 objectName
+ * 이 있는 것은 0개다). 그래서 **고르지 않고 다 모아서 찾는다** — 어느 쪽에 걸리든 같은
+ * 위젯이다.
+ */
+export function widgetLabels(w: AgentWidget): string[] {
+  const out: string[] = []
+  if (w.objectName !== '') out.push(w.objectName)
+  if (w.text !== undefined) out.push(w.text)
+  if (w.toolTip !== undefined) out.push(w.toolTip)
+  if (w.accessibleName !== undefined) out.push(w.accessibleName)
+  if (w.windowTitle !== undefined) out.push(w.windowTitle)
+  for (const a of w.actions ?? []) out.push(a)
+  return out
+}
+
+/**
+ * 라벨로 위젯을 찾는다. 대소문자를 무시하고 부분 일치를 인정한다.
+ *
+ * 부분 일치인 이유는 라벨이 잘리거나 접미사가 붙기 때문이다 — 실앱에 `btn_enable snap (u)`
+ * 처럼 단축키가 붙은 것이 있다. **여러 개가 맞으면 다 돌려준다.** 하나를 골라 누르는 것은
+ * 호출자의 일이고, 겹칠 때 조용히 첫 번째를 누르면 틀린 곳을 누른다.
+ */
+export function findByLabel(widgets: readonly AgentWidget[], needle: string): AgentWidget[] {
+  if (needle === '') return []
+  const n = needle.toLowerCase()
+  return flattenWidgets(widgets).filter((w) =>
+    widgetLabels(w).some((l) => l.toLowerCase().includes(n)),
+  )
 }
