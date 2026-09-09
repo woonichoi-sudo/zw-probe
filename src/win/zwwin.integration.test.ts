@@ -19,9 +19,10 @@ import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { dirname } from 'node:path'
 
-import { listWindows, shot, ZWWIN_EXE } from './zwwin.ts'
+import { click, listWindows, shot, ZWWIN_EXE } from './zwwin.ts'
 import { analyze, judgeBlank, pixelAt } from '../image/stats.ts'
 import { isInteractive, judgeActivity, styleNames } from './windowState.ts'
+import { judgeClick } from '../input/click.ts'
 import type { Bgra, Rgb } from '../image/stats.ts'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
@@ -170,6 +171,80 @@ test('다이얼로그가 없으면 idle 로 판정한다', { skip }, async () =>
     assert.equal(activity.classified.main?.hwnd, main.hwnd)
     assert.deepEqual(activity.classified.extras, [])
     assert.equal(main.enabled, true)
+  } finally {
+    child.kill()
+  }
+})
+
+test('클릭 좌표가 캡처 좌표계와 같다 — 누른 사분면이 검게 변한다', { skip }, async () => {
+  // 이 테스트의 요점은 "클릭이 됐다" 가 아니라 **좌표계가 일치한다** 는 것이다.
+  // zwwin.exe 는 캡처와 같은 사각형(BestRect)으로 창 기준 좌표를 화면 좌표로 옮긴다.
+  // 그게 어긋나면 여기서 다른 사분면이 검어지거나 아무 것도 안 변한다.
+  //
+  // 픽스처는 눌린 사분면을 검게 칠한다. 네 칸을 다 눌러 확인하므로 x·y 를 맞바꾸는
+  // 종류의 실수(전치)도 잡힌다 — 대각선만 눌러보면 그건 통과해버린다.
+  const dir = mkdtempSync(join(tmpdir(), 'zwprobe-click-'))
+  const child = spawn(FIXTURE_EXE, [], { detached: false, stdio: 'ignore' })
+
+  try {
+    const w = await waitForFixture()
+    await sleep(200)
+
+    const qx = Math.floor(w.width / 4)
+    const qy = Math.floor(w.height / 4)
+
+    // [누를 자리, 검어져야 하는 사분면의 중심]
+    const cases: Array<[string, number, number]> = [
+      ['좌상', qx, qy],
+      ['우상', w.width - qx, qy],
+      ['좌하', qx, w.height - qy],
+      ['우하', w.width - qx, w.height - qy],
+    ]
+
+    for (const [name, cx, cy] of cases) {
+      const r = click({ title: FIXTURE_TITLE, x: cx, y: cy })
+      assert.equal(judgeClick(r).onTarget, true, `${name} 클릭이 대상에 닿지 않았다`)
+      assert.equal(r.x, cx)
+      assert.equal(r.y, cy)
+      // 창 위치가 반영돼야 한다 — 창 기준 좌표를 그대로 화면 좌표로 쓰면 여기서 걸린다
+      assert.equal(r.screenX, w.x + cx)
+      assert.equal(r.screenY, w.y + cy)
+
+      await sleep(150) // 다시 그려지도록
+
+      const raw = join(dir, `after-${name}.bgra`)
+      const info = shot({ title: FIXTURE_TITLE, png: join(dir, `after-${name}.png`), raw })
+      const img: Bgra = {
+        width: info.window.width,
+        height: info.window.height,
+        data: new Uint8Array(readFileSync(raw)),
+      }
+
+      // 누른 사분면만 검고 나머지 셋은 검지 않아야 한다.
+      for (const [other, ox, oy] of cases) {
+        const px = pixelAt(img, ox, oy)
+        const isBlack = px.r < 20 && px.g < 20 && px.b < 20
+        assert.equal(
+          isBlack,
+          other === name,
+          `${name} 을 눌렀는데 ${other} 사분면이 ${isBlack ? '검다' : '검지 않다'} — ${show(px)}`,
+        )
+      }
+    }
+  } finally {
+    child.kill()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('창 밖 좌표는 거부한다', { skip }, async () => {
+  // 창 밖을 누르면 다른 앱이 맞는다. 되돌릴 수 없으므로 실행 전에 끊어야 한다.
+  const child = spawn(FIXTURE_EXE, [], { detached: false, stdio: 'ignore' })
+  try {
+    const w = await waitForFixture()
+    assert.throws(() => click({ title: FIXTURE_TITLE, x: w.width, y: 10 }), /창 밖 좌표/)
+    assert.throws(() => click({ title: FIXTURE_TITLE, x: 10, y: w.height }), /창 밖 좌표/)
+    assert.throws(() => click({ title: FIXTURE_TITLE, x: -1, y: 10 }), /창 밖 좌표/)
   } finally {
     child.kill()
   }

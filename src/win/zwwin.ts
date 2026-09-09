@@ -154,3 +154,50 @@ export function sendKey(opts: SendKeyOptions): KeyResult {
   if (opts.holdMs !== undefined) args.push('--hold', String(opts.holdMs))
   return run(args) as KeyResult
 }
+
+export type ClickResult = {
+  button: string
+  double: boolean
+  /** 창 왼쪽 위 기준으로 요청한 좌표 */
+  x: number
+  y: number
+  /** 실제로 누른 화면 절대 좌표 */
+  screenX: number
+  screenY: number
+  activated: boolean
+  moved: boolean
+  foregroundAfter: number
+  /** 누르기 직전 그 자리에 있던 창. 자식 위젯일 수 있다 */
+  hwndAtPoint: number
+  /** 그 창의 최상위 조상. 대상 창과 같아야 옳게 눌린 것이다 */
+  rootAtPoint: number
+  cursorRestored: boolean
+  window: WindowInfo
+}
+
+export type ClickOptions = WindowFilter & {
+  /**
+   * 창 왼쪽 위 기준 픽셀. **`shot` 이 찍는 PNG 의 좌표와 같다** —
+   * 화면에서 본 자리를 그대로 넘기면 된다. 화면 절대 좌표가 아니다.
+   */
+  x: number
+  y: number
+  button?: 'left' | 'right' | 'middle'
+  double?: boolean
+  /** 누른 채로 유지할 시간. 0 이면 바로 뗀다 */
+  holdMs?: number
+}
+
+/**
+ * 창의 한 점을 누른다. 키 입력과 같이 **포그라운드를 요구한다** — 커서를 실제로 옮기고
+ * 시스템 전역 입력을 보낸다. 끝나면 커서를 원래 자리로 돌려놓는다.
+ *
+ * 창 밖 좌표는 zwwin.exe 가 거부한다. 다른 앱을 누르는 것은 되돌릴 수 없다.
+ */
+export function click(opts: ClickOptions): ClickResult {
+  const args = ['click', '--x', String(opts.x), '--y', String(opts.y), ...filterArgs(opts)]
+  if (opts.button !== undefined) args.push('--button', opts.button)
+  if (opts.double === true) args.push('--double')
+  if (opts.holdMs !== undefined) args.push('--hold', String(opts.holdMs))
+  return run(args) as ClickResult
+}

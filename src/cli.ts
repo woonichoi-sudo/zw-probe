@@ -6,7 +6,7 @@
 import { mkdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 
-import { TARGET_PROCESS, listWindows, sendKey, shot } from './win/zwwin.ts'
+import { TARGET_PROCESS, click, listWindows, sendKey, shot } from './win/zwwin.ts'
 import { analyze, judgeCapture } from './image/stats.ts'
 import type { WindowFilter } from './win/zwwin.ts'
 import { findConflicts, findShortcut } from './input/shortcut.ts'
@@ -14,6 +14,7 @@ import { loadShortcuts } from './input/shortcutFile.ts'
 import { locateLog, logDir, readEntries } from './log/logFile.ts'
 import { summarize, toSeverity } from './log/parse.ts'
 import { judgeActivity, styleNames } from './win/windowState.ts'
+import { judgeClick } from './input/click.ts'
 
 function parseArgs(argv: string[]): { verb: string; rest: string[]; flags: Map<string, string> } {
   const verb = argv[0] !== undefined && !argv[0].startsWith('--') ? argv[0] : ''
@@ -247,6 +248,60 @@ function cmdState(flags: Map<string, string>): number {
   return activity.state === 'idle' ? 0 : activity.state === 'busy' ? 3 : 1
 }
 
+/**
+ * 창의 한 점을 누른다. 좌표는 **`shot` 이 찍은 PNG 의 좌표와 같다** — 화면에서 본
+ * 자리를 그대로 넘긴다.
+ *
+ * 되돌릴 수 없는 조작이므로 좌표를 한 번 더 찍어서 보여준다. 창 밖이면 zwwin.exe 가
+ * 거부한다.
+ */
+function cmdClick(rest: string[], flags: Map<string, string>): number {
+  // 위치 인자 "x y" 도 받는다 — 좌표를 두 번 타이핑하는 것이 성가시기 때문이다.
+  const xs = flags.get('x') ?? rest[0]
+  const ys = flags.get('y') ?? rest[1]
+  if (xs === undefined || ys === undefined) {
+    console.error('좌표가 필요하다: zwprobe click <x> <y>  (창 왼쪽 위 기준, shot 의 PNG 좌표와 같다)')
+    return 1
+  }
+
+  const x = Number(xs)
+  const y = Number(ys)
+  if (!Number.isInteger(x) || !Number.isInteger(y)) {
+    console.error(`좌표는 정수여야 한다: "${xs}" "${ys}"`)
+    return 1
+  }
+
+  const f = filterFrom(flags)
+  if (f.process === undefined && f.pid === undefined && f.title === undefined) {
+    f.process = TARGET_PROCESS
+  }
+
+  const buttonArg = flags.get('button') || 'left'
+  if (buttonArg !== 'left' && buttonArg !== 'right' && buttonArg !== 'middle') {
+    console.error(`--button 은 left, right, middle 중 하나여야 한다: ${buttonArg}`)
+    return 1
+  }
+
+  const r = click({
+    ...f,
+    x,
+    y,
+    button: buttonArg,
+    double: flags.has('double'),
+    ...(flags.has('hold') ? { holdMs: Number(flags.get('hold')) } : {}),
+  })
+
+  console.log(`클릭  ${r.button}${r.double ? ' ×2' : ''} 창 기준 (${r.x},${r.y}) → 화면 (${r.screenX},${r.screenY})`)
+  console.log(`대상  ${r.window.width}x${r.window.height} hwnd=${r.window.hwnd} pid=${r.window.pid} "${r.window.title}"`)
+
+  const v = judgeClick(r)
+  console.log(`판정  ${v.onTarget ? '정상' : '의심'} — ${v.reason}`)
+  if (!r.cursorRestored) {
+    console.log('주의  커서를 원래 자리로 돌려놓지 못했다.')
+  }
+  return v.onTarget ? 0 : 2
+}
+
 function cmdLog(flags: Map<string, string>): number {
   const found = locateLog(flags.get('app-version') || runningAppVersion(flags))
   if (found === null) {
@@ -310,6 +365,8 @@ function main(): number {
       return cmdLog(flags)
     case 'state':
       return cmdState(flags)
+    case 'click':
+      return cmdClick(rest, flags)
     default:
       console.error(
         '사용법:\n' +
@@ -318,7 +375,8 @@ function main(): number {
           '  zwprobe shortcuts [--filter 조각]\n' +
           '  zwprobe key <기능이름> [--process 이름] [--method post]\n' +
           '  zwprobe log       [--min-severity WARNING] [--tail N] [--all]\n' +
-          '  zwprobe state     [--process 이름] [--pid N]   (0=idle 3=busy 1=못 찾음)',
+          '  zwprobe state     [--process 이름] [--pid N]   (0=idle 3=busy 1=못 찾음)\n' +
+          '  zwprobe click <x> <y> [--button right] [--double]   좌표는 shot 의 PNG 기준',
       )
       return 1
   }

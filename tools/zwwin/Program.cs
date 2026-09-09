@@ -8,6 +8,8 @@
 // 사용:
 //   zwwin.exe shot --process z-weave --png out/shot.png [--raw out/shot.bgra] [--mode printwindow|screen]
 //   zwwin.exe windows [--process z-weave]
+//   zwwin.exe key --vk N [--ctrl] [--shift] [--alt] [--process z-weave]
+//   zwwin.exe click --x N --y N [--button right] [--double] [--process z-weave]   창 왼쪽 위 기준
 
 using System;
 using System.Collections.Generic;
@@ -46,6 +48,10 @@ internal static class N
     [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint attachTo, uint attachFrom, bool attach);
     [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
     [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, UIntPtr extra);
+    [DllImport("user32.dll")] public static extern void mouse_event(uint flags, int dx, int dy, uint data, UIntPtr extra);
+    [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll")] public static extern bool GetCursorPos(out POINT p);
+    [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(POINT p);
     [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam);
 
     public const int SW_RESTORE = 9;
@@ -55,9 +61,18 @@ internal static class N
     public const byte VK_SHIFT = 0x10;
     public const uint WM_KEYDOWN = 0x0100;
     public const uint WM_KEYUP = 0x0101;
+    public const uint MOUSEEVENTF_LEFTDOWN = 0x0002;
+    public const uint MOUSEEVENTF_LEFTUP = 0x0004;
+    public const uint MOUSEEVENTF_RIGHTDOWN = 0x0008;
+    public const uint MOUSEEVENTF_RIGHTUP = 0x0010;
+    public const uint MOUSEEVENTF_MIDDLEDOWN = 0x0020;
+    public const uint MOUSEEVENTF_MIDDLEUP = 0x0040;
 
     [StructLayout(LayoutKind.Sequential)]
     public struct RECT { public int Left, Top, Right, Bottom; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct POINT { public int X, Y; }
 
     public const uint GA_ROOT = 2;
     public const uint GW_OWNER = 4;
@@ -107,8 +122,9 @@ internal static class Program
                 case "windows": return CmdWindows(a);
                 case "shot": return CmdShot(a);
                 case "key": return CmdKey(a);
+                case "click": return CmdClick(a);
                 default:
-                    return Fail("알 수 없는 명령: '" + verb + "'. shot 또는 windows 를 쓴다.");
+                    return Fail("알 수 없는 명령: '" + verb + "'. windows, shot, key, click 중 하나를 쓴다.");
             }
         }
         catch (Exception ex)
@@ -305,6 +321,101 @@ internal static class Program
             System.Threading.Thread.Sleep(waitMs);
         }
         return N.GetForegroundWindow() == hwnd;
+    }
+
+    // 창 기준 좌표를 눌러준다. **좌표계가 캡처와 같은 것이 핵심이다** —
+    // BestRect 로 얻은 사각형은 shot 이 찍는 영역과 같으므로, PNG 에서 본 (x,y) 가
+    // 그대로 여기의 (x,y) 다. 화면 절대 좌표로 받으면 창이 움직이는 순간 어긋난다.
+    //
+    // 판단은 하지 않는다. 누른 자리에 어떤 창이 있었는지(WindowFromPoint)를 사실로
+    // 보고할 뿐이고, 그게 대상 창이 맞는지는 TS 가 따진다.
+    private static int CmdClick(Dictionary<string, string> a)
+    {
+        string xS = Get(a, "x"), yS = Get(a, "y");
+        if (xS == null || yS == null) return Fail("--x 와 --y 가 필요하다 (창 왼쪽 위 기준 픽셀).");
+
+        int x, y;
+        if (!int.TryParse(xS, out x) || !int.TryParse(yS, out y)) return Fail("--x, --y 는 정수여야 한다.");
+
+        string button = Get(a, "button") ?? "left";
+        uint down, up;
+        switch (button)
+        {
+            case "left": down = N.MOUSEEVENTF_LEFTDOWN; up = N.MOUSEEVENTF_LEFTUP; break;
+            case "right": down = N.MOUSEEVENTF_RIGHTDOWN; up = N.MOUSEEVENTF_RIGHTUP; break;
+            case "middle": down = N.MOUSEEVENTF_MIDDLEDOWN; up = N.MOUSEEVENTF_MIDDLEUP; break;
+            default: return Fail("--button 은 left, right, middle 중 하나여야 한다: " + button);
+        }
+
+        bool doubleClick = a.ContainsKey("double");
+        int holdMs = 0;
+        int.TryParse(Get(a, "hold") ?? "0", out holdMs);
+
+        var wins = Filter(Enumerate(), a);
+        if (wins.Count == 0) return Fail("조건에 맞는 창을 찾지 못했다.");
+        var w = wins[0];
+
+        // 창 밖을 누르면 다른 앱이 맞는다. 되돌릴 수 없으므로 여기서 끊는다.
+        // --vk 범위 검사와 같은 인자 유효성 검사이지 화면 판정이 아니다.
+        if (x < 0 || y < 0 || x >= w.Width || y >= w.Height)
+        {
+            return Fail("창 밖 좌표다: (" + x + "," + y + ") 는 " + w.Width + "x" + w.Height + " 밖이다.");
+        }
+
+        int screenX = w.Rect.Left + x;
+        int screenY = w.Rect.Top + y;
+
+        // 원래 커서 자리를 돌려놓는다. 사용자의 포인터를 옮겨두고 끝내지 않는다.
+        N.POINT before;
+        bool haveBefore = N.GetCursorPos(out before);
+
+        bool activated = Activate(w.Hwnd, 10, 40);
+        if (activated) System.Threading.Thread.Sleep(60); // 포커스 전환이 앉도록
+
+        // SetCursorPos 는 물리 화면 좌표를 그대로 받으므로 다중 모니터에서도 맞는다.
+        // mouse_event 에 ABSOLUTE 정규화(0~65535)를 쓰면 가상 데스크톱 계산이 끼어든다.
+        bool moved = N.SetCursorPos(screenX, screenY);
+        System.Threading.Thread.Sleep(20); // 이동이 앉고 hover 가 반영되도록
+
+        // 누르기 직전에 그 자리의 창을 읽는다. 대상이 가려져 있으면 여기서 드러난다.
+        IntPtr at = N.WindowFromPoint(new N.POINT { X = screenX, Y = screenY });
+        IntPtr atRoot = at == IntPtr.Zero ? IntPtr.Zero : N.GetAncestor(at, N.GA_ROOT);
+
+        N.mouse_event(down, 0, 0, 0, UIntPtr.Zero);
+        if (holdMs > 0) System.Threading.Thread.Sleep(holdMs);
+        N.mouse_event(up, 0, 0, 0, UIntPtr.Zero);
+
+        if (doubleClick)
+        {
+            System.Threading.Thread.Sleep(40); // 더블클릭 판정 시간 안에 들도록
+            N.mouse_event(down, 0, 0, 0, UIntPtr.Zero);
+            N.mouse_event(up, 0, 0, 0, UIntPtr.Zero);
+        }
+
+        if (haveBefore)
+        {
+            System.Threading.Thread.Sleep(20);
+            N.SetCursorPos(before.X, before.Y);
+        }
+
+        var sb = new StringBuilder();
+        sb.Append("{\"ok\":true,\"button\":");
+        AppendStr(sb, button);
+        sb.Append(",\"double\":").Append(doubleClick ? "true" : "false");
+        sb.Append(",\"x\":").Append(x).Append(",\"y\":").Append(y);
+        sb.Append(",\"screenX\":").Append(screenX).Append(",\"screenY\":").Append(screenY);
+        sb.Append(",\"activated\":").Append(activated ? "true" : "false");
+        sb.Append(",\"moved\":").Append(moved ? "true" : "false");
+        sb.Append(",\"foregroundAfter\":").Append(N.GetForegroundWindow().ToInt64());
+        // 누른 자리에 있던 창. 자식 위젯일 수 있으므로 최상위 조상도 함께 싣는다.
+        sb.Append(",\"hwndAtPoint\":").Append(at.ToInt64());
+        sb.Append(",\"rootAtPoint\":").Append(atRoot.ToInt64());
+        sb.Append(",\"cursorRestored\":").Append(haveBefore ? "true" : "false");
+        sb.Append(",\"window\":");
+        AppendWin(sb, w);
+        sb.Append('}');
+        Console.Out.Write(sb.ToString());
+        return 0;
     }
 
     private static int CmdKey(Dictionary<string, string> a)
