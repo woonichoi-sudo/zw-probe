@@ -6,6 +6,7 @@
 import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { tmpdir } from 'node:os'
 
 import { TARGET_PROCESS, click, listWindows, sendKey, shot, uiaTree } from './win/zwwin.ts'
 import { analyze, judgeCapture } from './image/stats.ts'
@@ -23,6 +24,7 @@ import { activePanel, clickPoint, findNodes, findOne, readDocumentState } from '
 import type { NodeQuery } from './uia/tree.ts'
 import { BASELINE_DIR, listBaselines, runScenario } from './scenario/run.ts'
 import type { Scenario } from './scenario/steps.ts'
+import { flattenWidgets, judgeAbi, parseAgentHello } from './agent/hello.ts'
 
 function parseArgs(argv: string[]): { verb: string; rest: string[]; flags: Map<string, string> } {
   const verb = argv[0] !== undefined && !argv[0].startsWith('--') ? argv[0] : ''
@@ -626,6 +628,78 @@ function cmdDiff(rest: string[], flags: Map<string, string>): number {
   return v.same ? 0 : 2
 }
 
+/**
+ * `zwagent.dll` 이 남긴 hello 파일을 읽어 보고한다.
+ *
+ * **플러그인이 프로세스 안에 들어갔는지 확인하는 유일한 방법이다.** stdout 은 대상
+ * 앱이 이미 쓰고 있고 콘솔 없는 빌드에서는 사라지므로 파일로 받는다.
+ *
+ * 종료 코드: 0=로드됐고 UI 까지 봤다, 3=로드됐지만 UI 를 못 봤다, 1=못 읽었다.
+ * 3을 따로 두는 이유: 트리가 비어 있는 것이 "위젯이 없다" 가 아니라 "아직 안
+ * 만들어졌다" 일 수 있고, 그 둘은 원인이 다르다.
+ */
+function cmdAgent(flags: Map<string, string>): number {
+  const path = flags.get('hello') || join(tmpdir(), 'zwagent-hello.json')
+
+  let raw: unknown
+  try {
+    raw = JSON.parse(readFileSync(path, 'utf8'))
+  } catch (err) {
+    console.error(
+      `hello 파일을 읽지 못했다: ${path}\n` +
+        `  ${err instanceof Error ? err.message : String(err)}\n` +
+        '  플러그인이 로드되지 않았거나 아직 쓰지 않았다. 확인할 것:\n' +
+        '    · 앱을 `-style zwagent` 로 띄웠는가\n' +
+        '    · QT_PLUGIN_PATH 에 이 리포의 bin/plugins 가 있는가\n' +
+        '      (또는 앱 배포 폴더의 styles/ 에 zwagent.dll 을 뒀는가)\n' +
+        '    · 디버그 구성으로 빌드했는가 — 아니면 Qt 가 조용히 건너뛴다\n' +
+        '      QT_DEBUG_PLUGINS=1 로 띄우면 이유가 stderr 로 나온다',
+    )
+    return 1
+  }
+
+  const parsed = parseAgentHello(raw)
+  if (!parsed.ok) {
+    console.error(`hello 파일이 쓸 수 없다: ${path}\n  ${parsed.reason}`)
+    return 1
+  }
+  const h = parsed.hello
+
+  console.log(`파일  ${path}`)
+  console.log(`로드  styleKey="${h.styleKey}" pid=${h.pid} · ${h.writtenAt}`)
+  console.log(`대상  ${h.appFilePath || '(모름)'}`)
+
+  const abi = judgeAbi(h)
+  console.log(`ABI   ${abi.match ? '일치' : '어긋남'} — ${abi.reason}`)
+
+  const flat = flattenWidgets(h.topLevelWidgets)
+  console.log(
+    `위젯  최상위 ${h.topLevelCount}개 · 트리에 실린 것 ${flat.length}개 · ` +
+      `시도 ${h.attempts}회 · UI ${h.sawUi ? '봤다' : '못 봤다'}`,
+  )
+  if (h.widgetBudgetLeft === 0) {
+    console.log('주의  위젯 상한에 닿았다. 트리가 잘렸으니 "없다" 를 단정할 수 없다.')
+  }
+
+  // 이름 있는 위젯만 보여준다. 이름 없는 것이 대부분이고, 주소를 매길 수 있는
+  // 것만 보는 것이 M5 설계에 필요한 정보다.
+  const named = flat.filter((w) => w.objectName !== '')
+  const needle = (flags.get('filter') || '').toLowerCase()
+  const shown = needle ? named.filter((w) => w.objectName.toLowerCase().includes(needle)) : named
+
+  console.log(`\n이름 있는 위젯 ${named.length}개${needle ? ` 중 "${needle}" 에 맞는 ${shown.length}개` : ''}:`)
+  for (const w of shown.slice(0, Number(flags.get('max') || '60'))) {
+    const marks = `${w.visible ? '' : ' [숨김]'}${w.enabled ? '' : ' [비활성]'}`
+    console.log(`  ${w.class.padEnd(28)} ${w.objectName}  ${w.width}x${w.height}${marks}`)
+  }
+  if (shown.length > Number(flags.get('max') || '60')) {
+    console.log(`  ... ${shown.length - Number(flags.get('max') || '60')}개 더 (--max 로 늘린다)`)
+  }
+
+  if (!abi.match) return 1
+  return h.sawUi ? 0 : 3
+}
+
 function cmdLog(flags: Map<string, string>): number {
   const found = locateLog(flags.get('app-version') || runningAppVersion(flags))
   if (found === null) {
@@ -701,6 +775,8 @@ async function main(): Promise<number> {
       return cmdBaseline(rest, flags)
     case 'diff':
       return cmdDiff(rest, flags)
+    case 'agent':
+      return cmdAgent(flags)
     default:
       console.error(
         '사용법:\n' +
@@ -719,7 +795,10 @@ async function main(): Promise<number> {
           '  시나리오\n' +
           '    zwprobe run <파일.ts> [--out 폴더] [--keep-going]   (0=통과 2=실패 1=거부)\n' +
           '    zwprobe baseline [<이름>] [--force] [--dir 폴더]    이름 없으면 목록\n' +
-          '    zwprobe diff <a> <b> [--tolerance N] [--max-changed 0.01]  (0=같다 2=다르다)',
+          '    zwprobe diff <a> <b> [--tolerance N] [--max-changed 0.01]  (0=같다 2=다르다)\n' +
+          '  에이전트 — 앱을 `-style zwagent` 로 띄운 뒤\n' +
+          '    zwprobe agent     [--hello 경로] [--filter 조각] [--max N]\n' +
+          '                      (0=로드+UI 확인 3=로드했으나 UI 못 봄 1=못 읽음)',
       )
       return 1
   }

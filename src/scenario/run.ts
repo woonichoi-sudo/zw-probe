@@ -8,10 +8,10 @@
 // **실패하면 멈춘다.** 앱 상태는 단계마다 누적되므로, 3번째가 실패한 뒤 4번째를
 // 실행하면 전제가 깨진 상태에서 조작하는 것이 된다. 뒤 단계는 'skipped' 로 남긴다.
 
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 
-import { readCapture, writeCaptureMeta } from '../image/captureFile.ts'
+import { capturePaths, readCapture, writeCaptureMeta } from '../image/captureFile.ts'
 import { checkBaseline } from '../image/captureMeta.ts'
 import type { CaptureMeta } from '../image/captureMeta.ts'
 import { diff, judgeChanged, judgeSame } from '../image/diff.ts'
@@ -108,6 +108,29 @@ function capture(base: string, filter: WindowFilter): { img: Bgra; meta: Capture
   writeCaptureMeta(base, meta)
   const loaded = readCapture(base)
   return { img: loaded.img, meta: loaded.meta, png }
+}
+
+/**
+ * 통과한 동작 단계의 **생 픽셀만** 지운다. PNG 는 남긴다.
+ *
+ * **왜 필요한가.** 캡처 하나가 1920x1040 이면 `.bgra` 가 8MB 다. 동작 단계마다
+ * 전후를 찍으므로 10단계 시나리오 한 번이 55MB 를 남겼다(2026-09-09 실측: `runs/`
+ * 가 117MB). 그대로 두면 무한히 자란다.
+ *
+ * **전후 캡처는 즉시 비교하고 나면 쓸 데가 없다.** 반면 `shot`·`checkBaseline` 이
+ * 남긴 것은 나중에 `zwprobe diff` 로 다시 볼 수 있어야 하므로 건드리지 않는다.
+ * 실패한 단계도 전부 남긴다 — 실패 지점을 파는 것이 이 도구의 목적이다.
+ *
+ * PNG 를 남기는 이유: 사람이(그리고 내가) 눈으로 보는 것은 PNG 다. 작고, 판정에는
+ * 안 쓰이므로 지울 이유가 없다.
+ */
+function pruneRaw(bases: readonly string[]): void {
+  for (const base of bases) {
+    const p = capturePaths(base)
+    // 지우기 실패는 무시한다 — 디스크를 아끼려는 것이고, 못 지워도 결과는 옳다.
+    rmSync(p.bgra, { force: true })
+    rmSync(p.meta, { force: true })
+  }
 }
 
 /**
@@ -220,14 +243,18 @@ export async function runScenario(sc: Scenario, opts: RunOptions = {}): Promise<
     say(`${String(i + 1).padStart(2)} ${description}`)
     const started = Date.now()
     const artifacts: string[] = []
+    // 통과하면 지울 캡처의 기본 이름들. 근거는 pruneRaw 주석.
+    const transient: string[] = []
 
     // 동작 단계는 전후를 비교한다. 찍는 비용(약 100ms)이 있으므로 필요할 때만 찍는다.
     let before: { img: Bgra; meta: CaptureMeta } | null = null
     if (wantsChange(step)) {
       try {
-        const c = capture(join(outDir, `${String(i + 1).padStart(2, '0')}-before`), filter)
+        const base = join(outDir, `${String(i + 1).padStart(2, '0')}-before`)
+        const c = capture(base, filter)
         before = { img: c.img, meta: c.meta }
         artifacts.push(c.png)
+        transient.push(base)
       } catch (err) {
         // 전후 비교를 못 하는 것이 단계 실패는 아니다. 비교를 건너뛰고 진행한다.
         say(`   (전 캡처 실패 — 전후 비교를 건너뛴다: ${err instanceof Error ? err.message : String(err)})`)
@@ -385,8 +412,10 @@ export async function runScenario(sc: Scenario, opts: RunOptions = {}): Promise<
     // 앱이 그 상태에서 무시했으면 화면은 그대로다.
     if (outcome === 'pass' && before !== null) {
       try {
-        const after = capture(join(outDir, `${String(i + 1).padStart(2, '0')}-after`), filter)
+        const afterBase = join(outDir, `${String(i + 1).padStart(2, '0')}-after`)
+        const after = capture(afterBase, filter)
         artifacts.push(after.png)
+        transient.push(afterBase)
         const v = judgeChanged(diff(before.img, after.img))
         if (!v.changed) {
           outcome = 'fail'
@@ -429,6 +458,8 @@ export async function runScenario(sc: Scenario, opts: RunOptions = {}): Promise<
       }
 
       if (opts.keepGoing !== true) stopped = true
+    } else {
+      pruneRaw(transient)
     }
   }
 
