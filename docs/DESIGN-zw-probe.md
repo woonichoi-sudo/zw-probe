@@ -86,6 +86,31 @@ web 프로젝트에서는 Claude in Chrome으로 브라우저를 제어해 UI �
 | Visual Studio | 2022 Community |
 | Python | Microsoft Store 스텁만. 실사용 불가 → pywinauto 경로 배제 |
 
+### 3.6 로그와 단축키 — 실측한 경로와 형식 (2026-09-09)
+
+§12의 열린 항목 두 개를 소스를 읽고 디스크에서 확인해 닫았다.
+
+**로그.** 실제 경로는 `zwLogFile::GetLogFilePath()`가 만든다 (`Z-Weave/zwLogFile.cpp:36`). `InitLog()`에는 경로가 없고 위임만 한다.
+
+- 디렉토리 `%LOCALAPPDATA%/z-emotion/z-weave/log/` — `QStandardPaths::AppLocalDataLocation` + `/log`. 조직명 `z-emotion`, 앱명은 `ZW_APP_NAME`(CMake `PROJECT_NAME`) (`zwAppZWeave.cpp:209`)
+- 파일명 `z-weave_{버전}_{yyyy.MM.dd_hh.mm.ss.zzz}.log`. **시각은 UTC**
+- **실행마다 새 파일이 생긴다.** tail 대상은 가장 최근 파일이고, mtime 정렬이 가장 단순하고 안전하다
+- **항목마다 `flush()` 한다** → 실시간 tail이 성립한다. 버퍼링을 기다릴 필요가 없다
+- 줄 형식 `<로컬 asctime> [<severity>] <classContext>: <detailedContext>: <message>`
+- 같은 메시지가 **같은 초 안에** 반복되면 버려진다. 반복 횟수를 로그로 세면 안 된다
+- 보존 개수 `kFileMax = 100` (`zwLogFile.h:32`)
+- **함정** — 파일명 시각은 UTC인데 줄 안의 시각은 로컬이다. 실측: `..._05.32.35.934.log`의 mtime이 14:36(KST). 둘을 같은 축으로 비교하면 9시간 어긋난다
+
+**단축키.** 디스크의 INI 파일이 정본이다 (`zwShortcutManager.cpp:47`).
+
+- 경로 `%APPDATA%/z-emotion/z-weave/{버전}/shortcut.ini` — **Roaming이다.** 로그의 Local과 다른 루트다
+- 74줄 INI, `Version=1.6`, 섹션 `[Main menu]` `[View common]` `[2d shortcuts]` `[3d shortcuts]`
+- **하드코딩하지 않고 이 파일을 읽는다.** 사용자가 바꾼 매핑까지 반영되고, 버전별 디렉토리라 버전이 올라가도 따라간다. C++ 기본값은 `InitDefaultShortcut()`(`zwShortcutManager.cpp:290`)에 있고 파일이 없을 때만 쓰인다
+- 자동화에 쓸 것: `SimulationStart=SPACE`, `SimulationStep=Ctrl+SPACE`, `SimulationReset=Shift+SPACE`, `MainUndo=Ctrl+Z`, `MainRedo=Ctrl+Y`, `CameraFront=2`~`CameraBottom=7`, `CameraFit=Shift+F`, `ClearSelection=ESC`, `ResetLayout=Ctrl+L`
+- 관찰 — `ActivateSelected`와 `DeactivateSelected`가 둘 다 `Shift+D`다. 토글로 의도된 것으로 보이나 확인이 필요하다
+
+**부수 확인.** Windows 실행 인자에 `--launcher-login`, `--launcher-logout`, `--audaces`가 있다 (`zwAppZWeave.cpp:221-242`). `--audaces`는 다중 인스턴스를 허용한다 — 픽스처 없이 실앱을 병렬로 띄워야 할 때 쓸 수 있다.
+
 ## 4. 아키텍처
 
 세 구성요소가 각각 독립 실행된다. **Z-Weave 리포와 소스는 건드리지 않는다.**
@@ -247,6 +272,6 @@ PDB가 있어 내부 상태 읽기가 이론상 가능하지만 느리고 취약
 |---|---|
 | `zwagent.dll`의 ABI·로드 가능성 | **M4에서 검증.** 현 설계의 유일한 기술적 불확실성 |
 | `ZWEAVE_TEST_SAMPLES_DIR` 경로 | 미확인. `build/run_cmake_testing_vs_2022.bat`에 빈 값이고 주석에 Dropbox 경로 예시가 있다. 현 설계에서는 불필요하나 §6.2로 되돌아가면 필요 |
-| 로그 파일 실제 경로 | `InitLog()` 구현 확인 필요 (M2) |
-| 단축키 목록 | `zwShortcutManager` 확인 필요 (M2). 가장 안정적인 조작 경로 |
+| ~~로그 파일 실제 경로~~ | **닫힘 (2026-09-09).** §3.6 |
+| ~~단축키 목록~~ | **닫힘 (2026-09-09).** §3.6. 하드코딩하지 않고 `shortcut.ini`를 읽는다 |
 | 팀 공유 여부 | 미정. 현재는 일반 폴더. 필요해지면 `git init` |

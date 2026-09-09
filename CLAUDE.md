@@ -125,6 +125,8 @@ deny 규칙은 훅이 로드되지 않는 경우를 위한 이중 방어로만 �
 - **Windows에는 파일 열기 인자가 없다** (`zwAppZWeave.cpp:217-244`) — 프로젝트 열기는 파일 다이얼로그를 거쳐야 하고, 이게 가장 깨지기 쉬운 부분이다
 - 로그인은 zlauncher URL 스킴 경유. 자동화는 **이미 로그인된 상태**를 전제한다
 - `setObjectName`이 44곳뿐이라 UIAutomation은 화면 텍스트에 의존 → 취약. **단축키 경로를 우선한다**
+- **로그**: `%LOCALAPPDATA%/z-emotion/z-weave/log/z-weave_{버전}_{UTC시각}.log`. **실행마다 새 파일**이므로 mtime이 가장 최근인 것을 tail한다. 항목마다 flush하므로 실시간으로 읽힌다. 파일명은 UTC, 줄 안의 시각은 로컬 — 섞으면 안 된다. 상세는 설계문서 §3.6
+- **단축키**: `%APPDATA%/z-emotion/z-weave/{버전}/shortcut.ini` (**Roaming**, 로그와 루트가 다르다). **하드코딩하지 않고 이 파일을 읽는다** — 사용자 변경까지 반영된다. `SimulationStart=SPACE`, `MainUndo=Ctrl+Z`, `CameraFit=Shift+F`, `ClearSelection=ESC` 등. 상세는 설계문서 §3.6
 
 ## 환경
 
@@ -140,6 +142,7 @@ deny 규칙은 훅이 로드되지 않는 경우를 위한 이중 방어로만 �
 ## 열린 항목
 
 - **`zwagent.dll` 로드 가능성** — M4에서 검증. 현 설계의 유일한 기술적 불확실성
-- **로그 파일 실제 경로** — `zwAppZWeave.cpp`의 `InitLog()` 확인 필요 (M2)
-- **단축키 목록** — `Z-Weave/state/zwShortcutManager` 확인 필요 (M2)
-- **팀 공유 여부** — 미정. 현재는 일반 폴더이고 `git init`을 하지 않았다
+- **팀 공유 여부** — 미정. 원격 없이 로컬 `main`에서만 작업한다
+- **`ActivateSelected`와 `DeactivateSelected`가 둘 다 `Shift+D`** — `shortcut.ini` 실측. 토글로 의도된 것인지 확인 필요 (M2에서 실제로 눌러보면 드러난다)
+
+닫힌 항목: 로그 파일 경로, 단축키 목록 (2026-09-09, 설계문서 §3.6)
