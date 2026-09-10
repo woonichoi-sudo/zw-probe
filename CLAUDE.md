@@ -261,6 +261,8 @@ bash tools/zwwin/build.sh && bash fixtures/winapp/build.sh \
   && bash fixtures/qtapp/build.sh && bash tools/zwagent/build.sh && node --test
 ```
 
+**대상 앱이 떠 있으면 네 번째가 막힌다.** 실행 중인 프로세스가 `zwagent.dll` 을 쥐고 있어서다. 빌드 스크립트가 먼저 알아채고 무엇을 할지 말해주지만(2026-09-10 에 붙였다 — 그전에는 깨진 인코딩의 `LNK1168` 만 나왔다), **순서를 알고 있으면 한 번 덜 돈다**: 앱을 닫고 → 빌드하고 → `bash tools/launch-zweave.sh` 로 띄운다. DLL 을 안 고칠 것이면 네 번째를 건너뛰어도 된다.
+
 ---
 
 #### A. 스스로 준비하는 시나리오를 실앱에서 한 바퀴 돌린다 — **명령 네 줄이면 된다**

@@ -26,6 +26,18 @@ for p in "$QT/bin/qmake.exe" "$VCVARS"; do
   fi
 done
 
+# **대상 앱이 떠 있으면 링크가 막힌다.** 실행 중인 프로세스가 DLL 을 쥐고 있어서
+# `LNK1168` 이 나는데, 그 메시지는 콘솔 코드페이지 때문에 깨져 나오고 **원인을 전혀
+# 말해주지 않는다.** 컴파일은 통과하고 링크만 실패하므로 더 헷갈린다.
+# 순서는 **닫고 → 빌드하고 → 띄우기**다 (CLAUDE.md "zwagent 를 쓸 때 알아야 할 것").
+if tasklist //FI "IMAGENAME eq z-weave.exe" 2>/dev/null | grep -qi "z-weave.exe"; then
+  echo "z-weave.exe 가 실행 중이라 zwagent.dll 을 덮어쓸 수 없다." >&2
+  echo "  앱을 먼저 닫는다. 문서가 저장 상태면 이렇게 닫힌다:" >&2
+  echo "    powershell -NoProfile -Command \"(Get-Process z-weave).CloseMainWindow()\"" >&2
+  echo "  닫고 빌드한 뒤 bash tools/launch-zweave.sh 로 다시 띄운다." >&2
+  exit 1
+fi
+
 BUILD="$ROOT/build/zwagent"
 OUT="$ROOT/bin/plugins/styles"
 mkdir -p "$BUILD" "$OUT"
