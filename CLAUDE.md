@@ -37,6 +37,13 @@ bash tools/zwagent/build.sh     → bin/plugins/styles/zwagent.dll     (qmake+nm
 node --test                     → 전체 스위트
 ```
 
+**대상 앱을 플러그인과 함께 띄우는 것은 스크립트가 한다.** 손으로 `.bat` 을 만들지 않는다 — cmd 함정(아래)이 거기 다 들어 있다.
+
+```
+bash tools/launch-zweave.sh [--debug-plugins]   띄운다. --print 로 실행 없이 .bat 만 본다
+bash tools/wait-zweave.sh [상한초]              위젯 트리 정착까지 기다린다 (90초쯤)
+```
+
 **빌드 산출물이 없으면 관련 통합 테스트는 실패가 아니라 skip 된다.** 조용히 건너뛰므로 `skipped 0`을 확인한다.
 
 **Qt 쪽 빌드는 `qmake`를 쓴다.** include/lib 경로와 디버그 접미사(`Qt5Cored.lib`)와 moc 를 손으로 챙기면 틀리기 쉽다. **디버그 구성이어야 한다** — 대상 앱이 `Qt5Cored.dll`을 쓰고 Windows 에서 디버그/릴리스 CRT 는 섞이지 않는다. Qt 는 플러그인 메타데이터의 디버그 플래그가 안 맞으면 **조용히 로드를 건너뛴다**(`QT_DEBUG_PLUGINS=1`로만 보인다).
@@ -129,6 +136,8 @@ Bash(git --git-dir=*)  Bash(git --work-tree=*)  Bash(git push:*)
 2026-09-08: 폴더 생성, 설계문서 작성, 테스트 전략 확정(설계문서 §11).
 
 2026-09-10: **M1~M5 완료. 시나리오가 명령 채널을 쓴다.** 테스트 272개 통과, 실앱 시나리오 10/10, 작업 트리 깨끗.
+
+**앱은 지금 플러그인을 얹고 떠 있고 `W_PK shirt & Long skirt.zls` 가 dirty 상태로 열려 있다** (2026-09-10 세션이 남긴 것). 다음 세션의 첫 절차가 문서를 `empty-scene.zls` 로 바꾸므로 그대로 진행하면 된다 — 사용자에게 알리고 시작한다.
 
 **M4가 실앱에서 닫혔다** — `zwagent.dll`이 `-style zwagent`로 로드되고, Qt 5.15.6 컴파일·런타임이 일치하고, **위젯 5199개를 objectName·클래스·geometry까지 읽는다.** 현 설계의 유일한 기술적 불확실성이 소각됐다. `QT_PLUGIN_PATH`로 가리켰으므로 대상 앱 리포·배포 폴더에 아무것도 두지 않았다.
 
@@ -254,21 +263,24 @@ bash tools/zwwin/build.sh && bash fixtures/winapp/build.sh \
 
 ---
 
-#### A. 스스로 준비하는 시나리오를 실앱에서 한 번 돌린다 — **코드는 다 있고 검증만 남았다**
+#### A. 스스로 준비하는 시나리오를 실앱에서 한 바퀴 돌린다 — **명령 네 줄이면 된다**
 
-단계는 2026-09-10 에 다 붙었고 **픽스처에서 여섯 개 테스트로 검증됐다.** 남은 것은 실앱 한 바퀴다.
+시나리오 파일과 실행 스크립트를 2026-09-10 에 다 만들어 뒀다. **이름과 경로는 실앱 목록으로 검증했고 구조 오류 0개다** — 오타로 막히지 않는다. 남은 것은 실제로 돌리는 것뿐이고, **앱 재시작이 필요해서** 그때 하지 않았다.
 
-[scenarios/panel-toggle.ts](scenarios/panel-toggle.ts) 는 아직 **사람이 Avatar 탭을 켜두기를 요구한다.** 이제 스스로 만들 수 있다:
-
-```ts
-{ do: 'openRecent', fileName: 'empty-scene.zls' },       // 문서를 스스로 연다
-{ do: 'setAction', text: 'Avatar', path: 'Window > UI panels', checked: true },
-{ do: 'expectPanel', dockId: 'dock_avatar' },            // 만들어졌는지 확인
+```
+bash tools/launch-zweave.sh && bash tools/wait-zweave.sh    # 띄우고 정착까지 (90초쯤)
+node src/cli.ts run scenarios/prep-empty-avatar.ts          # ① 사전 조건을 스스로 만든다
+node src/cli.ts baseline 자동-빈씬-아바타탭                    # ② 그 상태를 정답으로 뜬다
+node src/cli.ts run scenarios/panel-toggle-auto.ts          # ③ 전체를 돌린다
 ```
 
-**고치면 실앱에서 다시 돌려야 하고 baseline 을 새로 떠야 한다** — 문서가 `Untitled.zls` 에서 `empty-scene.zls` 로 바뀌므로 지금 baseline(`빈씬-아바타탭`)이 무효다. 그래서 이번 세션에서는 **고치지 않았다.** 검증 없이 고쳐 두면 "돌아가는 줄 알았는데 안 돌아가는 절차" 를 남기게 되고, 그건 이미 한 번 피하기로 한 실수다(WORKLOG 2026-09-09).
+**①을 먼저 하는 이유**는 ②의 baseline 이 **준비된 상태에서** 떠야 하기 때문이다. ③을 먼저 부르면 baseline 이 없어서 거부되고 아무 단계도 안 돈다 — 그게 정상 동작이다.
 
-**확인이 필요한 것 하나.** `setAction 'Avatar' checked:true` 가 dock 을 **열기만** 하는지, **앞 탭으로 세우기까지** 하는지 모른다. 실앱에서만 알 수 있고, `expectPanel` 이 그 답을 준다 — 실패하면 탭을 앞으로 세우는 별도 수단이 필요하다는 뜻이다.
+**볼 것은 ①의 마지막 단계다.** `expectPanel dock=avatar` 가 이 절차에서 유일하게 결과를 모르는 곳이다 — `setAction 'Avatar' checked:true` 가 dock 을 **열기만** 하는지 **앞 탭으로 세우기까지** 하는지 확인되지 않았다. 실패하면 "탭을 앞으로 세우는 수단이 따로 필요하다" 는 뜻이고, **그 답이 다음 작업의 입력이다.** `Window > Reset layout`(Ctrl+L)이 후보지만 사용자의 레이아웃을 바꾸므로 확인을 받고 쓴다.
+
+**앱 상태를 사용자에게 알린다.** 이 절차는 문서를 `empty-scene.zls` 로 바꾸고 패널 배치를 건드린다. 되돌리기 어려운 것은 아니지만 앱은 사람과 공유한다.
+
+**[scenarios/panel-toggle.ts](scenarios/panel-toggle.ts)(원본)는 지우지 않았다.** 실앱 10/10 이 확인된 것이고, 검증된 것을 검증 안 된 것으로 덮어쓰지 않는다. `panel-toggle-auto` 가 통과하면 그때 원본을 정리할지 정한다.
 
 #### B. 실제 버그 하나를 시나리오로 적어 돌린다 — **사용자가 재현 절차를 줘야 한다**
 

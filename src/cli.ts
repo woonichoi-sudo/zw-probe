@@ -689,12 +689,25 @@ async function cmdAgent(flags: Map<string, string>): Promise<number> {
   const abi = judgeAbi(h)
   console.log(`ABI   ${abi.match ? '일치' : '어긋남'} — ${abi.reason}`)
 
-  // 명령 채널 상태. **파이프가 안 열렸으면 `--live` 가 왜 안 되는지 여기서만 보인다.**
+  // **hello 는 스냅샷이다. 그 프로세스가 아직 살아 있는지는 별개다.**
+  //
+  // 기본 hello 경로(`%TEMP%`)에는 앞선 실행이나 픽스처가 남긴 파일이 있을 수 있고,
+  // 그걸 읽으면 "채널 열림" 이라고 보고한다 — **기록 시점에는 사실이었기 때문이다.**
+  // 2026-09-10 에 실제로 죽은 픽스처의 hello 를 읽고 열렸다고 보고했다. 그 상태로
+  // `--live` 를 부르면 "파이프를 열지 못했다" 만 나오고 원인이 hello 라는 것을 모른다.
+  const alive = listWindows({ pid: h.pid }).length > 0
   if (h.pipeName !== '') {
     const how = h.pipeListening ? '열림' : `못 열었다 — ${h.pipeError || '(이유 없음)'}`
-    console.log(`채널  ${h.pipeName} · ${how}`)
+    console.log(`채널  ${h.pipeName} · ${how} (기록 시점)`)
   } else {
     console.log('채널  없다 — 명령 채널이 없는 옛 플러그인이다. 다시 빌드한다.')
+  }
+  if (!alive) {
+    console.log(
+      `주의  pid=${h.pid} 의 창이 지금 없다. **이 hello 는 끝난 프로세스의 것이다.**\n` +
+        `      위 "채널" 은 기록 당시의 상태이고 지금 연결되지는 않는다.\n` +
+        `      --hello 로 지금 앱의 파일을 가리킨다 (기본값은 %TEMP% 라 픽스처 것이 섞인다).`,
+    )
   }
 
   // `--grab` 은 위젯 하나만 찍는다. **`shot` 과 달리 가려져 있어도 찍힌다** —
