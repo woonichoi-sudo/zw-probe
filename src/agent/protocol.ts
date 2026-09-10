@@ -23,6 +23,14 @@ export function pipePathFor(pid: number): string {
 export type Request =
   | { id: number; op: 'ping' }
   | { id: number; op: 'tree'; budget?: number; maxDepth?: number }
+  | { id: number; op: 'actions' }
+  /**
+   * **유일하게 대상 앱을 바꾸는 요청이다.**
+   *
+   * 이름은 유일하지 않다 — 실앱의 Import 와 Export 밑에 똑같이 `OBJ` 가 있다.
+   * 여럿이면 플러그인이 부르지 않고 후보를 돌려주므로 `path` 로 좁힌다.
+   */
+  | { id: number; op: 'trigger'; text: string; path?: string }
 
 /** 요청 한 줄. 끝의 줄바꿈까지 포함한다 — 서버가 줄로 끊어 읽는다. */
 export function encodeRequest(req: Request): string {
@@ -43,7 +51,14 @@ export type TreeResult = {
   widgetBudgetLeft: number
 }
 
-export type Response<T> = { ok: true; id: number; op: string; body: T } | { ok: false; error: string }
+export type Response<T> =
+  | { ok: true; id: number; op: string; body: T }
+  /**
+   * 실패에도 본문을 싣는다. **거부하면서 무엇을 줬는지가 중요하다** — `trigger` 는
+   * 이름이 겹치면 부르지 않고 `candidates` 를 돌려주는데, 그것 없이는 다음에 무엇을
+   * 해야 할지 알 수 없다. 연결 자체가 안 됐으면 `body` 가 없다.
+   */
+  | { ok: false; error: string; body?: Record<string, unknown> }
 
 function str(v: unknown, fallback = ''): string {
   return typeof v === 'string' ? v : fallback
@@ -72,7 +87,7 @@ export function decodeResponse(line: string): Response<Record<string, unknown>> 
   }
   const o = raw as Record<string, unknown>
   if (o.ok !== true) {
-    return { ok: false, error: str(o.error, '서버가 이유 없이 거부했다.') }
+    return { ok: false, error: str(o.error, '서버가 이유 없이 거부했다.'), body: o }
   }
   return { ok: true, id: num(o.id, -1), op: str(o.op), body: o }
 }
@@ -116,4 +131,82 @@ export function parseTreeResult(body: Record<string, unknown>): TreeResult {
     topLevelWidgets: tops,
     widgetBudgetLeft: num(body.widgetBudgetLeft, -1),
   }
+}
+
+/**
+ * 부를 수 있는 명령 하나.
+ *
+ * **주소는 `text` + `path` 다.** 인덱스를 안 쓰는 이유는 메뉴가 다시 만들어지면
+ * 인덱스가 밀리고, 밀린 인덱스로 부르면 **다른 명령이 실행되기** 때문이다.
+ */
+export type AgentAction = {
+  text: string
+  /** `File > Import` 처럼 상위 메뉴를 이어붙인 것. 툴바 액션이면 빈 문자열 */
+  path: string
+  objectName: string
+  /** false 면 불러도 Qt 가 조용히 무시한다. 플러그인이 미리 거부한다 */
+  enabled: boolean
+  visible: boolean
+  checkable: boolean
+  checked?: boolean
+  separator: boolean
+  /** 서브메뉴를 여는 항목. **불러도 메뉴가 열릴 뿐 명령이 아니다** */
+  isMenu: boolean
+  shortcut?: string
+  toolTip?: string
+}
+
+function parseAction(raw: unknown): AgentAction | null {
+  if (raw === null || typeof raw !== 'object') return null
+  const a = raw as Record<string, unknown>
+  const out: AgentAction = {
+    text: str(a.text),
+    path: str(a.path),
+    objectName: str(a.objectName),
+    enabled: a.enabled === true,
+    visible: a.visible === true,
+    checkable: a.checkable === true,
+    separator: a.separator === true,
+    isMenu: a.isMenu === true,
+  }
+  if (typeof a.checked === 'boolean') out.checked = a.checked
+  if (typeof a.shortcut === 'string' && a.shortcut !== '') out.shortcut = a.shortcut
+  if (typeof a.toolTip === 'string' && a.toolTip !== '') out.toolTip = a.toolTip
+  return out
+}
+
+/** `actions` 응답을 읽는다. 이상한 항목은 버리고 나머지를 살린다. */
+export function parseActions(body: Record<string, unknown>): AgentAction[] {
+  if (!Array.isArray(body.actions)) return []
+  return body.actions.map(parseAction).filter((a): a is AgentAction => a !== null)
+}
+
+/**
+ * 부를 수 있는 것만 남긴다.
+ *
+ * **구분선과 서브메뉴 항목은 명령이 아니다.** 구분선은 누를 것이 없고, 서브메뉴는
+ * 눌러도 메뉴가 열릴 뿐이다. 목록에 섞여 있으면 "왜 안 되지" 를 헤매게 된다.
+ */
+export function callableActions(actions: readonly AgentAction[]): AgentAction[] {
+  return actions.filter((a) => !a.separator && !a.isMenu && a.text !== '')
+}
+
+/** 이름·경로·단축키에 조각이 든 것. 대소문자를 무시한다. */
+export function matchActions(actions: readonly AgentAction[], needle: string): AgentAction[] {
+  if (needle === '') return [...actions]
+  const n = needle.toLowerCase()
+  return actions.filter((a) =>
+    [a.text, a.path, a.shortcut ?? '', a.toolTip ?? ''].some((s) => s.toLowerCase().includes(n)),
+  )
+}
+
+/**
+ * `trigger` 가 후보를 여럿 돌려줬을 때 그 목록.
+ *
+ * 실패 응답에만 들어 있다 — **부르지 않았다는 뜻**이고, 어느 것인지 정하는 것은
+ * 부르는 쪽의 일이다.
+ */
+export function parseCandidates(body: Record<string, unknown>): AgentAction[] {
+  if (!Array.isArray(body.candidates)) return []
+  return body.candidates.map(parseAction).filter((a): a is AgentAction => a !== null)
 }

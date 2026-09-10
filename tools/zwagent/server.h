@@ -17,6 +17,8 @@
 
 #pragma once
 
+#include <QJsonObject>
+#include <QJsonValue>
 #include <QObject>
 #include <QString>
 
@@ -48,6 +50,8 @@ private:
 	void onReadyRead(QLocalSocket* sock);
 	/// 요청 한 줄 → 응답 한 줄. 줄바꿈은 붙이지 않는다.
 	QByteArray handle(const QByteArray& line);
+	/// 유일하게 대상 앱을 바꾸는 곳. 근거는 server.cpp 의 주석.
+	QByteArray handleTrigger(const QJsonObject& req, const QJsonValue& id, QJsonObject& out);
 
 	QLocalServer* m_server = nullptr;
 	QString m_name;

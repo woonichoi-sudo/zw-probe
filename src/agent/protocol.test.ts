@@ -6,8 +6,12 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import {
+  callableActions,
   decodeResponse,
   encodeRequest,
+  matchActions,
+  parseActions,
+  parseCandidates,
   parseTreeResult,
   pipeNameFor,
   pipePathFor,
@@ -121,4 +125,106 @@ test('parseTreeResult — 위젯이 없어도 던지지 않는다', () => {
   const r = parseTreeResult({ widgetTotal: 0, sawUi: false })
   assert.deepEqual(r.topLevelWidgets, [])
   assert.equal(r.sawUi, false)
+})
+
+/** 실앱에서 실제로 나온 모양. Import 와 Export 밑에 같은 이름이 있다. */
+const ACTIONS = {
+  actions: [
+    { text: 'File', path: '', objectName: '', enabled: true, visible: true, isMenu: true },
+    { text: '', path: 'File', objectName: '', enabled: true, visible: true, separator: true },
+    {
+      text: 'Open',
+      path: 'File',
+      objectName: 'actionOpen',
+      enabled: true,
+      visible: true,
+      shortcut: 'Ctrl+O',
+    },
+    { text: 'OBJ', path: 'File > Import', objectName: '', enabled: true, visible: true },
+    { text: 'OBJ', path: 'File > Export', objectName: '', enabled: false, visible: true },
+    {
+      text: 'Show Grid',
+      path: '',
+      objectName: '',
+      enabled: true,
+      visible: true,
+      checkable: true,
+      checked: true,
+    },
+  ],
+}
+
+test('parseActions — 액션을 읽는다', () => {
+  const a = parseActions(ACTIONS)
+  assert.equal(a.length, 6)
+  assert.equal(a[2]!.text, 'Open')
+  assert.equal(a[2]!.shortcut, 'Ctrl+O')
+  assert.equal(a[3]!.path, 'File > Import')
+  assert.equal(a[4]!.enabled, false)
+  assert.equal(a[5]!.checked, true)
+})
+
+test('parseActions — 없는 필드는 좋은 쪽으로 채우지 않는다', () => {
+  // enabled 가 없으면 false 여야 한다. true 로 채우면 못 부를 것을 부를 수 있다고 보고한다.
+  const a = parseActions({ actions: [{ text: 'X' }] })
+  assert.equal(a[0]!.enabled, false)
+  assert.equal(a[0]!.checkable, false)
+})
+
+test('parseActions — 배열이 아니면 빈 목록', () => {
+  assert.deepEqual(parseActions({}), [])
+  assert.deepEqual(parseActions({ actions: 'nope' }), [])
+})
+
+test('callableActions — 구분선과 서브메뉴 항목은 명령이 아니다', () => {
+  // 목록에 섞여 있으면 "왜 안 되지" 를 헤매게 된다. 서브메뉴는 눌러도 메뉴만 열린다.
+  const c = callableActions(parseActions(ACTIONS))
+  assert.deepEqual(
+    c.map((a) => `${a.path}/${a.text}`),
+    ['File/Open', 'File > Import/OBJ', 'File > Export/OBJ', '/Show Grid'],
+  )
+})
+
+test('matchActions — 이름·경로·단축키 어디에 걸려도 찾는다', () => {
+  const all = parseActions(ACTIONS)
+  assert.equal(matchActions(all, 'Ctrl+O').length, 1)
+  assert.equal(matchActions(all, 'import').length, 1, '경로로도 걸려야 한다')
+  assert.equal(matchActions(all, 'obj').length, 2, '이름이 겹치면 둘 다 나와야 한다')
+})
+
+test('matchActions — 빈 조각은 전부', () => {
+  assert.equal(matchActions(parseActions(ACTIONS), '').length, 6)
+})
+
+test('parseCandidates — 거부 응답의 후보를 읽는다', () => {
+  // **거부하면서 무엇을 줬는지가 다음 행동을 정한다.** 후보가 없으면 무엇으로
+  // 좁혀야 할지 알 수 없다.
+  const body = { ok: false, error: '"OBJ" 이 2개다.', candidates: ACTIONS.actions.slice(3, 5) }
+  const c = parseCandidates(body)
+  assert.equal(c.length, 2)
+  assert.deepEqual(
+    c.map((x) => x.path),
+    ['File > Import', 'File > Export'],
+  )
+})
+
+test('decodeResponse — 실패에도 본문을 실어야 후보를 꺼낼 수 있다', () => {
+  const r = decodeResponse('{"ok":false,"error":"둘이다","candidates":[{"text":"OBJ","path":"File > Import"}]}')
+  assert.equal(r.ok, false)
+  if (r.ok) return
+  assert.ok(r.body !== undefined, '실패 본문이 없으면 후보를 꺼낼 수 없다')
+  assert.equal(parseCandidates(r.body!).length, 1)
+})
+
+test('decodeResponse — 연결 실패에는 본문이 없다', () => {
+  // 서버가 거부한 것과 아예 못 읽은 것은 다르다.
+  const r = decodeResponse('nope')
+  assert.equal(r.ok, false)
+  if (r.ok) return
+  assert.equal(r.body, undefined)
+})
+
+test('encodeRequest — trigger 는 text 와 path 를 그대로 싣는다', () => {
+  const s = encodeRequest({ id: 9, op: 'trigger', text: 'OBJ', path: 'File > Import' })
+  assert.deepEqual(JSON.parse(s), { id: 9, op: 'trigger', text: 'OBJ', path: 'File > Import' })
 })

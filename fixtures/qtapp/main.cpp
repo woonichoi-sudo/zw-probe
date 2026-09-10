@@ -16,11 +16,14 @@
 //
 // 빌드: bash fixtures/qtapp/build.sh
 
+#include <QAction>
 #include <QApplication>
 #include <QDialog>
 #include <QGridLayout>
 #include <QLabel>
 #include <QMainWindow>
+#include <QMenu>
+#include <QMenuBar>
 #include <QProgressBar>
 #include <QPushButton>
 #include <QVBoxLayout>
@@ -118,6 +121,34 @@ int main(int argc, char** argv)
 		target->hide();
 		black->show();
 	});
+
+	// 메뉴 — `zwagent` 의 `QAction::trigger()` 를 대상 앱 없이 검증하기 위한 것.
+	//
+	// **대상 앱의 메뉴 모양을 흉내낸다.** 실앱은 File 안에 Recent files 서브메뉴가
+	// 있고, 서로 다른 메뉴에 **같은 이름의 항목**이 있다(Import 와 Export 둘 다 OBJ).
+	// 그 두 가지가 여기서 검증할 것이다 — 경로로 좁히는 것과, 이름이 겹칠 때
+	// 조용히 첫 번째를 고르지 않는 것.
+	auto* fileMenu = window.menuBar()->addMenu("Fixture");
+	auto* markAction = fileMenu->addAction("Mark");
+	markAction->setObjectName("actionMark");
+	QObject::connect(markAction, &QAction::triggered, [&, black, target]() {
+		// 버튼을 누른 것과 같은 결과를 낸다 — 화면으로 확인된다.
+		if (!black->isVisible())
+		{
+			grid->replaceWidget(target, black);
+			target->hide();
+			black->show();
+		}
+	});
+
+	auto* recent = fileMenu->addMenu("Recent");
+	recent->addAction("Ambiguous");
+	// 같은 이름을 다른 메뉴에도 둔다. **경로 없이 이름만으로는 갈리지 않아야 한다.**
+	auto* other = window.menuBar()->addMenu("Other");
+	other->addAction("Ambiguous");
+
+	auto* disabled = other->addAction("Disabled");
+	disabled->setEnabled(false);
 
 	window.setCentralWidget(central);
 	window.show();

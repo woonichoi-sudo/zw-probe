@@ -18,6 +18,6 @@ MOC_DIR = $$PWD/../../build/zwagent
 # 한국어 주석이 UTF-8 이다. 없으면 MSVC 가 코드 페이지 949 로 읽어 C4819 를 낸다.
 QMAKE_CXXFLAGS += /utf-8
 
-HEADERS += server.h tree.h
-SOURCES += zwagent.cpp server.cpp tree.cpp
+HEADERS += actions.h server.h tree.h
+SOURCES += zwagent.cpp actions.cpp server.cpp tree.cpp
 DISTFILES += zwagent.json

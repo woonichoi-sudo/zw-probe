@@ -1,8 +1,11 @@
 #include "server.h"
 
+#include "actions.h"
 #include "tree.h"
 
 #include <QCoreApplication>
+#include <QAction>
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QLocalServer>
@@ -144,6 +147,85 @@ QByteArray Server::handle(const QByteArray& line)
 		return reply(out);
 	}
 
+	if (op == QStringLiteral("actions"))
+	{
+		// 부를 수 있는 것의 목록. **여기서 거르지 않는다** — 필터링은 TS 가 한다
+		// (절대 규칙 5). 실앱이 액션 수백 개라 커지지만 트리(6MB)보다 훨씬 작다.
+		QJsonArray arr;
+		for (const ActionRef& ref : collectActions()) arr.append(describeAction(ref));
+		out[QStringLiteral("actions")] = arr;
+		out[QStringLiteral("count")] = arr.size();
+		return reply(out);
+	}
+
+	if (op == QStringLiteral("trigger"))
+	{
+		return handleTrigger(req, id, out);
+	}
+
 	return fail(id, QStringLiteral("모르는 op: \"%1\"").arg(op));
+}
+
+/**
+ * `QAction::trigger()`. **이 파일에서 유일하게 대상 앱을 바꾸는 곳이다.**
+ *
+ * 규칙 셋이 다 "조용히 틀리지 않기" 를 위한 것이다.
+ *
+ * ① **정확히 하나로 좁혀져야 부른다.** 이름은 유일하지 않다 — 실앱의 Import 와
+ *    Export 밑에 똑같이 `OBJ` 가 있다. 여럿이면 부르지 않고 후보를 돌려준다.
+ * ② **비활성이면 거부한다.** Qt 는 비활성 액션의 trigger 를 조용히 무시하므로,
+ *    부르고 나서는 "안 눌렸다" 와 "눌렸는데 효과가 없다" 를 구분할 수 없다.
+ * ③ **부르기 전에 응답을 보낸다.** `trigger()` 가 모달 다이얼로그를 띄우면 그 자리에서
+ *    이벤트 루프가 멈추고 응답이 영영 안 나간다. 큐에 넣고 먼저 답한 다음, 결과는
+ *    밖에서 관찰한다 — 어차피 "무엇이 일어났나" 는 화면과 트리를 봐야 안다.
+ */
+QByteArray Server::handleTrigger(const QJsonObject& req, const QJsonValue& id, QJsonObject& out)
+{
+	const QString text = req.value(QStringLiteral("text")).toString();
+	if (text.isEmpty()) return fail(id, QStringLiteral("trigger 에는 text 가 필요하다."));
+	// 경로는 선택이다. 주면 그것으로 좁힌다 (`Fixture > Recent`).
+	const bool hasPath = req.contains(QStringLiteral("path"));
+	const QString path = req.value(QStringLiteral("path")).toString();
+
+	QList<ActionRef> hits;
+	for (const ActionRef& ref : collectActions())
+	{
+		if (ref.action->text() != text) continue;
+		if (hasPath && ref.path != path) continue;
+		hits.append(ref);
+	}
+
+	if (hits.isEmpty())
+	{
+		return fail(id, QStringLiteral("\"%1\" 인 액션이 없다%2. actions 로 목록을 본다.")
+		                    .arg(text, hasPath ? QStringLiteral(" (경로 \"%1\")").arg(path) : QString()));
+	}
+	if (hits.size() > 1)
+	{
+		// **후보를 돌려준다.** 어느 것인지 정하는 것은 부르는 쪽의 일이고, 여기서
+		// 첫 번째를 고르면 다른 명령이 실행된다.
+		QJsonObject o;
+		o[QStringLiteral("ok")] = false;
+		if (!id.isUndefined()) o[QStringLiteral("id")] = id;
+		o[QStringLiteral("error")] =
+		    QStringLiteral("\"%1\" 이 %2개다. path 로 좁힌다.").arg(text).arg(hits.size());
+		QJsonArray arr;
+		for (const ActionRef& ref : hits) arr.append(describeAction(ref));
+		o[QStringLiteral("candidates")] = arr;
+		return reply(o);
+	}
+
+	const ActionRef& ref = hits.first();
+	if (!ref.action->isEnabled())
+	{
+		return fail(id, QStringLiteral("\"%1\" 은 비활성이다. 눌러도 아무 일도 일어나지 않는다.")
+		                    .arg(text));
+	}
+
+	out[QStringLiteral("triggered")] = describeAction(ref);
+	// **큐에 넣는다.** 여기서 직접 부르면 모달이 뜰 때 응답이 못 나간다.
+	QMetaObject::invokeMethod(ref.action, "trigger", Qt::QueuedConnection);
+	out[QStringLiteral("queued")] = true;
+	return reply(out);
 }
 } // namespace zwagent

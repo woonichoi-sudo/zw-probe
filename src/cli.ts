@@ -20,7 +20,14 @@ import { locateLog, logDir, readEntries } from './log/logFile.ts'
 import { summarize, toSeverity } from './log/parse.ts'
 import { classifyWindows, judgeActivity, styleNames } from './win/windowState.ts'
 import { call } from './agent/pipe.ts'
-import { parseTreeResult } from './agent/protocol.ts'
+import {
+  callableActions,
+  matchActions,
+  parseActions,
+  parseCandidates,
+  parseTreeResult,
+} from './agent/protocol.ts'
+import type { Request } from './agent/protocol.ts'
 import { judgeClick } from './input/click.ts'
 import { activePanel, clickPoint, findNodes, findOne, readDocumentState } from './uia/tree.ts'
 import type { NodeQuery } from './uia/tree.ts'
@@ -688,6 +695,59 @@ async function cmdAgent(flags: Map<string, string>): Promise<number> {
     console.log(`채널  ${h.pipeName} · ${how}`)
   } else {
     console.log('채널  없다 — 명령 채널이 없는 옛 플러그인이다. 다시 빌드한다.')
+  }
+
+  // `--actions` 는 부를 수 있는 명령 목록. 파이프가 있어야 한다.
+  if (flags.has('actions')) {
+    const res = await call(h.pid, { id: 1, op: 'actions' })
+    if (!res.ok) {
+      console.error(`\n액션 목록을 받지 못했다:\n  ${res.error}`)
+      return 1
+    }
+    const all = parseActions(res.body)
+    const shown = matchActions(callableActions(all), flags.get('actions') || '')
+    const needle = flags.get('actions') || ''
+    console.log(
+      `\n부를 수 있는 명령 ${callableActions(all).length}개` +
+        `${needle ? ` 중 "${needle}" 에 맞는 ${shown.length}개` : ''} (전체 항목 ${all.length}개):`,
+    )
+    for (const a of shown.slice(0, Number(flags.get('max') || '60'))) {
+      const marks = `${a.enabled ? '' : ' [비활성]'}${a.checkable ? (a.checked ? ' [켬]' : ' [끔]') : ''}`
+      const sc = a.shortcut !== undefined ? `  ${a.shortcut}` : ''
+      console.log(`  ${(a.path || '(툴바)').padEnd(28)} ${a.text}${sc}${marks}`)
+    }
+    console.log('\n부를 때: zwprobe agent --trigger "<이름>" [--path "<경로>"]')
+    return 0
+  }
+
+  // `--trigger` 는 **대상 앱을 바꾼다.** 여기가 zwprobe 에서 프로세스 안으로 명령을
+  // 보내는 유일한 지점이다.
+  const trigger = flags.get('trigger')
+  if (trigger !== undefined && trigger !== '') {
+    const req: Request = flags.has('path')
+      ? { id: 1, op: 'trigger', text: trigger, path: flags.get('path') || '' }
+      : { id: 1, op: 'trigger', text: trigger }
+    const res = await call(h.pid, req)
+    if (!res.ok) {
+      console.error(`\n부르지 못했다: ${res.error}`)
+      // 이름이 겹쳐서 거부됐으면 후보를 보여준다. **무엇을 골라야 하는지가 답이다.**
+      const cands = res.body ? parseCandidates(res.body) : []
+      if (cands.length > 0) {
+        console.error('\n후보:')
+        for (const c of cands) {
+          console.error(`  --path "${c.path}"   ${c.text}${c.enabled ? '' : ' [비활성]'}`)
+        }
+      }
+      return 1
+    }
+    const t = parseActions({ actions: [res.body.triggered] })[0]
+    console.log(`\n불렀다  "${t?.text ?? trigger}"${t?.path ? ` (경로 "${t.path}")` : ''}`)
+    console.log(
+      '주의  큐에 넣고 바로 답한 것이다 — 모달 다이얼로그가 뜨면 이벤트 루프가 멈춰\n' +
+        '      응답이 못 나오기 때문이다. **무슨 일이 일어났는지는 관찰해서 확인한다:**\n' +
+        '      zwprobe state · zwprobe shot · zwprobe agent --live',
+    )
+    return 0
   }
 
   // `--live` 는 hello 스냅샷 대신 **지금**의 트리를 파이프로 받는다. hello 는 UI 가

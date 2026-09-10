@@ -18,7 +18,13 @@ import { listWindows, shot, uiaTree } from './zwwin.ts'
 import { diff, judgeSame } from '../image/diff.ts'
 import { findWidgets, judgeAbi, parseAgentHello } from '../agent/hello.ts'
 import { call } from '../agent/pipe.ts'
-import { parseTreeResult, pipeNameFor } from '../agent/protocol.ts'
+import {
+  callableActions,
+  parseActions,
+  parseCandidates,
+  parseTreeResult,
+  pipeNameFor,
+} from '../agent/protocol.ts'
 import { findNodes } from '../uia/tree.ts'
 import type { AgentHello } from '../agent/hello.ts'
 import type { Bgra } from '../image/stats.ts'
@@ -96,7 +102,26 @@ test('zwagent.dll 이 Qt 픽스처 앱에 로드되고 위젯 트리를 본다',
     // 이므로 아래 단정이 의미를 잃는다. 먼저 그것을 확인한다.
     assert.equal(h.sawUi, true, `UI 가 뜬 뒤에 보고해야 한다 (시도 ${h.attempts}회)`)
     assert.ok(h.attempts >= 1, `시도 횟수가 실려야 한다 — 실제 ${h.attempts}`)
-    assert.equal(h.topLevelCount, 1, `최상위 위젯이 하나여야 한다 — 실제 ${h.topLevelCount}개`)
+    // **최상위 위젯은 창 하나 + 메뉴들이어야 한다.** Qt 에서 `QMenu` 는 팝업이라
+    // 안 열려 있어도 최상위 위젯으로 잡힌다 — 실앱도 QMenu 23개가 최상위에 있다.
+    //
+    // 개수를 고정하지 않는 대신 **보이는 최상위가 창 하나뿐인지**를 본다. 이 단정이
+    // 원래 잡으려던 것은 부모 없이 만든 QWidget 이 최상위로 새는 것이었고
+    // (2026-09-09: topLevelCount 가 2로 나왔다), 그것은 이 형태로도 잡힌다.
+    const visibleTops = h.topLevelWidgets.filter((w) => w.visible)
+    assert.equal(
+      visibleTops.length,
+      1,
+      `보이는 최상위 위젯이 하나여야 한다 — 실제 ${visibleTops.map((w) => w.class).join(', ')}`,
+    )
+    assert.equal(visibleTops[0]!.objectName, 'zwqtfixtureMainWindow')
+    assert.ok(
+      h.topLevelWidgets.every((w) => w.visible || w.class === 'QMenu'),
+      `숨은 최상위는 QMenu 뿐이어야 한다 — 실제 ${h.topLevelWidgets
+        .filter((w) => !w.visible)
+        .map((w) => w.class)
+        .join(', ')}`,
+    )
     const target = findWidgets(h.topLevelWidgets, 'fixtureTarget')
     assert.equal(target.length, 1, 'fixtureTarget 을 트리에서 찾아야 한다')
     assert.equal(target[0]!.class, 'QPushButton')
@@ -247,5 +272,102 @@ test('앱이 없으면 파이프 실패를 이유와 함께 알린다', { skip }
   assert.equal(r.ok, false)
   if (!r.ok) {
     assert.match(r.error, /zwagent-999999|zwagent\.dll/)
+  }
+})
+
+test('QAction::trigger() 가 실제로 대상 앱을 바꾼다', { skip }, async () => {
+  // **M5 에서 zwagent 가 처음으로 쓰기를 하는 지점이다.** 불렀다는 응답만으로는
+  // 부족하다 — 화면이 바뀌어야 진짜 부른 것이다. 픽스처의 Mark 액션은 오른쪽 아래
+  // 사분면을 검게 만든다.
+  const dir = mkdtempSync(join(tmpdir(), 'zwprobe-trigger-'))
+  const hello = join(dir, 'hello.json')
+  const child = spawn(QTAPP_EXE, ['-style', 'zwagent'], {
+    detached: false,
+    stdio: 'ignore',
+    env: qtEnv({ ZWAGENT_HELLO: hello }),
+  })
+  assert.ok(child.pid !== undefined, '픽스처 프로세스를 띄우지 못했다')
+  const pid = child.pid!
+
+  try {
+    await waitForWindow(qtFilter(pid))
+    await waitForHello(hello)
+
+    // ① 목록에 우리가 심은 액션이 경로와 함께 나온다
+    const listed = await call(pid, { id: 1, op: 'actions' }, { timeoutMs: 10000 })
+    assert.equal(listed.ok, true, listed.ok ? '' : listed.error)
+    if (!listed.ok) return
+    const actions = parseActions(listed.body)
+    const mark = actions.find((a) => a.text === 'Mark')
+    assert.ok(mark !== undefined, 'Mark 액션을 찾아야 한다')
+    assert.equal(mark!.path, 'Fixture', '메뉴 경로가 실려야 한다')
+    // 서브메뉴 항목은 경로가 이어붙어야 한다 — 실앱의 File > Recent files 가 이 모양이다
+    const nested = actions.find((a) => a.path === 'Fixture > Recent')
+    assert.ok(nested !== undefined, '서브메뉴 경로가 이어붙어야 한다')
+    // 서브메뉴를 여는 항목과 구분선은 명령이 아니다
+    assert.ok(
+      callableActions(actions).every((a) => !a.isMenu),
+      '부를 수 있는 목록에 서브메뉴 항목이 섞이면 안 된다',
+    )
+
+    // ② **이름이 겹치면 부르지 않는다.** 조용히 첫 번째를 고르면 다른 명령이 실행된다.
+    const ambiguous = await call(pid, { id: 2, op: 'trigger', text: 'Ambiguous' }, { timeoutMs: 10000 })
+    assert.equal(ambiguous.ok, false, '겹치는 이름은 거부해야 한다')
+    if (!ambiguous.ok) {
+      assert.match(ambiguous.error, /2개/)
+      // 후보를 줘야 다음에 무엇을 할지 안다
+      const cands = ambiguous.body ? parseCandidates(ambiguous.body) : []
+      assert.equal(cands.length, 2)
+      assert.deepEqual(cands.map((c) => c.path).sort(), ['Fixture > Recent', 'Other'])
+    }
+
+    // ③ 경로로 좁히면 통과한다
+    const narrowed = await call(
+      pid,
+      { id: 3, op: 'trigger', text: 'Ambiguous', path: 'Other' },
+      { timeoutMs: 10000 },
+    )
+    assert.equal(narrowed.ok, true, narrowed.ok ? '' : narrowed.error)
+
+    // ④ **비활성은 거부한다.** Qt 는 조용히 무시하므로 부르고 나면 원인을 못 짚는다.
+    const off = await call(
+      pid,
+      { id: 4, op: 'trigger', text: 'Disabled', path: 'Other' },
+      { timeoutMs: 10000 },
+    )
+    assert.equal(off.ok, false)
+    if (!off.ok) assert.match(off.error, /비활성/)
+
+    // ⑤ **화면이 실제로 바뀐다.** 여기가 이 테스트의 본론이다.
+    const before = shot({ pid, title: 'zwqtfixture', png: join(dir, 'before.png'), raw: join(dir, 'before.bgra') })
+    const fired = await call(
+      pid,
+      { id: 5, op: 'trigger', text: 'Mark', path: 'Fixture' },
+      { timeoutMs: 10000 },
+    )
+    assert.equal(fired.ok, true, fired.ok ? '' : fired.error)
+
+    // 큐에 넣고 답하므로 실제 실행은 다음 이벤트 루프다. 바뀔 때까지 기다린다.
+    let changed = false
+    const deadline = Date.now() + 5000
+    while (Date.now() < deadline && !changed) {
+      await sleep(200)
+      const after = shot({ pid, title: 'zwqtfixture', png: join(dir, 'after.png'), raw: join(dir, 'after.bgra') })
+      const a: Bgra = {
+        width: before.window.width,
+        height: before.window.height,
+        data: new Uint8Array(readFileSync(join(dir, 'before.bgra'))),
+      }
+      const b: Bgra = {
+        width: after.window.width,
+        height: after.window.height,
+        data: new Uint8Array(readFileSync(join(dir, 'after.bgra'))),
+      }
+      changed = !judgeSame(diff(a, b)).same
+    }
+    assert.equal(changed, true, 'trigger 뒤에 화면이 바뀌어야 한다 — 안 바뀌면 부른 것이 아니다')
+  } finally {
+    child.kill()
+    rmSync(dir, { recursive: true, force: true })
   }
 })
