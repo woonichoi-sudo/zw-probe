@@ -52,6 +52,8 @@ private:
 	QByteArray handle(const QByteArray& line);
 	/// 유일하게 대상 앱을 바꾸는 곳. 근거는 server.cpp 의 주석.
 	QByteArray handleTrigger(const QJsonObject& req, const QJsonValue& id, QJsonObject& out);
+	/// 위젯 하나를 파일로 찍는다. 근거는 server.cpp 의 주석.
+	QByteArray handleGrab(const QJsonObject& req, const QJsonValue& id, QJsonObject& out);
 
 	QLocalServer* m_server = nullptr;
 	QString m_name;

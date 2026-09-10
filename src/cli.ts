@@ -697,6 +697,46 @@ async function cmdAgent(flags: Map<string, string>): Promise<number> {
     console.log('채널  없다 — 명령 채널이 없는 옛 플러그인이다. 다시 빌드한다.')
   }
 
+  // `--grab` 은 위젯 하나만 찍는다. **`shot` 과 달리 가려져 있어도 찍힌다** —
+  // 위젯이 자기를 직접 그리기 때문이다. 플러그인이 파일을 쓰고 우리는 사이드카를
+  // 붙여 `diff`·`baseline` 이 그대로 받게 한다.
+  const grab = flags.get('grab')
+  if (grab !== undefined && grab !== '') {
+    const out = resolve(flags.get('out') || `captures/grab-${grab}-${timestamp()}.png`)
+    const rawPath = out.replace(/\.png$/i, '') + '.bgra'
+    const res = await call(h.pid, { id: 1, op: 'grab', objectName: grab, pngPath: out, rawPath })
+    if (!res.ok) {
+      console.error(`\n찍지 못했다: ${res.error}`)
+      return 1
+    }
+    const b = res.body
+    const width = Number(b.width)
+    const height = Number(b.height)
+    // 대상 창은 사이드카에 남길 근거로만 쓴다. 없으면 빈 값으로 둔다 — **모르는 것을
+    // 지어내지 않는다.** baseline 비교 때 "그때 그 창이었나" 를 따질 때 쓰인다.
+    const win = classifyWindows(listWindows({ pid: h.pid })).main
+    writeCaptureMeta(out, {
+      format: 'bgra8',
+      width,
+      height,
+      takenAt: new Date().toISOString(),
+      // `shot` 의 printwindow·screen 과 구분되는 세 번째 방식이다. 창이 아니라 위젯이다.
+      mode: 'grab',
+      window: {
+        title: win?.title ?? '',
+        class: String(b.class ?? ''),
+        pid: h.pid,
+        fileVersion: win?.fileVersion ?? '',
+        width,
+        height,
+      },
+    })
+    console.log(`\n찍었다  ${grab} (${b.class}) ${width}x${height}${b.visible === true ? '' : ' [숨김]'}`)
+    console.log(`저장  ${out}`)
+    console.log(`      ${rawPath}`)
+    return 0
+  }
+
   // `--actions` 는 부를 수 있는 명령 목록. 파이프가 있어야 한다.
   if (flags.has('actions')) {
     const res = await call(h.pid, { id: 1, op: 'actions' })

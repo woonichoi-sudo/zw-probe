@@ -8,6 +8,8 @@
 #pragma once
 
 #include <QJsonObject>
+#include <QList>
+#include <QString>
 
 class QWidget;
 
@@ -36,4 +38,7 @@ bool haveVisibleUi();
 
 /// 최상위 위젯 전부를 JSON 으로. `topLevelCount`·`topLevelWidgets`·`widgetBudgetLeft` 를 넣는다.
 void putTopLevelWidgets(QJsonObject& root, int budget, int maxDepth);
+
+/// objectName 이 정확히 일치하는 위젯 전부. **여럿일 수 있다** — 고르는 것은 부르는 쪽이다.
+QList<QWidget*> findByObjectName(const QString& name);
 } // namespace zwagent

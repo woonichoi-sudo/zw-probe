@@ -137,3 +137,26 @@ void putTopLevelWidgets(QJsonObject& root, int budget, int maxDepth)
 	root[QStringLiteral("widgetBudgetLeft")] = budget;
 }
 } // namespace zwagent
+
+namespace zwagent
+{
+namespace
+{
+void collectByName(QWidget* w, const QString& name, QList<QWidget*>& out)
+{
+	if (w->objectName() == name) out.append(w);
+	for (QObject* child : w->children())
+	{
+		if (auto* cw = qobject_cast<QWidget*>(child)) collectByName(cw, name, out);
+	}
+}
+} // namespace
+
+QList<QWidget*> findByObjectName(const QString& name)
+{
+	QList<QWidget*> out;
+	if (name.isEmpty()) return out;
+	for (QWidget* w : QApplication::topLevelWidgets()) collectByName(w, name, out);
+	return out;
+}
+} // namespace zwagent

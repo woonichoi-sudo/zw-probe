@@ -371,3 +371,61 @@ test('QAction::trigger() 가 실제로 대상 앱을 바꾼다', { skip }, async
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('QWidget::grab() 이 위젯 하나를 shot 과 같은 형식으로 찍는다', { skip }, async () => {
+  // **형식이 같아야 `diff`·`baseline` 이 그대로 받는다.** 사분면 색이 채널 순서와
+  // 상하 방향을 동시에 검증한다 — 둘 중 하나만 틀려도 "다르다" 만 나오고 원인을
+  // 못 짚는 종류의 버그다.
+  const dir = mkdtempSync(join(tmpdir(), 'zwprobe-grab-'))
+  const hello = join(dir, 'hello.json')
+  const child = spawn(QTAPP_EXE, ['-style', 'zwagent'], {
+    detached: false,
+    stdio: 'ignore',
+    env: qtEnv({ ZWAGENT_HELLO: hello }),
+  })
+  assert.ok(child.pid !== undefined, '픽스처 프로세스를 띄우지 못했다')
+  const pid = child.pid!
+
+  try {
+    await waitForWindow(qtFilter(pid))
+    await waitForHello(hello)
+
+    const rawPath = join(dir, 'central.bgra')
+    const res = await call(
+      pid,
+      { id: 1, op: 'grab', objectName: 'centralArea', pngPath: join(dir, 'central.png'), rawPath },
+      { timeoutMs: 10000 },
+    )
+    assert.equal(res.ok, true, res.ok ? '' : res.error)
+    if (!res.ok) return
+
+    const width = Number(res.body.width)
+    const height = Number(res.body.height)
+    assert.ok(width > 0 && height > 0)
+    assert.equal(res.body.class, 'QWidget')
+
+    const data = new Uint8Array(readFileSync(rawPath))
+    assert.equal(data.length, width * height * 4, '생 픽셀 크기가 폭×높이×4 여야 한다')
+
+    // BGRA·위에서 아래. 픽스처는 좌상 빨강, 우상 초록, 좌하 파랑이다.
+    const rgb = (x: number, y: number) => {
+      const i = (y * width + x) * 4
+      return [data[i + 2], data[i + 1], data[i]]
+    }
+    assert.deepEqual(rgb(width >> 2, height >> 2), [255, 0, 0], '좌상이 빨강이어야 한다')
+    assert.deepEqual(rgb((width * 3) >> 2, height >> 2), [0, 255, 0], '우상이 초록이어야 한다')
+    assert.deepEqual(rgb(width >> 2, (height * 3) >> 2), [0, 0, 255], '좌하가 파랑이어야 한다')
+
+    // 없는 이름은 조용히 빈 그림을 내지 않고 거부한다
+    const missing = await call(
+      pid,
+      { id: 2, op: 'grab', objectName: '없는위젯', pngPath: join(dir, 'x.png') },
+      { timeoutMs: 10000 },
+    )
+    assert.equal(missing.ok, false)
+    if (!missing.ok) assert.match(missing.error, /없다/)
+  } finally {
+    child.kill()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

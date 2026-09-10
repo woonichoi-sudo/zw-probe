@@ -5,6 +5,12 @@
 
 #include <QCoreApplication>
 #include <QAction>
+#include <QDir>
+#include <QFile>
+#include <QFileInfo>
+#include <QImage>
+#include <QPixmap>
+#include <QWidget>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -163,6 +169,11 @@ QByteArray Server::handle(const QByteArray& line)
 		return handleTrigger(req, id, out);
 	}
 
+	if (op == QStringLiteral("grab"))
+	{
+		return handleGrab(req, id, out);
+	}
+
 	return fail(id, QStringLiteral("모르는 op: \"%1\"").arg(op));
 }
 
@@ -226,6 +237,98 @@ QByteArray Server::handleTrigger(const QJsonObject& req, const QJsonValue& id, Q
 	// **큐에 넣는다.** 여기서 직접 부르면 모달이 뜰 때 응답이 못 나간다.
 	QMetaObject::invokeMethod(ref.action, "trigger", Qt::QueuedConnection);
 	out[QStringLiteral("queued")] = true;
+	return reply(out);
+}
+} // namespace zwagent
+
+namespace zwagent
+{
+/**
+ * `QWidget::grab()` — 위젯 하나만 찍는다.
+ *
+ * **`shot` 과 다른 점**은 창이 아니라 **위젯**이라는 것이다. 가려져 있어도, 스크롤
+ * 밖에 있어도 찍힌다 — 위젯이 자기를 직접 그리기 때문이다. 패널 하나만 baseline 으로
+ * 두고 싶을 때 창 전체를 비교하지 않아도 된다.
+ *
+ * **파일로 쓴다. base64 로 파이프에 싣지 않는다.** 트리가 이미 6MB 이고 여기에 이미지
+ * 까지 얹으면 무거워진다. hello 파일이 이미 같은 방식이고, `zwwin.exe` 의 `shot` 도
+ * 파일로 쓴다 — 형식을 맞추면 `diff`·`baseline` 이 그대로 받는다.
+ *
+ * **`.bgra` 는 `shot` 과 같은 바이트 배치여야 한다.** `Format_ARGB32` 는 리틀엔디언에서
+ * 메모리에 B,G,R,A 순으로 놓이고 QImage 는 위에서 아래로 간다 — `shot` 이 내는 것과 같다.
+ * 다르면 판정이 조용히 틀린다(색이 뒤집히거나 상하가 뒤집힌 채 "다르다" 만 나온다).
+ */
+QByteArray Server::handleGrab(const QJsonObject& req, const QJsonValue& id, QJsonObject& out)
+{
+	const QString name = req.value(QStringLiteral("objectName")).toString();
+	if (name.isEmpty()) return fail(id, QStringLiteral("grab 에는 objectName 이 필요하다."));
+
+	const QString pngPath = req.value(QStringLiteral("pngPath")).toString();
+	const QString rawPath = req.value(QStringLiteral("rawPath")).toString();
+	if (pngPath.isEmpty() && rawPath.isEmpty())
+	{
+		return fail(id, QStringLiteral("pngPath 나 rawPath 중 적어도 하나는 필요하다."));
+	}
+
+	const QList<QWidget*> hits = findByObjectName(name);
+	if (hits.isEmpty())
+	{
+		return fail(id, QStringLiteral("objectName 이 \"%1\" 인 위젯이 없다.").arg(name));
+	}
+	if (hits.size() > 1)
+	{
+		// trigger 와 같은 규칙이다 — 여럿이면 고르지 않는다. 엉뚱한 위젯을 찍으면
+		// 그 그림이 baseline 이 되고 그 뒤 비교가 전부 무의미해진다.
+		return fail(id, QStringLiteral("objectName 이 \"%1\" 인 위젯이 %2개다.")
+		                    .arg(name)
+		                    .arg(hits.size()));
+	}
+
+	QWidget* w = hits.first();
+	if (w->width() <= 0 || w->height() <= 0)
+	{
+		return fail(id, QStringLiteral("\"%1\" 의 크기가 %2x%3 이라 찍을 수 없다.")
+		                    .arg(name)
+		                    .arg(w->width())
+		                    .arg(w->height()));
+	}
+
+	const QImage img = w->grab().toImage().convertToFormat(QImage::Format_ARGB32);
+	if (img.isNull()) return fail(id, QStringLiteral("\"%1\" 을 그리지 못했다.").arg(name));
+
+	if (!pngPath.isEmpty())
+	{
+		QDir().mkpath(QFileInfo(pngPath).absolutePath());
+		if (!img.save(pngPath, "PNG"))
+		{
+			return fail(id, QStringLiteral("PNG 를 쓰지 못했다: %1").arg(pngPath));
+		}
+	}
+	if (!rawPath.isEmpty())
+	{
+		QDir().mkpath(QFileInfo(rawPath).absolutePath());
+		QFile f(rawPath);
+		if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate))
+		{
+			return fail(id, QStringLiteral("생 픽셀을 쓰지 못했다: %1").arg(rawPath));
+		}
+		// **줄마다 따로 쓴다.** QImage 는 스캔라인에 패딩을 둘 수 있고, 통째로 쓰면
+		// 폭에 따라 어긋난 바이트가 섞인다.
+		const int rowBytes = img.width() * 4;
+		for (int y = 0; y < img.height(); y++)
+		{
+			f.write(reinterpret_cast<const char*>(img.constScanLine(y)), rowBytes);
+		}
+		f.close();
+	}
+
+	out[QStringLiteral("objectName")] = name;
+	out[QStringLiteral("class")] = QString::fromUtf8(w->metaObject()->className());
+	out[QStringLiteral("width")] = img.width();
+	out[QStringLiteral("height")] = img.height();
+	out[QStringLiteral("visible")] = w->isVisible();
+	if (!pngPath.isEmpty()) out[QStringLiteral("pngPath")] = pngPath;
+	if (!rawPath.isEmpty()) out[QStringLiteral("rawPath")] = rawPath;
 	return reply(out);
 }
 } // namespace zwagent

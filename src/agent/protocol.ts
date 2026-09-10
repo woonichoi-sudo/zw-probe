@@ -31,6 +31,8 @@ export type Request =
    * 여럿이면 플러그인이 부르지 않고 후보를 돌려주므로 `path` 로 좁힌다.
    */
   | { id: number; op: 'trigger'; text: string; path?: string }
+  /** 위젯 하나를 파일로 찍는다. 플러그인이 직접 쓴다 — 파이프에 이미지를 싣지 않는다 */
+  | { id: number; op: 'grab'; objectName: string; pngPath?: string; rawPath?: string }
 
 /** 요청 한 줄. 끝의 줄바꿈까지 포함한다 — 서버가 줄로 끊어 읽는다. */
 export function encodeRequest(req: Request): string {
