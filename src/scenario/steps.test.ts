@@ -397,3 +397,30 @@ test('describeStep — 새 단계도 한 줄로 읽힌다', () => {
     'checkBaseline b (패널 dock_x)',
   )
 })
+
+test('needsAgent — setAction 도 파이프가 필요하다', () => {
+  assert.equal(needsAgent({ do: 'setAction', text: 'X', checked: true }), true)
+})
+
+test('isAction — setAction 은 전후 비교를 붙이지 않는다', () => {
+  // **이미 그 상태면 아무것도 안 한다.** 화면이 안 바뀌는 것이 정상이므로
+  // 전후 비교를 붙이면 멱등한 실행이 실패로 나온다.
+  assert.equal(isAction({ do: 'setAction', text: 'X', checked: true }), false)
+  assert.equal(wantsChange({ do: 'setAction', text: 'X', checked: true }), false)
+})
+
+test('validateScenario — setAction 도 이름을 검증한다', () => {
+  const errors = validateScenario(sc([{ do: 'setAction', text: 'Gradingg', checked: true }]), {
+    actionTexts: ACTIONS,
+  })
+  assert.equal(errors.length, 1)
+  assert.match(errors[0]!.message, /Gradingg/)
+})
+
+test('describeStep — setAction 은 목표 상태를 보여준다', () => {
+  assert.equal(
+    describeStep({ do: 'setAction', text: 'Grading', path: 'Window > UI panels', checked: true }),
+    'setAction "Grading" (경로 "Window > UI panels") → 켬',
+  )
+  assert.equal(describeStep({ do: 'setAction', text: 'X', checked: false }), 'setAction "X" → 끔')
+})

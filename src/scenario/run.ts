@@ -23,6 +23,7 @@ import { activePanel, findOne, readDocumentState } from '../uia/tree.ts'
 import { classifyWindows, judgeActivity } from '../win/windowState.ts'
 import { call } from '../agent/pipe.ts'
 import { callableActions, parseActions, parseCandidates } from '../agent/protocol.ts'
+import type { AgentAction } from '../agent/protocol.ts'
 import { TARGET_PROCESS, click, listWindows, sendKey, shot, uiaTree } from '../win/zwwin.ts'
 import type { WindowFilter } from '../win/zwwin.ts'
 import {
@@ -273,6 +274,57 @@ async function waitForDocument(
   return {
     ok: false,
     reason: `${timeoutMs}ms 안에 문서가 "${fileName}" 이 되지 않았다. 지금은 "${last}" 다.`,
+  }
+}
+
+/**
+ * 이름(과 경로)으로 명령 하나를 특정한다.
+ *
+ * **여럿이면 실패로 돌려준다.** 조용히 첫 번째를 고르면 다른 명령의 상태를 보거나
+ * 다른 명령을 부르게 된다 — 실앱의 Import 와 Export 밑에 똑같이 `OBJ` 가 있다.
+ */
+async function findOneAction(
+  pid: number,
+  text: string,
+  path?: string,
+): Promise<{ ok: true; action: AgentAction } | { ok: false; reason: string }> {
+  const res = await call(pid, { id: 0, op: 'actions' })
+  if (!res.ok) return { ok: false, reason: res.error }
+  const hits = parseActions(res.body).filter(
+    (a) => a.text === text && (path === undefined || a.path === path),
+  )
+  if (hits.length === 0) return { ok: false, reason: `"${text}" 인 명령이 없다.` }
+  if (hits.length > 1) {
+    return {
+      ok: false,
+      reason: `"${text}" 이 ${hits.length}개다. path 로 좁힌다: ${hits.map((h) => `"${h.path}"`).join(', ')}`,
+    }
+  }
+  return { ok: true, action: hits[0]! }
+}
+
+/** 켬/끔 상태가 원하는 값이 될 때까지 기다린다. `trigger` 가 큐에 들어가기 때문이다. */
+async function waitForChecked(
+  pid: number,
+  text: string,
+  path: string | undefined,
+  want: boolean,
+  timeoutMs: number,
+): Promise<{ ok: boolean; reason: string }> {
+  const deadline = Date.now() + timeoutMs
+  let last: boolean | undefined
+  while (Date.now() < deadline) {
+    const f = await findOneAction(pid, text, path)
+    if (!f.ok) return { ok: false, reason: f.reason }
+    last = f.action.checked
+    if (last === want) {
+      return { ok: true, reason: `"${text}" 을 ${want ? '켰다' : '껐다'}.` }
+    }
+    await sleep(200)
+  }
+  return {
+    ok: false,
+    reason: `${timeoutMs}ms 안에 "${text}" 이 ${want ? '켬' : '끔'} 이 되지 않았다 (지금 ${last}).`,
   }
 }
 
@@ -581,6 +633,47 @@ export async function runScenario(sc: Scenario, opts: RunOptions = {}): Promise<
           )
           artifacts.push(c.png)
           reason = `${step.objectName} ${c.meta.width}x${c.meta.height} 를 ${c.png} 에 남겼다.`
+          break
+        }
+        case 'setAction': {
+          const found = await findOneAction(pid, step.text, step.path)
+          if (!found.ok) {
+            outcome = 'fail'
+            reason = found.reason
+            break
+          }
+          if (!found.action.checkable) {
+            outcome = 'fail'
+            reason = `"${step.text}" 은 켜고 끄는 명령이 아니다. 부르려면 trigger 를 쓴다.`
+            break
+          }
+          if (found.action.checked === step.checked) {
+            // **아무것도 하지 않는다.** 토글을 무턱대고 부르면 원하는 상태에서
+            // 벗어난다 — 사전 조건을 만들려는 단계가 사전 조건을 깨뜨리게 된다.
+            reason = `이미 ${step.checked ? '켬' : '끔'} 이다. 부르지 않았다.`
+            break
+          }
+          const fired = await call(pid, {
+            id: i + 1,
+            op: 'trigger',
+            text: step.text,
+            ...(step.path !== undefined ? { path: step.path } : {}),
+          })
+          if (!fired.ok) {
+            outcome = 'fail'
+            reason = fired.error
+            break
+          }
+          // trigger 는 큐에 들어가므로 상태가 바뀔 때까지 다시 물어본다.
+          const w = await waitForChecked(
+            pid,
+            step.text,
+            step.path,
+            step.checked,
+            step.timeoutMs ?? TRIGGER_SETTLE_MS,
+          )
+          outcome = w.ok ? 'pass' : 'fail'
+          reason = w.reason
           break
         }
         case 'expectAction': {

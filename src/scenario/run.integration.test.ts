@@ -203,3 +203,55 @@ test('파이프가 없으면 시작 전에 거부하고 이유를 말한다', { 
     rmSync(out, { recursive: true, force: true })
   }
 })
+
+test('setAction 이 토글을 원하는 상태로 맞추고, 이미 그 상태면 건드리지 않는다', { skip }, async () => {
+  // **`trigger` 로는 사전 조건을 만들 수 없다.** 토글을 무턱대고 부르면 이미 켜져
+  // 있을 때 꺼진다 — 사전 조건을 만들려는 단계가 사전 조건을 깨뜨린다.
+  const fx = await startFixture(true)
+  const out = mkdtempSync(join(tmpdir(), 'zwprobe-out-'))
+  try {
+    const r = await runScenario(
+      scenario([
+        // 처음엔 꺼져 있다
+        { do: 'expectAction', text: 'Highlight', path: 'Fixture', checked: false },
+        // 켠다 — 왼쪽 위가 노랗게 바뀐다
+        { do: 'setAction', text: 'Highlight', path: 'Fixture', checked: true },
+        { do: 'expectAction', text: 'Highlight', path: 'Fixture', checked: true },
+        // **여기가 본론이다.** 이미 켜져 있으므로 부르면 안 된다.
+        { do: 'setAction', text: 'Highlight', path: 'Fixture', checked: true },
+        { do: 'expectAction', text: 'Highlight', path: 'Fixture', checked: true },
+        // 끄는 것도 된다
+        { do: 'setAction', text: 'Highlight', path: 'Fixture', checked: false },
+        { do: 'expectAction', text: 'Highlight', path: 'Fixture', checked: false },
+      ]),
+      { filter: qtFilter(fx.pid), outDir: out, baselineDir: join(fx.dir, 'baselines') },
+    )
+    assert.equal(r.rejected, null, `거부됐다: ${JSON.stringify(r.rejected)}`)
+    assert.equal(r.summary.failed, 0, r.summary.lines.join('\n'))
+    // 네 번째 단계가 "부르지 않았다" 여야 한다 — 이것이 멱등의 증거다
+    assert.match(r.results[3]!.reason, /부르지 않았다/, r.results[3]!.reason)
+    assert.match(r.results[1]!.reason, /켰다/, r.results[1]!.reason)
+    assert.match(r.results[5]!.reason, /껐다/, r.results[5]!.reason)
+  } finally {
+    fx.kill()
+    rmSync(out, { recursive: true, force: true })
+  }
+})
+
+test('setAction 은 토글이 아닌 명령을 거부한다', { skip }, async () => {
+  // 토글이 아닌 것에 checked 를 기대하면 무엇을 하려는지 모호하다.
+  const fx = await startFixture(true)
+  const out = mkdtempSync(join(tmpdir(), 'zwprobe-out-'))
+  try {
+    const r = await runScenario(
+      scenario([{ do: 'setAction', text: 'Mark', path: 'Fixture', checked: true }]),
+      { filter: qtFilter(fx.pid), outDir: out, baselineDir: join(fx.dir, 'baselines') },
+    )
+    assert.equal(r.rejected, null, `거부됐다: ${JSON.stringify(r.rejected)}`)
+    assert.equal(r.summary.failed, 1, r.summary.lines.join('\n'))
+    assert.match(r.summary.firstFailure!.reason, /켜고 끄는 명령이 아니다/)
+  } finally {
+    fx.kill()
+    rmSync(out, { recursive: true, force: true })
+  }
+})

@@ -112,6 +112,17 @@ export type Step =
    */
   | { do: 'grabPanel'; objectName: string; label: string }
   /**
+   * 켜고 끄는 명령을 **원하는 상태로 맞춘다.** 이미 그 상태면 아무것도 하지 않는다.
+   *
+   * **`trigger` 로는 사전 조건을 만들 수 없다.** `Window > UI panels > Avatar` 같은
+   * 토글을 무턱대고 부르면 **이미 켜져 있을 때 꺼진다.** 단계가 데이터라 조건 분기를
+   * 쓸 수 없으므로, "맞춘다" 를 단계 자체가 해야 한다.
+   *
+   * 이것이 "시나리오가 자기 사전 조건을 만든다" 의 실체다 — 지금까지는 사람이
+   * 탭을 켜둔 상태를 전제하고 아니면 거부했다.
+   */
+  | { do: 'setAction'; text: string; path?: string; checked: boolean; timeoutMs?: number }
+  /**
    * 명령의 상태를 확인한다. **픽셀이 아니라 사실로 본다.**
    *
    * `Window > UI panels` 항목이 켜짐 상태를 주므로 "패널이 켜져 있나" 를
@@ -153,6 +164,7 @@ export function needsAgent(step: Step): boolean {
     step.do === 'trigger' ||
     step.do === 'openRecent' ||
     step.do === 'grabPanel' ||
+    step.do === 'setAction' ||
     step.do === 'expectAction'
   )
 }
@@ -227,6 +239,11 @@ export function describeStep(step: Step): string {
       return `trigger "${step.text}"${step.path !== undefined ? ` (경로 "${step.path}")` : ''}`
     case 'openRecent':
       return `openRecent "${step.fileName}"`
+    case 'setAction':
+      return (
+        `setAction "${step.text}"` +
+        `${step.path !== undefined ? ` (경로 "${step.path}")` : ''} → ${step.checked ? '켬' : '끔'}`
+      )
     case 'grabPanel':
       return `grabPanel ${step.objectName} → "${step.label}"`
     case 'expectAction': {
@@ -456,6 +473,20 @@ export function validateScenario(sc: Scenario, ctx: ValidationContext = {}): Val
           push('grabPanel 에 label 이 없다. 파일 이름이 된다.')
         } else if (!/^[A-Za-z0-9._가-힣-]+$/.test(step.label)) {
           push(`grabPanel label 에 파일 이름으로 쓸 수 없는 문자가 있다: "${step.label}"`)
+        }
+        break
+      }
+      case 'setAction': {
+        if (step.text.trim() === '') {
+          push('setAction 에 명령 이름(text)이 없다.')
+          break
+        }
+        checkActionName(push, ctx, step.text)
+        if (
+          step.timeoutMs !== undefined &&
+          (!Number.isFinite(step.timeoutMs) || step.timeoutMs <= 0)
+        ) {
+          push(`timeoutMs 가 양수가 아니다: ${step.timeoutMs}`)
         }
         break
       }

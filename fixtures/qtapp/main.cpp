@@ -141,6 +141,20 @@ int main(int argc, char** argv)
 		}
 	});
 
+	// **켜고 끄는 항목.** `setAction` 을 검증하려면 이것이 필요하다 — 대상 앱의
+	// `Window > UI panels > *` 가 이 모양이고, **무턱대고 trigger 하면 원하는 상태에서
+	// 벗어난다.** 켜면 왼쪽 위가 노랗게 바뀌므로 화면으로도 확인된다.
+	auto* toggle = fileMenu->addAction("Highlight");
+	toggle->setObjectName("actionHighlight");
+	toggle->setCheckable(true);
+	auto* topLeft = central->findChild<QLabel*>("cellTopLeft");
+	QObject::connect(toggle, &QAction::toggled, [topLeft](bool on) {
+		if (topLeft == nullptr) return;
+		QPalette p = topLeft->palette();
+		p.setColor(QPalette::Window, on ? QColor(255, 255, 0) : QColor(255, 0, 0));
+		topLeft->setPalette(p);
+	});
+
 	auto* recent = fileMenu->addMenu("Recent");
 	recent->addAction("Ambiguous");
 	// 같은 이름을 다른 메뉴에도 둔다. **경로 없이 이름만으로는 갈리지 않아야 한다.**
