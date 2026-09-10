@@ -75,6 +75,15 @@ export type AgentHello = {
   topLevelWidgets: AgentWidget[]
   /** 위젯 수 상한에서 남은 여유. 0 이면 트리가 잘렸다 */
   widgetBudgetLeft: number
+  /**
+   * 명령 채널의 파이프 이름. 이름에 pid 가 들어가므로 **밖에서 찾으려면 이게 필요하다.**
+   * 빈 문자열이면 옛 hello 이거나 서버를 아예 만들지 못한 것이다.
+   */
+  pipeName: string
+  /** 파이프가 열렸는가. false 면 조회·조작이 안 되고 hello 스냅샷만 남는다 */
+  pipeListening: boolean
+  /** 못 열었을 때의 이유. **이게 없으면 "로드 실패" 와 구분되지 않는다** */
+  pipeError: string
 }
 
 export type ParsedHello = { ok: true; hello: AgentHello } | { ok: false; reason: string }
@@ -167,6 +176,9 @@ export function parseAgentHello(raw: unknown): ParsedHello {
       topLevelCount: num(h.topLevelCount, tops.length),
       topLevelWidgets: tops,
       widgetBudgetLeft: num(h.widgetBudgetLeft, -1),
+      pipeName: str(h.pipeName),
+      pipeListening: bool(h.pipeListening),
+      pipeError: str(h.pipeError),
     },
   }
 }

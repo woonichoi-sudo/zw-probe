@@ -19,6 +19,8 @@ import { loadShortcuts } from './input/shortcutFile.ts'
 import { locateLog, logDir, readEntries } from './log/logFile.ts'
 import { summarize, toSeverity } from './log/parse.ts'
 import { classifyWindows, judgeActivity, styleNames } from './win/windowState.ts'
+import { call } from './agent/pipe.ts'
+import { parseTreeResult } from './agent/protocol.ts'
 import { judgeClick } from './input/click.ts'
 import { activePanel, clickPoint, findNodes, findOne, readDocumentState } from './uia/tree.ts'
 import type { NodeQuery } from './uia/tree.ts'
@@ -646,7 +648,7 @@ function cmdDiff(rest: string[], flags: Map<string, string>): number {
  * 3을 따로 두는 이유: 트리가 비어 있는 것이 "위젯이 없다" 가 아니라 "아직 안
  * 만들어졌다" 일 수 있고, 그 둘은 원인이 다르다.
  */
-function cmdAgent(flags: Map<string, string>): number {
+async function cmdAgent(flags: Map<string, string>): Promise<number> {
   const path = flags.get('hello') || join(tmpdir(), 'zwagent-hello.json')
 
   let raw: unknown
@@ -680,8 +682,32 @@ function cmdAgent(flags: Map<string, string>): number {
   const abi = judgeAbi(h)
   console.log(`ABI   ${abi.match ? '일치' : '어긋남'} — ${abi.reason}`)
 
-  const flat = flattenWidgets(h.topLevelWidgets)
-  const total = h.widgetTotal >= 0 ? h.widgetTotal : flat.length
+  // 명령 채널 상태. **파이프가 안 열렸으면 `--live` 가 왜 안 되는지 여기서만 보인다.**
+  if (h.pipeName !== '') {
+    const how = h.pipeListening ? '열림' : `못 열었다 — ${h.pipeError || '(이유 없음)'}`
+    console.log(`채널  ${h.pipeName} · ${how}`)
+  } else {
+    console.log('채널  없다 — 명령 채널이 없는 옛 플러그인이다. 다시 빌드한다.')
+  }
+
+  // `--live` 는 hello 스냅샷 대신 **지금**의 트리를 파이프로 받는다. hello 는 UI 가
+  // 정착한 순간의 한 장이라 그 뒤에 사람이 탭을 바꾸면 낡는다.
+  let tops = h.topLevelWidgets
+  let liveTotal = h.widgetTotal
+  if (flags.has('live')) {
+    const res = await call(h.pid, { id: 1, op: 'tree' })
+    if (!res.ok) {
+      console.error(`\n파이프로 트리를 받지 못했다:\n  ${res.error}`)
+      return 1
+    }
+    const live = parseTreeResult(res.body)
+    tops = live.topLevelWidgets
+    liveTotal = live.widgetTotal
+    console.log(`실시간 파이프로 지금의 트리를 받았다 (위젯 ${liveTotal}개).`)
+  }
+
+  const flat = flattenWidgets(tops)
+  const total = liveTotal >= 0 ? liveTotal : flat.length
   console.log(
     `위젯  최상위 ${h.topLevelCount}개 · 전체 ${total}개 · 트리에 실린 것 ${flat.length}개`,
   )
@@ -704,7 +730,7 @@ function cmdAgent(flags: Map<string, string>): number {
   // 곳에 있다.** 찾은 것은 누를 수 있게 창 기준 좌표까지 준다.
   const find = flags.get('find') || ''
   if (find !== '') {
-    const hits = findByLabel(h.topLevelWidgets, find)
+    const hits = findByLabel(tops, find)
     // 캡처 사각형 원점을 살아 있는 창에서 가져온다. **hello 는 스냅샷이므로 그 뒤에
     // 창이 움직였으면 좌표가 낡는다** — 창을 못 찾으면 좌표를 아예 내지 않는다.
     // 틀린 좌표를 내는 것이 안 내는 것보다 나쁘다.
@@ -834,7 +860,7 @@ async function main(): Promise<number> {
     case 'diff':
       return cmdDiff(rest, flags)
     case 'agent':
-      return cmdAgent(flags)
+      return await cmdAgent(flags)
     default:
       console.error(
         '사용법:\n' +

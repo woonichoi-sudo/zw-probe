@@ -17,6 +17,8 @@ import { QTAPP_EXE, ZWAGENT_DLL, qtEnv, qtFilter, qtFixtureMissing } from './qtF
 import { listWindows, shot, uiaTree } from './zwwin.ts'
 import { diff, judgeSame } from '../image/diff.ts'
 import { findWidgets, judgeAbi, parseAgentHello } from '../agent/hello.ts'
+import { call } from '../agent/pipe.ts'
+import { parseTreeResult, pipeNameFor } from '../agent/protocol.ts'
 import { findNodes } from '../uia/tree.ts'
 import type { AgentHello } from '../agent/hello.ts'
 import type { Bgra } from '../image/stats.ts'
@@ -181,5 +183,69 @@ test('zwagent 를 얹어도 위젯 화면이 바뀌지 않는다', { skip }, asy
     assert.equal(v.same, true, `zwagent 가 클라이언트 영역을 바꿨다 — ${v.reason}`)
   } finally {
     rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('명령 채널이 열리고 온디맨드로 지금의 트리를 준다', { skip }, async () => {
+  // **이것이 hello 파일과 다른 점이다.** hello 는 UI 가 정착한 순간의 스냅샷 하나뿐이라
+  // 그 뒤에 화면이 바뀌면 낡는다. 파이프는 물어보는 시점의 트리를 준다.
+  const dir = mkdtempSync(join(tmpdir(), 'zwprobe-pipe-'))
+  const hello = join(dir, 'hello.json')
+  const child = spawn(QTAPP_EXE, ['-style', 'zwagent'], {
+    detached: false,
+    stdio: 'ignore',
+    env: qtEnv({ ZWAGENT_HELLO: hello }),
+  })
+  assert.ok(child.pid !== undefined, '픽스처 프로세스를 띄우지 못했다')
+  const pid = child.pid!
+
+  try {
+    await waitForWindow(qtFilter(pid))
+    const h = await waitForHello(hello)
+
+    // ① hello 가 파이프 이름을 알려준다. 이름에 pid 가 들어가므로 밖에서 찾을 수 있다.
+    assert.equal(h.pipeName, pipeNameFor(pid), 'hello 의 파이프 이름이 pid 와 맞아야 한다')
+    assert.equal(h.pipeListening, true, `파이프가 안 열렸다: ${h.pipeError ?? '(이유 없음)'}`)
+
+    // ② ping — 파이프가 열렸다는 것 자체가 로드 확인이다
+    const ping = await call(pid, { id: 1, op: 'ping' }, { timeoutMs: 10000 })
+    assert.equal(ping.ok, true, ping.ok ? '' : ping.error)
+    if (!ping.ok) return
+    assert.equal(ping.body.pid, pid, '우리가 겨냥한 프로세스가 답해야 한다')
+    assert.match(String(ping.body.appFilePath), /zwqtfixture\.exe$/i)
+
+    // ③ tree — hello 와 같은 모양이어야 한다. 두 벌이면 밖에서 어느 쪽을 읽었는지에
+    //    따라 답이 달라진다.
+    const tree = await call(pid, { id: 2, op: 'tree' }, { timeoutMs: 10000 })
+    assert.equal(tree.ok, true, tree.ok ? '' : tree.error)
+    if (!tree.ok) return
+    const parsed = parseTreeResult(tree.body)
+    assert.equal(parsed.topLevelCount, h.topLevelCount)
+    assert.equal(parsed.widgetTotal, h.widgetTotal)
+    const target = findWidgets(parsed.topLevelWidgets, 'fixtureTarget')
+    assert.equal(target.length, 1, '파이프로 받은 트리에서도 fixtureTarget 을 찾아야 한다')
+    assert.equal(target[0]!.class, 'QPushButton')
+
+    // ④ 라벨과 절대 좌표가 파이프로도 온다
+    assert.equal(target[0]!.text, 'fixture-target')
+    assert.ok(target[0]!.screenX > 0, '화면 절대 좌표가 실려야 한다')
+
+    // ⑤ 모르는 op 는 조용히 넘어가지 않고 거부한다
+    const bad = await call(pid, { id: 3, op: 'nope' } as never, { timeoutMs: 10000 })
+    assert.equal(bad.ok, false)
+    if (!bad.ok) assert.match(bad.error, /모르는 op/)
+  } finally {
+    child.kill()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('앱이 없으면 파이프 실패를 이유와 함께 알린다', { skip }, async () => {
+  // **"안 열렸다" 와 "로드가 안 됐다" 를 밖에서 갈라야 한다.** 없는 pid 로 열면
+  // 연결 자체가 실패하고, 그때 무엇을 확인할지가 메시지에 있어야 한다.
+  const r = await call(999999, { id: 1, op: 'ping' }, { timeoutMs: 3000 })
+  assert.equal(r.ok, false)
+  if (!r.ok) {
+    assert.match(r.error, /zwagent-999999|zwagent\.dll/)
   }
 })

@@ -1,35 +1,30 @@
-// zwagent — Qt 스타일 플러그인. M4 의 목적은 **이것이 로드되는지 태우는 것**이다.
+// zwagent — Qt 스타일 플러그인. 대상 앱 프로세스 안의 발판이다.
 //
 // 왜 스타일 플러그인인가: 앱 프로세스 안에 들어가려면 진입점이 필요하고, Qt 는
 // `-style <키>` 로 임의의 DLL 을 불러준다. 대상 앱 소스를 0줄도 고치지 않고
 // 프로세스 안에 들어가는 유일한 공식 경로다 (설계문서 §5, 절대 규칙 1).
 //
-// **이 단계에서 확인하는 것 셋.**
-//   ① DLL 이 로드되고 `create("zwagent")` 가 불리는가 — ABI 가 맞는가
-//   ② 런타임 Qt 버전이 컴파일 시점과 같은가 — 다르면 나중에 조용히 깨진다
-//   ③ **살아 있는 위젯 트리를 볼 수 있는가** — M5 의 핵심 능력이다
+// **밖으로 내보내는 길이 둘이다.**
+//   ① hello 파일 — 로드·ABI·정착 시점 위젯 트리. 1회 스냅샷이고 **없으면 안 된다**:
+//      파이프가 안 열렸을 때 "로드 실패" 와 구분할 유일한 근거다
+//   ② 명령 채널 (server.h) — named pipe. 온디맨드 조회와 조작
 //
-// ③이 M4 를 "DLL 이 떴다" 이상으로 만든다. 스타일이 만들어지는 시점에는 위젯이
-// 아직 없으므로, 이벤트 루프가 돌기 시작한 뒤로 미뤄서 본다.
-//
-// 결과는 파일로 남긴다. stdout 은 대상 앱이 이미 쓰고 있고, 콘솔 없는 앱에서는
+// 결과를 파일로 남기는 이유: stdout 은 대상 앱이 이미 쓰고 있고 콘솔 없는 앱에서는
 // 사라진다. 파일이면 밖에서 확실히 읽는다.
 //   ZWAGENT_HELLO 환경변수 = 쓸 경로. 없으면 %TEMP%/zwagent-hello.json
 //
 // 빌드: bash tools/zwagent/build.sh
 
+#include "server.h"
+#include "tree.h"
+
 #include <QtGlobal>
-#include <QAbstractButton>
-#include <QAction>
 #include <QApplication>
-#include <QLabel>
-#include <QLineEdit>
 #include <QDateTime>
 #include <QDir>
 #include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
-#include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QProxyStyle>
@@ -37,7 +32,6 @@
 #include <QStyleFactory>
 #include <QStylePlugin>
 #include <QTimer>
-#include <QWidget>
 
 namespace
 {
@@ -48,125 +42,9 @@ QString helloPath()
 	return QDir::temp().filePath(QStringLiteral("zwagent-hello.json"));
 }
 
-/// 빈 문자열은 싣지 않는다. 위젯 5199개 × 라벨 후보 5개면 대부분이 빈 값이고,
-/// 그것만으로 파일이 배로 커진다.
-void putIfSet(QJsonObject& o, const char* key, const QString& v)
-{
-	if (!v.isEmpty()) o[QLatin1String(key)] = v;
-}
-
-/**
- * 사람이 화면에서 보는 라벨.
- *
- * **objectName 만으로는 주소를 매길 수 없다.** 대상 앱에서 보이는 `zwQtButton` 56개 중
- * objectName 이 있는 것은 0개다 (2026-09-09 실측) — 툴바를 이름으로 누르려면 버튼
- * 자신의 라벨이 필요하다. 어디서 오는지 모르므로 **가능한 출처를 다 싣고 고르는 것은
- * TS 에 맡긴다** (절대 규칙 5).
- *
- * `text` 는 위젯 종류마다 다른 게터에 있고 공통 기반이 없다. 그래서 캐스팅으로 훑는다.
- * `QLineEdit` 을 넣은 것은 **값 자체가 판정 대상**이기 때문이다 — 길이·둘레가 음수이거나
- * NaN 인 것을 잡는 것이 이 도구의 목적 중 하나다.
- */
-void putLabels(QJsonObject& o, const QWidget* w)
-{
-	if (const auto* b = qobject_cast<const QAbstractButton*>(w)) putIfSet(o, "text", b->text());
-	else if (const auto* l = qobject_cast<const QLabel*>(w)) putIfSet(o, "text", l->text());
-	else if (const auto* e = qobject_cast<const QLineEdit*>(w)) putIfSet(o, "text", e->text());
-
-	putIfSet(o, "toolTip", w->toolTip());
-	putIfSet(o, "accessibleName", w->accessibleName());
-	putIfSet(o, "windowTitle", w->windowTitle());
-
-	// QAction 텍스트. 툴바 버튼이 라벨을 액션에만 갖고 있을 수 있다 — `QWidget::actions()`
-	// 는 종류를 안 가리므로 캐스팅 없이 닿는다. QToolButton 의 defaultAction 도 여기 든다.
-	QJsonArray acts;
-	for (const QAction* a : w->actions())
-	{
-		if (a != nullptr && !a->text().isEmpty()) acts.append(a->text());
-	}
-	if (!acts.isEmpty()) o[QStringLiteral("actions")] = acts;
-}
-
-/// 위젯 하나를 JSON 으로. 깊이 제한을 둬서 큰 앱에서 폭주하지 않게 한다.
-QJsonObject describeWidget(const QWidget* w, int depth, int maxDepth, int* budget)
-{
-	QJsonObject o;
-	o[QStringLiteral("class")] = QString::fromUtf8(w->metaObject()->className());
-	o[QStringLiteral("objectName")] = w->objectName();
-	o[QStringLiteral("visible")] = w->isVisible();
-	o[QStringLiteral("enabled")] = w->isEnabled();
-	// **부모 기준이다.** 최상위만 화면 좌표이고 자식은 부모 안에서의 위치다 — 툴바
-	// 버튼이 `3,3` 으로 나온다. 이것만으로는 누를 수 없다. 그래서 아래 절대 좌표를 함께 싣는다.
-	const QRect g = w->geometry();
-	o[QStringLiteral("x")] = g.x();
-	o[QStringLiteral("y")] = g.y();
-	o[QStringLiteral("width")] = g.width();
-	o[QStringLiteral("height")] = g.height();
-
-	// **화면 절대 좌표.** 여기서 변환하지 않는다 — 캡처 사각형 원점을 빼는 규칙이
-	// `zwwin.exe` 한 곳에 모여 있고(그래서 UIA 와 클릭이 8px 씩 어긋나지 않는다),
-	// 두 번째 변환 경로를 만들면 그 이점이 사라진다. 절대 좌표는 그 규칙의 입력이다.
-	const QPoint tl = w->mapToGlobal(QPoint(0, 0));
-	o[QStringLiteral("screenX")] = tl.x();
-	o[QStringLiteral("screenY")] = tl.y();
-
-	putLabels(o, w);
-
-	if (depth >= maxDepth) return o;
-
-	QJsonArray kids;
-	for (QObject* child : w->children())
-	{
-		if (*budget <= 0) break;
-		auto* cw = qobject_cast<QWidget*>(child);
-		if (cw == nullptr) continue;
-		(*budget)--;
-		kids.append(describeWidget(cw, depth + 1, maxDepth, budget));
-	}
-	if (!kids.isEmpty()) o[QStringLiteral("children")] = kids;
-	return o;
-}
-
-/// 보이는 최상위 위젯이 하나라도 있는가.
-///
-/// **이것만으로는 "UI 가 떴다" 가 아니다.** 대상 앱은 메인 창보다 한참 먼저
-/// 540x370 스플래시를 띄우고 30초 넘게 패널을 만든다 (2026-09-09 실측). 첫 폴링에서
-/// 이 함수가 true 를 돌려주므로, 여기서 바로 보고하면 **레이아웃도 안 된 스플래시
-/// 시절 트리**를 잡는다 — 실제로 그랬다: 위젯이 대부분 `640x480`(Qt 기본 크기)에
-/// 숨김 상태였다. Qt 픽스처에는 스플래시가 없어서 이 문제가 드러날 수 없었다.
-/// 그래서 아래 countAllWidgets 로 **개수가 멈추는 것**을 함께 본다.
-bool haveVisibleUi()
-{
-	for (const QWidget* w : QApplication::topLevelWidgets())
-	{
-		if (w->isVisible()) return true;
-	}
-	return false;
-}
-
-/// 위젯 하나와 그 후손의 개수. **깊이·개수 상한이 없다.**
-int countWidgets(const QWidget* w)
-{
-	int n = 1;
-	for (const QObject* child : w->children())
-	{
-		const auto* cw = qobject_cast<const QWidget*>(child);
-		if (cw != nullptr) n += countWidgets(cw);
-	}
-	return n;
-}
-
-/// 프로세스 안의 위젯 총 개수.
-///
-/// 두 곳에 쓴다. ① JSON 트리가 상한에 잘려도 **몇 개인지는 알 수 있다** — "없다 를
-/// 단정할 수 없다" 는 경고가 숫자로 바뀐다. ② 이 값이 멈추는 것이 UI 가 정착했다는
-/// 신호다. 클래스 이름을 찾지 않으므로 **대상 앱에 대한 지식이 0이다** (절대 규칙 5).
-int countAllWidgets()
-{
-	int n = 0;
-	for (const QWidget* w : QApplication::topLevelWidgets()) n += countWidgets(w);
-	return n;
-}
+/// 명령 채널. qApp 소유라 스타일 객체가 버려져도 산다 — 대상 앱은
+/// `QApplication::setStyle(new zwStyle)` 로 우리 스타일을 덮어쓴다.
+zwagent::Server* g_server = nullptr;
 
 /// 한 번의 보고에 실을 관찰값. **해석하지 않고 숫자만 넘긴다** (절대 규칙 5).
 struct HelloFacts
@@ -205,27 +83,24 @@ void writeHello(const HelloFacts& facts)
 	root[QStringLiteral("qtRuntime")] = QString::fromLatin1(qVersion());
 	root[QStringLiteral("writtenAt")] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
 
+	// 명령 채널 상태. **파이프 이름을 파일로 알려야 밖에서 찾을 수 있다** — 이름에
+	// pid 가 들어가고, 못 열렸으면 그 이유까지 여기서만 보인다.
+	if (g_server != nullptr)
+	{
+		root[QStringLiteral("pipeName")] = g_server->name();
+		root[QStringLiteral("pipeListening")] = g_server->listening();
+		if (!g_server->lastError().isEmpty())
+		{
+			root[QStringLiteral("pipeError")] = g_server->lastError();
+		}
+	}
+
 	if (QCoreApplication::instance() != nullptr)
 	{
 		root[QStringLiteral("appFilePath")] = QCoreApplication::applicationFilePath();
 	}
 
-	QJsonArray tops;
-	// 위젯 수·깊이 상한. **실측에서 500·6 이 둘 다 모자랐다** — 대상 앱은 스플래시
-	// 시절에도 500 을 넘겼고, dock 안쪽은 6단보다 깊다. 상한은 폭주 방지용이고
-	// 정상 규모를 자르는 값이면 안 된다. 잘렸는지는 widgetBudgetLeft 로 알 수 있고,
-	// 잘려도 widgetTotal 이 실제 규모를 말해준다.
-	int budget = 12000;
-	const QWidgetList list = QApplication::topLevelWidgets();
-	for (QWidget* w : list)
-	{
-		if (budget <= 0) break;
-		budget--;
-		tops.append(describeWidget(w, 0, 40, &budget));
-	}
-	root[QStringLiteral("topLevelCount")] = list.size();
-	root[QStringLiteral("topLevelWidgets")] = tops;
-	root[QStringLiteral("widgetBudgetLeft")] = budget;
+	zwagent::putTopLevelWidgets(root, zwagent::kDefaultBudget, zwagent::kDefaultMaxDepth);
 
 	const QString path = helloPath();
 	// 상위 폴더를 만들어 둔다. `ZWAGENT_HELLO` 로 `runs/…` 같은 경로를 받는 것이
@@ -248,9 +123,9 @@ void writeHello(const HelloFacts& facts)
 constexpr int kPollIntervalMs = 250;
 /// 개수가 이만큼 연속으로 안 바뀌면 정착으로 본다 (12 × 250ms = 3초).
 constexpr int kSettleTicks = 12;
-/// 폴링을 완전히 그만두는 시점. **대상 앱은 메인 창까지 35초쯤 걸린다** (실측).
+/// 폴링을 완전히 그만두는 시점. **대상 앱은 메인 창까지 90초쯤 걸린다** (실측).
 /// 15초였을 때는 스플래시만 보고 끝났다. 영구히 돌리지 않는 이유는 대상 앱에
-/// 상시 부하를 남기지 않기 위해서다 — 온디맨드 조회는 M5 의 named pipe 가 한다.
+/// 상시 부하를 남기지 않기 위해서다 — 온디맨드 조회는 명령 채널이 한다.
 constexpr int kMaxAttempts = 720; // 180초
 
 /// 폴링 사이에 들고 가는 상태.
@@ -293,8 +168,8 @@ void scheduleHello(const QString& styleKey)
 	timer->setInterval(kPollIntervalMs);
 	QObject::connect(timer, &QTimer::timeout, timer, [timer, state]() {
 		state->attempts++;
-		const bool sawUi = haveVisibleUi();
-		const int count = countAllWidgets();
+		const bool sawUi = zwagent::haveVisibleUi();
+		const int count = zwagent::countAllWidgets();
 
 		if (count != state->lastCount)
 		{
@@ -333,6 +208,17 @@ void scheduleHello(const QString& styleKey)
 	});
 	timer->start();
 }
+
+/// 명령 채널을 연다. **실패해도 앱을 죽이지 않는다** — 실패 사실은 hello 에 실린다.
+void startServer()
+{
+	if (g_server != nullptr) return;
+	g_server = new zwagent::Server(QCoreApplication::instance());
+	if (!g_server->listen())
+	{
+		qWarning("zwagent: 파이프를 열지 못했다: %s", qUtf8Printable(g_server->lastError()));
+	}
+}
 } // namespace
 
 class ZwAgentStylePlugin : public QStylePlugin
@@ -351,6 +237,7 @@ public:
 		// 위젯 트리는 지금 없다 — 스타일은 QApplication 초기화 중에 만들어진다.
 		// UI 가 뜰 때까지 기다렸다가 본다. 근거는 scheduleHello 주석.
 		scheduleHello(key);
+		startServer();
 
 		// **화면을 바꾸지 않는다.** 프로브가 대상 앱의 외관을 바꾸면 픽셀 baseline 이
 		// 전부 무효가 된다. 구체적인 기본 스타일을 감싼 프록시를 돌려준다 —
@@ -358,7 +245,7 @@ public:
 		// 대상 앱에서는 이것조차 쓰이지 않는다: zwAppZWeave.cpp:259 가
 		// `QApplication::setStyle(new zwStyle)` 로 스타일을 무조건 덮어쓴다. 진입은
 		// 되고(Qt 가 초기화 중에 create 를 부른다) 우리 스타일 객체만 버려지므로,
-		// 보고를 스타일 객체 수명에 묶지 않은 것이 중요하다 — 타이머는 qApp 소유다.
+		// 보고를 스타일 객체 수명에 묶지 않은 것이 중요하다 — 타이머와 서버는 qApp 소유다.
 		// 여기서 우리 키로 QStyleFactory::create 를 부르면 무한 재귀가 된다.
 		QStyle* base = QStyleFactory::create(QStringLiteral("windowsvista"));
 		if (base == nullptr) base = QStyleFactory::create(QStringLiteral("windows"));
