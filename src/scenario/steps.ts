@@ -56,6 +56,14 @@ export type Step =
       maxChangedRatio?: number
       /** 늘 변하는 영역을 뺀다 */
       ignore?: Rect[]
+      /**
+       * 창 전체가 아니라 이 위젯만 비교한다 (`zwagent` 의 `QWidget::grab()`).
+       *
+       * **관계없는 곳의 변화를 애초에 안 담는 것이 `ignore` 보다 낫다** — `ignore`
+       * 는 무엇이 변할지 미리 알아야 하고 좌표가 레이아웃에 묶인다. 패널 하나만
+       * 찍으면 그 문제가 사라진다.
+       */
+      panel?: string
     }
   /** 열린 파일명과 dirty 를 확인한다 */
   | { do: 'expectDoc'; fileName?: string; dirty?: boolean }
@@ -72,6 +80,52 @@ export type Step =
    * `dockId` 가 튼튼하다(현지화·잘림 없음). `tabName` 은 사람이 읽기 좋지만 잘릴 수 있다.
    */
   | { do: 'expectPanel'; dockId?: string; tabName?: string }
+  /**
+   * 메뉴 명령을 이름으로 부른다 (`zwagent` 의 `QAction::trigger()`).
+   *
+   * **이것이 시나리오가 자기 사전 조건을 만들 수 있게 한다.** 지금까지는
+   * "사람이 Simulation 탭을 켜둔 상태" 를 전제하고 아니면 거부했는데,
+   * `Window > UI panels > Simulation` 을 불러 **만들면** 된다.
+   *
+   * `path` 는 이름이 겹칠 때 필요하다 — 실앱의 Import 와 Export 밑에 똑같이
+   * `OBJ` 가 있다. 겹치는데 안 주면 플러그인이 부르지 않고 거부한다.
+   *
+   * **`trigger` 는 큐에 들어간다.** 응답이 와도 아직 실행 전일 수 있으므로,
+   * 러너가 화면이 바뀔 때까지 기다렸다가 판정한다. 근거는 run.ts 의 주석.
+   */
+  | { do: 'trigger'; text: string; path?: string; expectChange?: boolean }
+  /**
+   * 최근 파일에서 프로젝트를 연다.
+   *
+   * **파일 다이얼로그를 거치지 않는다** (2026-09-10 실측). `trigger` 로도 같은 일을
+   * 할 수 있지만 이 단계가 따로 있는 이유는 **완료를 기다리는 방법이 다르기**
+   * 때문이다 — 여는 동안 진행 다이얼로그가 8초쯤 떠 있고, 그 사이 `doc` 은 아직
+   * **옛 파일명**을 보고한다. 그래서 "문서가 이 이름이 될 때까지" 를 기다린다.
+   * 화면 변화나 idle 로 판정하면 너무 일찍 통과한다.
+   */
+  | { do: 'openRecent'; fileName: string; timeoutMs?: number }
+  /**
+   * 위젯 하나만 찍어 남긴다 (`zwagent` 의 `QWidget::grab()`).
+   *
+   * **창 전체 비교는 관계없는 곳이 바뀌어도 실패한다** — 탭 라벨이 잘려 469픽셀
+   * 오차를 낸 적이 있다. 패널 단위면 그 소음이 사라진다. 가려져 있어도 찍힌다.
+   */
+  | { do: 'grabPanel'; objectName: string; label: string }
+  /**
+   * 명령의 상태를 확인한다. **픽셀이 아니라 사실로 본다.**
+   *
+   * `Window > UI panels` 항목이 켜짐 상태를 주므로 "패널이 켜져 있나" 를
+   * 화면 비교 없이 확인할 수 있다. `enabled` 는 "지금 부를 수 있나" 다.
+   */
+  | {
+      do: 'expectAction'
+      text: string
+      path?: string
+      enabled?: boolean
+      checked?: boolean
+      /** 그 이름의 명령이 있어야 하는가. 기본 true */
+      present?: boolean
+    }
 
 export type Scenario = {
   name: string
@@ -82,7 +136,25 @@ export type Scenario = {
 
 /** 화면을 바꾸는 단계인가. 전후 비교를 붙일 대상이다. */
 export function isAction(step: Step): boolean {
-  return step.do === 'key' || step.do === 'click' || step.do === 'clickName'
+  return (
+    step.do === 'key' || step.do === 'click' || step.do === 'clickName' || step.do === 'trigger'
+  )
+}
+
+/**
+ * 명령 채널(파이프)이 있어야 도는 단계인가.
+ *
+ * **미리 알아야 한다.** 파이프가 없는데 시작하면 절차 중간에서 멈추고, 그때 앱은
+ * 이미 반쯤 조작된 상태다. 러너가 시작 전에 이 목록을 보고 거부한다.
+ */
+export function needsAgent(step: Step): boolean {
+  if (step.do === 'checkBaseline') return step.panel !== undefined
+  return (
+    step.do === 'trigger' ||
+    step.do === 'openRecent' ||
+    step.do === 'grabPanel' ||
+    step.do === 'expectAction'
+  )
 }
 
 /** `expectChange` 의 실효값. 동작 단계의 기본은 "바뀌어야 한다" 다. */
@@ -117,7 +189,11 @@ export function describeStep(step: Step): string {
     case 'shot':
       return `shot "${step.label}"`
     case 'checkBaseline':
-      return `checkBaseline ${step.baseline}${step.ignore !== undefined && step.ignore.length > 0 ? ` (무시 ${step.ignore.length}개 영역)` : ''}`
+      return (
+        `checkBaseline ${step.baseline}` +
+        `${step.panel !== undefined ? ` (패널 ${step.panel})` : ''}` +
+        `${step.ignore !== undefined && step.ignore.length > 0 ? ` (무시 ${step.ignore.length}개 영역)` : ''}`
+      )
     case 'expectDoc': {
       const parts = [
         step.fileName !== undefined ? `파일명="${step.fileName}"` : '',
@@ -147,6 +223,23 @@ export function describeStep(step: Step): string {
         .join(' ')
       return `expectElement ${by} ${step.present === false ? '없어야 한다' : '있어야 한다'}`
     }
+    case 'trigger':
+      return `trigger "${step.text}"${step.path !== undefined ? ` (경로 "${step.path}")` : ''}`
+    case 'openRecent':
+      return `openRecent "${step.fileName}"`
+    case 'grabPanel':
+      return `grabPanel ${step.objectName} → "${step.label}"`
+    case 'expectAction': {
+      const want = [
+        step.present === false ? '없어야 한다' : '',
+        step.enabled !== undefined ? `enabled=${step.enabled}` : '',
+        step.checked !== undefined ? `checked=${step.checked}` : '',
+      ]
+        .filter((s) => s !== '')
+        .join(' ')
+      const where = step.path !== undefined ? ` (경로 "${step.path}")` : ''
+      return `expectAction "${step.text}"${where} ${want || '있어야 한다'}`
+    }
   }
 }
 
@@ -170,6 +263,27 @@ export type ValidationContext = {
   shortcutNames?: readonly string[]
   /** 있는 baseline 이름 전부. 주면 없는 baseline 참조를 시작 전에 잡는다 */
   baselineNames?: readonly string[]
+  /**
+   * 지금 부를 수 있는 명령 이름 전부 (`agent --actions`). 주면 오타를 시작 전에 잡는다.
+   *
+   * **단축키 이름 검사와 같은 이유다** — 틀린 이름은 무동작이 아니라 거부이고,
+   * 절차 중간에서 거부되면 앱은 이미 반쯤 조작된 상태다. 파이프가 없으면 주지 않고
+   * 검사를 건너뛴다.
+   */
+  actionTexts?: readonly string[]
+}
+
+/**
+ * 명령 이름이 실제로 있는가. **틀린 이름은 무동작이 아니라 거부다** — 절차 중간에서
+ * 거부되면 앱은 이미 반쯤 조작된 상태다. 목록을 못 받았으면 검사를 건너뛴다.
+ */
+function checkActionName(push: (m: string) => void, ctx: ValidationContext, text: string): void {
+  if (ctx.actionTexts === undefined) return
+  if (ctx.actionTexts.includes(text)) return
+  push(
+    `명령 "${text}" 이 지금 부를 수 있는 목록에 없다. ` +
+      'zwprobe agent --actions <조각> 으로 확인한다.',
+  )
 }
 
 function describeQueryFields(s: {
@@ -310,6 +424,56 @@ export function validateScenario(sc: Scenario, ctx: ValidationContext = {}): Val
         if (step.dockId === undefined && step.tabName === undefined) {
           push('expectPanel 에 dockId 나 tabName 중 하나는 있어야 한다.')
         }
+        break
+      }
+      case 'trigger': {
+        if (step.text.trim() === '') {
+          push('trigger 에 명령 이름(text)이 없다.')
+          break
+        }
+        checkActionName(push, ctx, step.text)
+        break
+      }
+      case 'openRecent': {
+        if (step.fileName.trim() === '') {
+          push('openRecent 에 파일명이 없다.')
+          break
+        }
+        // 최근 파일 목록은 앱이 관리하므로 **이름이 목록에 없으면 열 수 없다.**
+        // 파일명을 옮겨 적다 틀리는 것이 흔하고, 그건 시작 전에 잡힌다.
+        checkActionName(push, ctx, step.fileName)
+        if (
+          step.timeoutMs !== undefined &&
+          (!Number.isFinite(step.timeoutMs) || step.timeoutMs <= 0)
+        ) {
+          push(`timeoutMs 가 양수가 아니다: ${step.timeoutMs}`)
+        }
+        break
+      }
+      case 'grabPanel': {
+        if (step.objectName.trim() === '') push('grabPanel 에 objectName 이 없다.')
+        if (step.label.trim() === '') {
+          push('grabPanel 에 label 이 없다. 파일 이름이 된다.')
+        } else if (!/^[A-Za-z0-9._가-힣-]+$/.test(step.label)) {
+          push(`grabPanel label 에 파일 이름으로 쓸 수 없는 문자가 있다: "${step.label}"`)
+        }
+        break
+      }
+      case 'expectAction': {
+        if (step.text.trim() === '') {
+          push('expectAction 에 명령 이름(text)이 없다.')
+          break
+        }
+        if (step.present === false) {
+          if (step.enabled !== undefined || step.checked !== undefined) {
+            // 없어야 하는 것의 상태를 함께 기대하면 무엇을 확인하려는지 모호하다.
+            push('expectAction 에 present:false 와 enabled/checked 를 함께 줄 수 없다.')
+          }
+          break
+        }
+        // **있어야 하는 경우에만** 이름을 검증한다 — 없어야 하는 이름이 목록에
+        // 없는 것은 정상이고, 그것을 오타로 거부하면 이 단계를 쓸 수 없다.
+        checkActionName(push, ctx, step.text)
         break
       }
       default: {

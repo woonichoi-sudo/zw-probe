@@ -9,6 +9,7 @@ import {
   MAX_SLEEP_MS,
   describeStep,
   isAction,
+  needsAgent,
   summarizeRun,
   validateScenario,
   wantsChange,
@@ -268,4 +269,131 @@ test('describeStep — expectPanel', () => {
 test('expectPanel 은 동작 단계가 아니다 — 전후 비교를 붙이지 않는다', () => {
   assert.equal(isAction({ do: 'expectPanel', dockId: 'avatar' }), false)
   assert.equal(wantsChange({ do: 'expectPanel', dockId: 'avatar' }), false)
+})
+
+// ── 명령 채널 단계 (M5) ────────────────────────────────────────────────────
+
+/** 실앱에서 실제로 나온 이름들. Import 와 Export 밑에 같은 이름이 있다. */
+const ACTIONS = [
+  'Simulation',
+  'Grading',
+  'Reset layout',
+  'W_PK shirt & Long skirt.zls',
+  'sample.zls',
+  'OBJ',
+]
+
+test('needsAgent — 파이프가 있어야 도는 단계를 가려낸다', () => {
+  // 시작 전에 알아야 한다. 절차 중간에서 파이프가 없는 것을 알면 앱은 이미
+  // 반쯤 조작된 상태다.
+  assert.equal(needsAgent({ do: 'trigger', text: 'X' }), true)
+  assert.equal(needsAgent({ do: 'openRecent', fileName: 'a.zls' }), true)
+  assert.equal(needsAgent({ do: 'grabPanel', objectName: 'p', label: 'l' }), true)
+  assert.equal(needsAgent({ do: 'expectAction', text: 'X' }), true)
+  assert.equal(needsAgent({ do: 'key', shortcut: 'MainUndo' }), false)
+  assert.equal(needsAgent({ do: 'shot', label: 'x' }), false)
+})
+
+test('needsAgent — checkBaseline 은 panel 을 줄 때만 파이프가 필요하다', () => {
+  assert.equal(needsAgent({ do: 'checkBaseline', baseline: 'b' }), false)
+  assert.equal(needsAgent({ do: 'checkBaseline', baseline: 'b', panel: 'dock_x' }), true)
+})
+
+test('isAction — trigger 는 화면을 바꾸는 단계다', () => {
+  // 전후 비교가 붙어야 "불렀는데 아무 일도 안 일어났다" 를 잡는다.
+  assert.equal(isAction({ do: 'trigger', text: 'X' }), true)
+  assert.equal(wantsChange({ do: 'trigger', text: 'X' }), true)
+  assert.equal(wantsChange({ do: 'trigger', text: 'X', expectChange: false }), false)
+  // openRecent 는 자기 완료 신호(문서 이름)가 따로 있으므로 전후 비교를 안 붙인다
+  assert.equal(isAction({ do: 'openRecent', fileName: 'a.zls' }), false)
+})
+
+test('validateScenario — 명령 이름 오타를 시작 전에 잡는다', () => {
+  // 틀린 이름은 무동작이 아니라 거부다. 절차 중간에서 거부되면 앱은 이미
+  // 반쯤 조작된 상태이고 되돌릴 수 없다.
+  const errors = validateScenario(sc([{ do: 'trigger', text: 'Simulaton' }]), {
+    actionTexts: ACTIONS,
+  })
+  assert.equal(errors.length, 1)
+  assert.match(errors[0]!.message, /Simulaton/)
+  assert.match(errors[0]!.message, /agent --actions/)
+})
+
+test('validateScenario — 목록을 못 받았으면 이름 검사를 건너뛴다', () => {
+  // 파이프가 없으면 목록이 없다. 그때 전부 오타로 거부하면 시나리오를 못 쓴다.
+  assert.deepEqual(validateScenario(sc([{ do: 'trigger', text: '아무거나' }])), [])
+})
+
+test('validateScenario — openRecent 의 파일명도 목록으로 검증한다', () => {
+  // 최근 파일은 앱이 관리하므로 목록에 없으면 열 수 없다.
+  const ok = validateScenario(sc([{ do: 'openRecent', fileName: 'sample.zls' }]), {
+    actionTexts: ACTIONS,
+  })
+  assert.deepEqual(ok, [])
+  const bad = validateScenario(sc([{ do: 'openRecent', fileName: 'sampl.zls' }]), {
+    actionTexts: ACTIONS,
+  })
+  assert.equal(bad.length, 1)
+})
+
+test('validateScenario — expectAction present:false 는 이름을 검증하지 않는다', () => {
+  // 없어야 하는 이름이 목록에 없는 것은 정상이다. 그걸 오타로 거부하면
+  // 이 단계를 아예 쓸 수 없다.
+  const errors = validateScenario(
+    sc([{ do: 'expectAction', text: '있으면안되는명령', present: false }]),
+    { actionTexts: ACTIONS },
+  )
+  assert.deepEqual(errors, [])
+})
+
+test('validateScenario — present:false 와 상태 기대를 함께 주면 거부한다', () => {
+  const errors = validateScenario(
+    sc([{ do: 'expectAction', text: 'X', present: false, checked: true }]),
+    {},
+  )
+  assert.equal(errors.length, 1)
+  assert.match(errors[0]!.message, /함께 줄 수 없다/)
+})
+
+test('validateScenario — 빈 이름을 거부한다', () => {
+  const errors = validateScenario(
+    sc([
+      { do: 'trigger', text: '  ' },
+      { do: 'openRecent', fileName: '' },
+      { do: 'grabPanel', objectName: '', label: '' },
+      { do: 'expectAction', text: '' },
+    ]),
+    {},
+  )
+  assert.equal(errors.length, 5, `실제: ${JSON.stringify(errors)}`)
+})
+
+test('validateScenario — grabPanel label 은 파일 이름이 된다', () => {
+  const errors = validateScenario(
+    sc([{ do: 'grabPanel', objectName: 'dock_x', label: 'a/b:c' }]),
+    {},
+  )
+  assert.equal(errors.length, 1)
+  assert.match(errors[0]!.message, /파일 이름으로 쓸 수 없는/)
+})
+
+test('describeStep — 새 단계도 한 줄로 읽힌다', () => {
+  assert.equal(describeStep({ do: 'trigger', text: 'Grading' }), 'trigger "Grading"')
+  assert.equal(
+    describeStep({ do: 'trigger', text: 'OBJ', path: 'File > Import' }),
+    'trigger "OBJ" (경로 "File > Import")',
+  )
+  assert.equal(describeStep({ do: 'openRecent', fileName: 'sample.zls' }), 'openRecent "sample.zls"')
+  assert.equal(
+    describeStep({ do: 'grabPanel', objectName: 'dock_simulation', label: '패널' }),
+    'grabPanel dock_simulation → "패널"',
+  )
+  assert.equal(
+    describeStep({ do: 'expectAction', text: 'Grading', checked: true }),
+    'expectAction "Grading" checked=true',
+  )
+  assert.equal(
+    describeStep({ do: 'checkBaseline', baseline: 'b', panel: 'dock_x' }),
+    'checkBaseline b (패널 dock_x)',
+  )
 })

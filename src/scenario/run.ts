@@ -20,12 +20,15 @@ import { findShortcut } from '../input/shortcut.ts'
 import { loadShortcuts } from '../input/shortcutFile.ts'
 import type { LoadedShortcuts } from '../input/shortcutFile.ts'
 import { activePanel, findOne, readDocumentState } from '../uia/tree.ts'
-import { judgeActivity } from '../win/windowState.ts'
+import { classifyWindows, judgeActivity } from '../win/windowState.ts'
+import { call } from '../agent/pipe.ts'
+import { callableActions, parseActions, parseCandidates } from '../agent/protocol.ts'
 import { TARGET_PROCESS, click, listWindows, sendKey, shot, uiaTree } from '../win/zwwin.ts'
 import type { WindowFilter } from '../win/zwwin.ts'
 import {
   DEFAULT_IDLE_TIMEOUT_MS,
   describeStep,
+  needsAgent,
   summarizeRun,
   validateScenario,
   wantsChange,
@@ -81,6 +84,45 @@ export function listBaselines(dir = BASELINE_DIR): string[] {
     .filter((f) => f.endsWith('.json'))
     .map((f) => f.slice(0, -'.json'.length))
     .sort()
+}
+
+/**
+ * 위젯 하나를 찍어 픽셀과 메타를 돌려준다 (`zwagent` 의 `QWidget::grab()`).
+ *
+ * `capture` 와 같은 모양을 돌려주므로 **비교 코드가 창이든 패널이든 구분하지 않는다.**
+ * 사이드카의 `mode` 만 `grab` 으로 달라진다 — 나중에 "이게 창이었나 패널이었나" 를
+ * 따질 근거다. baseline 이 창인데 실제가 패널이면 `checkBaseline` 이 크기에서 걸러낸다.
+ */
+async function grabWidget(
+  base: string,
+  pid: number,
+  objectName: string,
+): Promise<{ img: Bgra; meta: CaptureMeta; png: string }> {
+  const png = `${base}.png`
+  const raw = `${base}.bgra`
+  mkdirSync(resolve(png, '..'), { recursive: true })
+  const res = await call(pid, { id: 1, op: 'grab', objectName, pngPath: png, rawPath: raw })
+  if (!res.ok) throw new Error(res.error)
+  const width = Number(res.body.width)
+  const height = Number(res.body.height)
+  const meta: CaptureMeta = {
+    format: 'bgra8',
+    width,
+    height,
+    takenAt: new Date().toISOString(),
+    mode: 'grab',
+    window: {
+      title: objectName,
+      class: String(res.body.class ?? ''),
+      pid,
+      fileVersion: '',
+      width,
+      height,
+    },
+  }
+  writeCaptureMeta(base, meta)
+  const loaded = readCapture(base)
+  return { img: loaded.img, meta: loaded.meta, png }
 }
 
 /** 창을 찍어 픽셀과 메타를 돌려준다. 사이드카도 함께 쓴다. */
@@ -185,6 +227,56 @@ function pressShortcut(
 }
 
 /**
+ * 최근 파일 항목이 사는 메뉴 경로. **여기 있는 것이 이 상수의 존재 이유다** —
+ * 시나리오마다 손으로 적으면 오타가 나고, 오타는 "명령이 없다" 로만 보인다.
+ */
+const RECENT_FILES_PATH = 'File > Recent files'
+
+/** 프로젝트 열기 상한. 실측 8초쯤 걸리므로 넉넉히 둔다. */
+const OPEN_TIMEOUT_MS = 60_000
+
+/**
+ * `trigger` 뒤에 화면이 바뀌기를 기다리는 상한.
+ *
+ * **`trigger` 는 큐에 들어간다** — 응답이 와도 아직 실행 전이다. 바로 찍으면
+ * "안 바뀌었다" 로 거짓 실패한다. 오래 걸리는 명령(프로젝트 열기 등)은
+ * `openRecent` 처럼 자기 완료 신호가 있는 단계를 쓴다.
+ */
+const TRIGGER_SETTLE_MS = 5000
+
+/**
+ * 문서 이름이 기대한 것이 될 때까지 기다린다.
+ *
+ * **이것이 "열렸다" 의 신호다.** 진행 다이얼로그가 사라지는 것으로 판정하면 안 된다 —
+ * 여러 개가 이어서 뜨고, 그 사이에 잠깐 idle 로 보이는 구간이 있다 (2026-09-10 실측:
+ * `"Loading..."` 과 `"Loading.."` 이 차례로 떴다). 문서 교체가 마지막에 일어난다.
+ */
+async function waitForDocument(
+  filter: WindowFilter,
+  fileName: string,
+  timeoutMs: number,
+): Promise<{ ok: boolean; reason: string }> {
+  const deadline = Date.now() + timeoutMs
+  let last = '(못 읽음)'
+  while (Date.now() < deadline) {
+    try {
+      const s = readDocumentState(uiaTree({ ...filter, depth: 3 }))
+      last = s.fileName
+      if (s.fileName === fileName) {
+        return { ok: true, reason: `"${fileName}" 이 열렸다 (${Math.round(timeoutMs)}ms 안에).` }
+      }
+    } catch {
+      /* 여는 동안 UIA 가 잠깐 실패할 수 있다. 상한까지 다시 본다 */
+    }
+    await sleep(300)
+  }
+  return {
+    ok: false,
+    reason: `${timeoutMs}ms 안에 문서가 "${fileName}" 이 되지 않았다. 지금은 "${last}" 다.`,
+  }
+}
+
+/**
  * 시나리오를 실행한다.
  *
  * 순서: 검증 → (실패하면 아무것도 실행하지 않고 반환) → 단계별 실행 → 보고서 저장.
@@ -210,14 +302,48 @@ export async function runScenario(sc: Scenario, opts: RunOptions = {}): Promise<
     shortcutFile = null
   }
 
+  // 명령 채널이 필요한 단계가 있으면 **시작 전에** 연결을 확인한다. 절차 중간에서
+  // 파이프가 없는 것을 알면 앱은 이미 반쯤 조작된 상태이고, 그건 되돌릴 수 없다
+  // (steps.ts 머리말 ①). 확인하는 김에 명령 목록을 받아 이름 오타도 함께 잡는다.
+  const agentSteps = sc.steps.filter(needsAgent)
+  let pid = 0
+  let actionTexts: string[] | undefined
+  const agentProblems: string[] = []
+  if (agentSteps.length > 0) {
+    const main = classifyWindows(listWindows(filter)).main
+    if (main === null) {
+      agentProblems.push(
+        `명령 채널이 필요한 단계가 ${agentSteps.length}개인데 대상 창을 찾지 못했다.`,
+      )
+    } else {
+      pid = main.pid
+      const res = await call(pid, { id: 0, op: 'actions' }, { timeoutMs: 10000 })
+      if (!res.ok) {
+        agentProblems.push(
+          `명령 채널이 필요한 단계가 ${agentSteps.length}개인데 파이프가 안 열린다.\n` +
+            `    ${res.error}\n` +
+            '    앱을 `-style zwagent` 로 띄웠는지 확인한다 — `zwprobe agent` 의 "채널" 줄이 말해준다.',
+        )
+      } else {
+        // 목록에는 구분선과 서브메뉴 항목도 들어 있다. **부를 수 있는 것만** 이름
+        // 검사에 넘긴다 — 서브메뉴 이름으로 trigger 하면 메뉴만 열리고 명령이 아니다.
+        actionTexts = callableActions(parseActions(res.body)).map((a) => a.text)
+      }
+    }
+  }
+
   const errors = validateScenario(sc, {
     ...(shortcutNames !== undefined ? { shortcutNames } : {}),
     baselineNames: listBaselines(baselineDir),
+    ...(actionTexts !== undefined ? { actionTexts } : {}),
   })
-  if (errors.length > 0) {
-    const rejected = errors.map((e) =>
-      e.stepIndex < 0 ? `시나리오: ${e.message}` : `${e.stepIndex + 1}번째 단계: ${e.message}`,
-    )
+  if (errors.length > 0 || agentProblems.length > 0) {
+    const rejected = [
+      ...agentProblems,
+      ...errors.map((e) =>
+        e.stepIndex < 0 ? `시나리오: ${e.message}` : `${e.stepIndex + 1}번째 단계: ${e.message}`,
+      ),
+    ]
     return { outDir, results: [], summary: summarizeRun(sc, []), rejected }
   }
 
@@ -334,7 +460,13 @@ export async function runScenario(sc: Scenario, opts: RunOptions = {}): Promise<
           break
         }
         case 'checkBaseline': {
-          const c = capture(join(outDir, `${String(i + 1).padStart(2, '0')}-actual`), filter)
+          const actualBase = join(outDir, `${String(i + 1).padStart(2, '0')}-actual`)
+          // `panel` 을 주면 창이 아니라 그 위젯만 찍는다. 나머지 비교 로직은 같다 —
+          // 두 벌로 나누면 baseline 호환 검사와 무시 영역 처리가 갈라진다.
+          const c =
+            step.panel !== undefined
+              ? await grabWidget(actualBase, pid, step.panel)
+              : capture(actualBase, filter)
           artifacts.push(c.png)
           const base = readCapture(join(baselineDir, step.baseline))
           const compat = checkBaseline(base.meta, c.meta)
@@ -400,6 +532,110 @@ export async function runScenario(sc: Scenario, opts: RunOptions = {}): Promise<
           }
           break
         }
+        case 'trigger': {
+          const res = await call(pid, {
+            id: i + 1,
+            op: 'trigger',
+            text: step.text,
+            ...(step.path !== undefined ? { path: step.path } : {}),
+          })
+          if (!res.ok) {
+            outcome = 'fail'
+            // 이름이 겹쳐 거부됐으면 **무엇으로 좁혀야 하는지**가 답이다.
+            const cands = res.body ? parseCandidates(res.body) : []
+            reason =
+              res.error +
+              (cands.length > 0
+                ? ` 후보: ${cands.map((c) => `path:"${c.path}"`).join(', ')}`
+                : '')
+            break
+          }
+          reason = `"${step.text}" 을 큐에 넣었다.`
+          break
+        }
+        case 'openRecent': {
+          const res = await call(pid, {
+            id: i + 1,
+            op: 'trigger',
+            text: step.fileName,
+            path: RECENT_FILES_PATH,
+          })
+          if (!res.ok) {
+            outcome = 'fail'
+            reason = res.error
+            break
+          }
+          // **문서 이름이 바뀔 때까지 기다린다.** 여는 동안 진행 다이얼로그가 8초쯤
+          // 떠 있고 그 사이 `doc` 은 아직 옛 파일명을 보고한다 (2026-09-10 실측).
+          // 화면 변화나 idle 로 판정하면 너무 일찍 통과한다.
+          const w = await waitForDocument(filter, step.fileName, step.timeoutMs ?? OPEN_TIMEOUT_MS)
+          outcome = w.ok ? 'pass' : 'fail'
+          reason = w.reason
+          break
+        }
+        case 'grabPanel': {
+          const c = await grabWidget(
+            join(outDir, `${String(i + 1).padStart(2, '0')}-${slug(step.label)}`),
+            pid,
+            step.objectName,
+          )
+          artifacts.push(c.png)
+          reason = `${step.objectName} ${c.meta.width}x${c.meta.height} 를 ${c.png} 에 남겼다.`
+          break
+        }
+        case 'expectAction': {
+          const res = await call(pid, { id: i + 1, op: 'actions' })
+          if (!res.ok) {
+            outcome = 'fail'
+            reason = res.error
+            break
+          }
+          const all = parseActions(res.body)
+          const hits = all.filter(
+            (a) => a.text === step.text && (step.path === undefined || a.path === step.path),
+          )
+          if (step.present === false) {
+            outcome = hits.length === 0 ? 'pass' : 'fail'
+            reason =
+              hits.length === 0
+                ? `"${step.text}" 이 없다 — 기대한 대로다.`
+                : `"${step.text}" 이 ${hits.length}개 있다. 없어야 한다.`
+            break
+          }
+          if (hits.length === 0) {
+            outcome = 'fail'
+            reason = `"${step.text}" 인 명령이 없다.`
+            break
+          }
+          if (hits.length > 1) {
+            // 여럿이면 어느 것의 상태를 본 것인지 알 수 없다. **조용히 첫 번째를
+            // 고르면 다른 명령의 상태로 통과한다.**
+            outcome = 'fail'
+            reason =
+              `"${step.text}" 이 ${hits.length}개다. path 로 좁힌다: ` +
+              hits.map((h) => `"${h.path}"`).join(', ')
+            break
+          }
+          const a = hits[0]!
+          const bad: string[] = []
+          if (step.enabled !== undefined && a.enabled !== step.enabled) {
+            bad.push(`enabled 가 ${a.enabled} 인데 ${step.enabled} 를 기대했다`)
+          }
+          if (step.checked !== undefined) {
+            if (!a.checkable) {
+              bad.push('checkable 이 아닌 명령의 checked 를 기대했다')
+            } else if (a.checked !== step.checked) {
+              bad.push(`checked 가 ${a.checked} 인데 ${step.checked} 를 기대했다`)
+            }
+          }
+          outcome = bad.length === 0 ? 'pass' : 'fail'
+          reason =
+            bad.length === 0
+              ? `"${a.text}"${a.path ? ` (경로 "${a.path}")` : ''} enabled=${a.enabled}` +
+                `${a.checkable ? ` checked=${a.checked}` : ''}`
+              : bad.join(', ')
+          break
+        }
       }
     } catch (err) {
       // I/O 실패(zwwin.exe 가 창을 못 찾음 등)는 단계 실패다. 던져서 러너를
@@ -413,13 +649,24 @@ export async function runScenario(sc: Scenario, opts: RunOptions = {}): Promise<
     if (outcome === 'pass' && before !== null) {
       try {
         const afterBase = join(outDir, `${String(i + 1).padStart(2, '0')}-after`)
-        const after = capture(afterBase, filter)
+        // **`trigger` 는 큐에 들어간다.** 응답이 와도 아직 실행 전일 수 있으므로
+        // 바로 찍으면 "안 바뀌었다" 로 거짓 실패한다. 바뀔 때까지 상한을 두고 다시
+        // 찍는다. `key`·`click` 은 동기적으로 전달되므로 이 대기가 필요 없다 —
+        // 실앱 10단계 시나리오가 즉시 캡처로 10/10 통과했다(2026-09-09).
+        const settleMs = step.do === 'trigger' ? TRIGGER_SETTLE_MS : 0
+        const deadline = Date.now() + settleMs
+        let after = capture(afterBase, filter)
+        let v = judgeChanged(diff(before.img, after.img))
+        while (!v.changed && Date.now() < deadline) {
+          await sleep(200)
+          after = capture(afterBase, filter)
+          v = judgeChanged(diff(before.img, after.img))
+        }
         artifacts.push(after.png)
         transient.push(afterBase)
-        const v = judgeChanged(diff(before.img, after.img))
         if (!v.changed) {
           outcome = 'fail'
-          reason = `${reason} 그런데 ${v.reason}`
+          reason = `${reason} 그런데 ${settleMs > 0 ? `${settleMs}ms 를 기다려도 ` : ''}${v.reason}`
         } else {
           reason = `${reason} ${v.reason}`
         }
