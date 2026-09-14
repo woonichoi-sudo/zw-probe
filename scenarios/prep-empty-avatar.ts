@@ -40,10 +40,16 @@ export const prepSteps: Step[] = [
   // 만들려는 단계가 사전 조건을 깨뜨린다.
   { do: 'setAction', text: 'Avatar', path: 'Window > UI panels', checked: true },
 
-  // **만들어졌는지 확인한다.** 여기가 이 시나리오에서 유일하게 결과를 모르는 곳이다 —
-  // `setAction` 이 dock 을 **열기만** 하는지 **앞 탭으로 세우기까지** 하는지 확인되지
-  // 않았다. 실패하면 탭을 앞으로 세우는 별도 수단이 필요하다는 뜻이고, 그 답이
-  // 다음 작업의 입력이다.
+  // **`setAction` 은 dock 을 열기만 하고 앞 탭으로 세우지 않는다** (2026-09-15 실측).
+  // 체크 상태는 "탭이 있다" 이지 "활성이다" 가 아니다 — Avatar 가 이미 켬이라 부르지
+  // 않았고 활성 탭은 Simulation 그대로였다. 그래서 탭 라벨을 눌러 세운다.
+  //
+  // `id` 로 탭 라벨에 좁힌다. 라벨 폭은 선택 상태에 따라 변하므로(1539→1516) 좌표가
+  // 아니라 이름이다. **`expectChange: false`** — 이미 활성이면 화면이 안 바뀌는 게
+  // 정상이다. 됐는지는 바로 아래 `expectPanel` 이 본다.
+  { do: 'clickName', name: 'Avatar', id: 'dockWidgetTabLabel', expectChange: false },
+
+  // **만들어졌는지 확인한다.** 탭 이름은 늘 다 있으므로 존재가 아니라 활성 dock 을 본다.
   { do: 'expectPanel', dockId: 'avatar', tabName: 'Avatar' },
 ]
 

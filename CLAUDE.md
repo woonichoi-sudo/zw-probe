@@ -69,7 +69,7 @@ bash tools/wait-zweave.sh [상한초]              위젯 트리 정착까지 �
 - [x] **M3 · 시나리오 러너 + 픽셀 baseline** — 절차를 TS로 기술해 순차 실행(`run`), 실패 지점에서 캡처+UIA 트리를 같은 시각에 남김, baseline 과 픽셀 diff(`baseline`·`diff`). 2026-09-09. **실앱 10단계 시나리오 10/10 통과.** 첫 실행이 시나리오 사전 조건의 허점을 잡았다 — 경과는 WORKLOG
 - [x] **M4 · 분기점** — Qt 픽스처 앱(`fixtures/qtapp`) + hello 플러그인(`tools/zwagent`). 2026-09-09. **ABI 불확실성 소각: 로드되고, Qt 5.15.6 컴파일·런타임이 일치하고, 살아 있는 위젯 트리를 읽는다.** 하네스도 확보됐다 — 픽스처가 Qt 모달 동작(열린 항목)까지 답했다. **실앱 확인 완료** — 위젯 5199개를 읽었고, 그 과정에서 픽스처가 재현할 수 없던 버그(스플래시) 하나를 잡았다
 - [x] **M5 · `zwagent.dll` 최소 기능** — named pipe 명령 채널 + 온디맨드 위젯 트리 + `QAction::trigger()` + `QWidget::grab()`. 2026-09-10. **실앱 검증 완료** — 파이프가 6MB 트리를 나르고, 명령 120개가 이름으로 불리고, `trigger` 로 **파일 다이얼로그 없이 프로젝트를 열었다**
-- [ ] **M6 · 파일 다이얼로그 자동 처리 + wait-for-idle** — **절반 왔다.** 시나리오가 명령 채널을 쓴다(`trigger`·`openRecent`·`grabPanel`·`setAction`·`expectAction`, 2026-09-10, 픽스처 검증). `File > Recent files` 로 여는 것은 다이얼로그를 안 거친다. 남는 것은 **임의 경로 열기·저장**과 wait-for-idle 이다
+- [ ] **M6 · 파일 다이얼로그 자동 처리 + wait-for-idle** — **절반 왔다.** 시나리오가 명령 채널을 쓴다(`trigger`·`openRecent`·`grabPanel`·`setAction`·`expectAction`, 2026-09-10, 픽스처 검증). **사전 조건을 스스로 만드는 시나리오가 실앱 13/13** (2026-09-15). `File > Recent files` 로 여는 것은 다이얼로그를 안 거친다. 남는 것은 **임의 경로 열기·저장**과 wait-for-idle 이다
 - [ ] **M7 · OBJ 판정** — 의상 메쉬 바운딩 박스·최저 Y를 아바타와 비교. 흘러내림 자동 단정
 
 **M1~M5 가 끝났다.** M1~M3 은 외부에서만 돌고 리스크 0이며, 여기까지가 투자 대비 효과의 대부분이다. **M4 의 유일한 기술적 불확실성(`zwagent.dll` 로드)이 실앱에서 소각됐고, M5 에서 프로세스 안 읽기와 쓰기가 다 섰다** — 남은 M6~M7 은 설계 문제이지 가능성 문제가 아니다.
@@ -137,7 +137,9 @@ Bash(git --git-dir=*)  Bash(git --work-tree=*)  Bash(git push:*)
 
 2026-09-10: **M1~M5 완료. 시나리오가 명령 채널을 쓴다.** 테스트 272개 통과, 실앱 시나리오 10/10, 작업 트리 깨끗.
 
-**앱은 꺼져 있다** (2026-09-14 확인). 빌드 산출물 4개가 다 있고 앱이 꺼져 있으므로 빌드 체인도 막힘없이 돈다. 바로 `tools/launch-zweave.sh` 로 시작하면 된다.
+2026-09-15: **시나리오가 사전 조건부터 판정까지 혼자 돈다 — 실앱 13/13.** 사람이 앱을 준비하지 않는다. 테스트 272개 통과, `skipped 0`.
+
+**앱은 떠 있다** (2026-09-15 세션 끝 확인). `-style zwagent` 로 띄웠고 파이프가 열려 있다. 문서는 `empty-scene.zls` 저장 상태, Avatar 탭 활성, 시작 다이얼로그는 닫았다. **`zwagent.dll` 을 다시 빌드하려면 먼저 닫는다**(아래 0단계). DLL 을 안 고칠 것이면 그대로 시나리오를 돌리면 된다.
 
 **띄우면 `Untitled.zls` 가 깨끗한 상태로 열린다** — 이 앱은 마지막 문서를 복원하지 않는다(이번 세션의 재시작 네 번이 모두 그랬다). 그래서 아래 "①에서 막힐 수 있는 것"(dirty 문서 저장 확인 모달)을 **새로 띄운 경우에는 안 만난다.**
 
@@ -163,8 +165,8 @@ Bash(git --git-dir=*)  Bash(git --work-tree=*)  Bash(git push:*)
 | `click <x> <y>` | 좌표를 누른다. `shot` 의 PNG 좌표와 같다 | ✅ (다이얼로그 닫기) |
 | `click --name X` | UIA 로 찾아 한가운데를 누른다 | ✅ |
 | `shortcuts` | 단축키 매핑 + 충돌 | ✅ |
-| `run <파일.ts>` | 시나리오 실행 (0=통과 2=실패 1=시작 전 거부) | ✅ 10/10 |
-| `run` 채널 단계 | `trigger`·`openRecent`·`grabPanel`·`setAction`·`expectAction`·`checkBaseline --panel` | ⬜ 픽스처만 |
+| `run <파일.ts>` | 시나리오 실행 (0=통과 2=실패 1=시작 전 거부) | ✅ 10/10 · 자동 준비 13/13 |
+| `run` 채널 단계 | `trigger`·`openRecent`·`grabPanel`·`setAction`·`expectAction`·`checkBaseline --panel` | ✅ `openRecent`·`setAction` / ⬜ 나머지는 픽스처만 |
 | `baseline [이름]` | 지금 화면을 정답으로 저장. 이름 없으면 목록 | ✅ |
 | `diff <a> <b>` | 두 캡처 픽셀 비교 (0=같다 2=다르다) | ✅ |
 | `agent` | `zwagent.dll` 의 hello 를 읽어 로드·ABI·위젯 트리 보고 (0=믿을 수 있는 트리 3=과도 상태) | ✅ 5199개 |
@@ -193,6 +195,8 @@ Bash(git --git-dir=*)  Bash(git --work-tree=*)  Bash(git push:*)
 **단계 다섯이 파이프를 쓴다** — `trigger`·`openRecent`·`grabPanel`·`setAction`·`expectAction`, 그리고 `checkBaseline` 에 `panel` 을 준 경우. 러너가 **시작 전에** 파이프를 확인하고, 겸사겸사 명령 목록을 받아 **이름 오타를 잡는다.** 파이프가 없거나 이름이 틀리면 아무 단계도 실행하지 않고 거부한다.
 
 **토글은 `trigger` 로 사전 조건을 만들 수 없다. `setAction` 을 쓴다.** `Window > UI panels > Avatar` 를 무턱대고 부르면 **이미 켜져 있을 때 꺼진다** — 사전 조건을 만들려는 단계가 사전 조건을 깨뜨린다. `setAction` 은 지금 상태를 읽고 다를 때만 부르고, 같으면 "부르지 않았다" 를 보고한다.
+
+**`setAction` 이 켜는 것은 dock 이지 활성 탭이 아니다** (2026-09-15 실측). `Window > UI panels > Avatar` 의 체크는 "탭이 있다" 는 뜻이라 탭 여섯 개가 늘 켬이다 — 부르지도 않고 활성 탭은 그대로 남는다. **앞 탭으로 세우려면 탭 라벨을 누른다:** `{ do: 'clickName', name: 'Avatar', id: 'dockWidgetTabLabel', expectChange: false }`. 라벨 폭이 선택 상태에 따라 변하므로(같은 라벨 한가운데가 1559↔1537) 좌표가 아니라 이름이고, 이미 활성이면 화면이 안 바뀌는 게 정상이므로 `expectChange: false` 다. 됐는지는 뒤의 `expectPanel` 이 본다.
 
 **`openRecent` 는 화면이 아니라 문서 이름으로 완료를 본다.** 여는 동안 진행 다이얼로그가 여러 개 이어서 뜨고 그 사이에 잠깐 idle 로 보이는 구간이 있으며, 그때 `doc` 은 아직 옛 파일명을 보고한다. 화면이나 idle 로 판정하면 너무 일찍 통과한다.
 
@@ -256,7 +260,7 @@ MSYS_NO_PATHCONV=1 cmd /c "$(cygpath -w "$경로/launch.bat")"
 
 ### 다음 세션 시작 지점
 
-M1~M5가 **실앱에서** 끝났고 M6가 절반 왔다. **막힌 것은 없다.** 다음 작업은 둘 중에 고르는 문제다.
+M1~M5가 **실앱에서** 끝났고 M6가 절반 왔다. **막힌 것은 없다.** A(자동 준비 시나리오의 실앱 검증)는 2026-09-15 에 끝났다 — **다음은 B 다.** 재현 절차가 없으면 아래 "B 가 없을 때" 를 한다.
 
 **0. 먼저 빌드하고 테스트한다.** 위 "구성요소"의 네 줄 + `node --test`. `skipped 0`을 확인한다 — 빌드가 없으면 통합 테스트가 조용히 건너뛴다. 기준값: **테스트 272개 통과, `skipped 0`, 작업 트리 깨끗.** (커밋 수는 문서를 고칠 때마다 늘어나므로 기준으로 쓰지 않는다.)
 
@@ -269,35 +273,26 @@ bash tools/zwwin/build.sh && bash fixtures/winapp/build.sh \
 
 ---
 
-#### A. 스스로 준비하는 시나리오를 실앱에서 한 바퀴 돌린다 — **명령 네 줄이면 된다**
+#### A. ~~스스로 준비하는 시나리오를 실앱에서 한 바퀴 돌린다~~ — **끝났다** (2026-09-15, 13/13)
 
-시나리오 파일과 실행 스크립트가 다 있고 **이름·경로는 실앱 목록으로 검증돼 있다**(구조 오류 0개). 오타로 막히지는 않는다.
-
-**한 번 돌려봤고 2단계에서 막혔다** (2026-09-14). 원인과 대처는 아래 "①에서 막힐 수 있는 것" 에 있다 — 읽고 시작하면 같은 자리에서 안 멈춘다.
+① 준비 6/6 → ② baseline `자동-빈씬-아바타탭` 을 직접 보고 떠서 커밋 → ③ 전체 13/13. **다시 돌리는 절차** (baseline 이 이제 있으므로 ②는 없다):
 
 ```
-bash tools/launch-zweave.sh && bash tools/wait-zweave.sh    # 띄우고 정착까지 (90초쯤)
-node src/cli.ts run scenarios/prep-empty-avatar.ts          # ① 사전 조건을 스스로 만든다
-node src/cli.ts baseline 자동-빈씬-아바타탭                    # ② 그 상태를 정답으로 뜬다
-node src/cli.ts run scenarios/panel-toggle-auto.ts          # ③ 전체를 돌린다
+bash tools/launch-zweave.sh && bash tools/wait-zweave.sh    # 띄우고 정착까지 (90~110초)
+node src/cli.ts state                                       # 시작 다이얼로그가 있으면 busy(3)
+node src/cli.ts click 585 15 --title "Startup Splash"       # 있으면 닫는다
+node src/cli.ts run scenarios/panel-toggle-auto.ts          # 준비부터 판정까지
 ```
 
-**①을 먼저 하는 이유**는 ②의 baseline 이 **준비된 상태에서** 떠야 하기 때문이다. ③을 먼저 부르면 baseline 이 없어서 거부되고 아무 단계도 안 돈다 — 그게 정상 동작이다.
+**새로 띄우면 시작 다이얼로그를 먼저 닫는다.** 옛 네 줄 절차에 이게 빠져 있었다 — 안 닫으면 첫 `waitIdle` 이 busy 로 막힌다. 2026-09-15 에도 602x531 로 떴고 `585,15` 가 그대로 맞았다.
 
-**①에서 막힐 수 있는 것 — 열려 있는 문서가 dirty 면 저장 확인 모달이 뜬다.**
+**돌려서 알게 된 것** — `setAction` 은 dock 을 열기만 하고 앞 탭으로 세우지 않는다. 준비 단계에 탭 라벨 클릭을 더했다. 위 "시나리오에서 명령 채널을 쓸 때" 참조, 경과는 WORKLOG.
 
-`openRecent` 는 `File > Recent files` 를 부르는데, **앱은 현재 문서에 변경이 있으면 먼저 `"Do you want to save?"` 를 띄운다**(`zwQtMessageBoxDialog` 302x161, Yes/No/Cancel). 그러면 문서 이름이 안 바뀌므로 `openRecent` 가 상한(60초)까지 기다리다 실패한다. 2026-09-14 에 실제로 그렇게 멈췄다.
+**dirty 문서 앞에서는 여전히 막힌다** — 앱이 `openRecent` 보다 `"Do you want to save?"`(`zwQtMessageBoxDialog` 302x161)를 먼저 띄우고, `openRecent` 가 60초 상한까지 기다리다 실패한다(2026-09-14). **시작 전에 `node src/cli.ts doc` 을 본다**(종료 코드 3 = dirty). 저장할지 버릴지는 사용자 판단이다. 막힌 뒤라면 `click --name "No"` — `judgeClick` 이 "의심"(2)을 내도 실제로는 눌린다(열린 항목). 새로 띄운 앱은 `Untitled.zls` 가 깨끗하므로 안 만난다.
 
-- **시작 전에 `node src/cli.ts doc` 으로 확인한다.** 종료 코드 3이면 dirty 다
-- dirty 면 **저장할지 버릴지는 사용자 판단이다.** 앱을 사람과 공유하므로 임의로 고르지 않는다
-- 막힌 뒤에 알아채면 `node src/cli.ts state` 에 모달이 보이고, 버튼은 `click --name "No"` 로 누른다. **`judgeClick` 이 "의심"(종료 코드 2)을 내지만 실제로는 눌린다** — 소유 다이얼로그라서 그렇다(열린 항목)
-- 앱을 새로 띄우면 `Untitled.zls` 가 깨끗한 상태로 열리므로 이 문제가 없다. **`launch-zweave.sh` 로 시작하는 경로가 안전하다**
+**앱 상태를 사용자에게 알린다.** 문서를 `empty-scene.zls` 로 바꾸고 활성 탭을 Avatar 로 세운다.
 
-**볼 것은 ①의 마지막 단계다.** `expectPanel dock=avatar` 가 이 절차에서 유일하게 결과를 모르는 곳이다 — `setAction 'Avatar' checked:true` 가 dock 을 **열기만** 하는지 **앞 탭으로 세우기까지** 하는지 확인되지 않았다. 실패하면 "탭을 앞으로 세우는 수단이 따로 필요하다" 는 뜻이고, **그 답이 다음 작업의 입력이다.** `Window > Reset layout`(Ctrl+L)이 후보지만 사용자의 레이아웃을 바꾸므로 확인을 받고 쓴다.
-
-**앱 상태를 사용자에게 알린다.** 이 절차는 문서를 `empty-scene.zls` 로 바꾸고 패널 배치를 건드린다. 되돌리기 어려운 것은 아니지만 앱은 사람과 공유한다.
-
-**[scenarios/panel-toggle.ts](scenarios/panel-toggle.ts)(원본)는 지우지 않았다.** 실앱 10/10 이 확인된 것이고, 검증된 것을 검증 안 된 것으로 덮어쓰지 않는다. `panel-toggle-auto` 가 통과하면 그때 원본을 정리할지 정한다.
+**[scenarios/panel-toggle.ts](scenarios/panel-toggle.ts)(원본)는 이제 대체됐다.** 자동판이 같은 시험을 사람 준비 없이 통과했다. 정리할 때 원본이 쓰는 baseline 과 함께 지운다.
 
 #### B. 실제 버그 하나를 시나리오로 적어 돌린다 — **사용자가 재현 절차를 줘야 한다**
 
@@ -305,9 +300,11 @@ node src/cli.ts run scenarios/panel-toggle-auto.ts          # ③ 전체를 돌�
 
 지금 있는 시나리오([scenarios/panel-toggle.ts](scenarios/panel-toggle.ts))는 도구를 검증하려고 쓴 것이고 실제 버그를 겨냥하지 않는다. 실제 버그를 적어 돌려보면 **부족한 단계 타입이 드러나고 그게 M5 설계의 입력이다.**
 
-절차를 받으면 시나리오로 옮긴다. 쓸 수 있는 단계는 [src/scenario/steps.ts](src/scenario/steps.ts)의 `Step` 유니온에 다 있다 — `key`·`click`·`clickName`·`waitIdle`·`sleep`·`shot`·`checkBaseline`·`expectDoc`·`expectElement`·`expectPanel`.
+절차를 받으면 시나리오로 옮긴다. 쓸 수 있는 단계는 [src/scenario/steps.ts](src/scenario/steps.ts)의 `Step` 유니온에 다 있다 — 외부 `key`·`click`·`clickName`·`waitIdle`·`sleep`·`shot`·`checkBaseline`·`expectDoc`·`expectElement`·`expectPanel`, 채널 `trigger`·`openRecent`·`setAction`·`expectAction`·`grabPanel`. **사전 조건은 [scenarios/prep-empty-avatar.ts](scenarios/prep-empty-avatar.ts) 처럼 시나리오가 스스로 만든다.**
 
-**A 와 B 중 어느 쪽인가.** **재현 절차가 있으면 B 다.** A 는 코드가 이미 있고 실앱 검증만 남은 것이라 언제 해도 되지만, B 는 사용자 입력이 있어야만 할 수 있고 **다음에 무엇을 만들지를 정한다.** 절차가 없으면 A 를 한다 — 앱 재시작과 baseline 새로 뜨기가 필요하므로 사용자에게 알리고 시작한다.
+#### B 가 없을 때
+
+재현 절차 없이 할 수 있는 일은 아래 "열린 항목" 에 있다. **다이얼로그 판별 표본 늘리기**가 가장 싸다 — 진행/입력 대기를 가르는 규칙이 표본 둘에 서 있고, `Development > MessageDialog samples` 로 불러낼 수 있다. 그 다음이 **`judgeClick` 의 소유 다이얼로그 판정**이다. 둘 다 앱을 건드리므로 시작 전에 알린다.
 
 ---
 
@@ -380,7 +377,8 @@ Qt 모달 동작은 더 부탁할 필요가 없다 — **Qt 픽스처가 답했�
   - **`state` 는 둘 다 busy 로만 본다.** 둘을 가르려면 UIA 트리를 한 번 더 봐야 한다 — **버튼이 있으면 사람을 기다리는 것이고, 없으면 기다리면 사라진다.** 이 규칙은 아직 두 표본으로만 세운 것이라 `state` 에 넣지 않았다
   - 남은 것: 다른 종류의 다이얼로그를 더 봐서 규칙이 버티는지 확인. `Development > MessageDialog samples`·`ZLSErrorDialog` 로 불러낼 수 있다
 - **`judgeClick` 이 소유 다이얼로그 안의 버튼을 "의심" 으로 본다** — 누른 자리의 최상위 창이 대상 창과 다르다고 판단하기 때문인데, **다이얼로그가 거기 있는 것이 정상이다.** 2026-09-14 에 `click --name "No"` 가 종료 코드 2를 내고도 실제로는 정확히 눌렸다. 대상 창이 **소유한** 창이면 정상으로 봐야 한다 — 지금은 사람이 결과를 보고 판단해야 한다
-- **시작 다이얼로그를 러너가 스스로 닫아야 하는가** — 앱을 새로 띄우면 `zwQtStartupSplashDialog` 가 떠서 시나리오가 거부된다(위 참조). **닫는 방법은 검증됐다** (`click 585 15 --title "Startup Splash"`, 2026-09-09 실앱). 남은 것은 정책이다: 러너가 매번 자동으로 닫을 것인가, 아니면 사용자가 "Don't show it again" 을 켜서 항목을 없앨 것인가. 자동으로 닫게 하려면 **좌표가 고정이라는 전제**가 붙는데 창 크기가 배율에 흔들릴 수 있어 확인이 필요하다
+- **`agent` 의 기본 hello 경로가 실앱 것이 아니다** — `launch-zweave.sh` 는 `runs/zwagent-hello.json` 에 쓰는데, `agent` 는 `--hello` 가 없으면 `%TEMP%/zwagent-hello.json`([src/cli.ts:659](src/cli.ts#L659))을 읽어 **픽스처가 남긴 낡은 파일**을 본다. 2026-09-15 에 `agent --find`·`--actions` 가 끝난 픽스처 pid 를 보고했다. CLI 가 "끝난 프로세스의 것" 이라고 경고하므로 조용히 틀리지는 않고, 시나리오 러너는 영향이 없었다. 지금은 `--hello runs/zwagent-hello.json` 을 붙인다
+- **시작 다이얼로그를 러너가 스스로 닫아야 하는가** — 앱을 새로 띄우면 `zwQtStartupSplashDialog` 가 떠서 시나리오가 거부된다(위 참조). **닫는 방법은 검증됐다** (`click 585 15 --title "Startup Splash"`, 2026-09-09·2026-09-15 실앱 — 두 번 다 602x531, 같은 좌표). 남은 것은 정책이다: 러너가 매번 자동으로 닫을 것인가, 아니면 사용자가 "Don't show it again" 을 켜서 항목을 없앨 것인가. 자동으로 닫게 하려면 **좌표가 고정이라는 전제**가 붙는데 창 크기가 배율에 흔들릴 수 있어 확인이 필요하다
 
 
 닫힌 항목 (전부 2026-09-09): 로그 파일 경로·단축키 목록(설계문서 §3.6). 창 제목의 파일명·dirty — **없다**, Windows 에서 불가. **파일명·dirty 를 UIA 로 읽을 수 있는가 — 읽힌다** (`zwprobe doc`, 실앱 확인). **UIA 가 쓸만한 트리를 주는가 — 준다**, Raw view 로 152노드. **Qt 의 모달이 소유자를 비활성화하는가 — 한다**, `enabled=false` + `WS_DISABLED` (Qt 픽스처 실측). **Qt 스타일 플러그인으로 프로세스 안에 들어갈 수 있는가 — 된다**, 위젯 트리까지 읽힌다 (M4). **실앱에서 `zwagent.dll` 이 로드되는가 — 된다**, 위젯 5199개를 읽었고 외관도 안 바뀐다 (실앱 실측).
