@@ -137,7 +137,11 @@ Bash(git --git-dir=*)  Bash(git --work-tree=*)  Bash(git push:*)
 
 2026-09-10: **M1~M5 완료. 시나리오가 명령 채널을 쓴다.** 테스트 272개 통과, 실앱 시나리오 10/10, 작업 트리 깨끗.
 
-**앱은 지금 플러그인을 얹고 떠 있고 `W_PK shirt & Long skirt.zls` 가 dirty 상태로 열려 있다** (2026-09-10 세션이 남긴 것). 다음 세션의 첫 절차가 문서를 `empty-scene.zls` 로 바꾸므로 그대로 진행하면 된다 — 사용자에게 알리고 시작한다.
+**앱은 꺼져 있다** (2026-09-14 확인). 빌드 산출물 4개가 다 있고 앱이 꺼져 있으므로 빌드 체인도 막힘없이 돈다. 바로 `tools/launch-zweave.sh` 로 시작하면 된다.
+
+**띄우면 `Untitled.zls` 가 깨끗한 상태로 열린다** — 이 앱은 마지막 문서를 복원하지 않는다(이번 세션의 재시작 네 번이 모두 그랬다). 그래서 아래 "①에서 막힐 수 있는 것"(dirty 문서 저장 확인 모달)을 **새로 띄운 경우에는 안 만난다.**
+
+> **이 줄은 세션이 끝날 때 실제로 확인하고 갱신한다.** 2026-09-10 에 "앱이 떠 있고 다른 문서가 dirty 다" 라고 적어두고 그 뒤에 상태를 바꿔놓고는 고치지 않았다 — **정본이 사실과 다르면 다음 세션이 틀린 전제로 시작한다.**
 
 **M4가 실앱에서 닫혔다** — `zwagent.dll`이 `-style zwagent`로 로드되고, Qt 5.15.6 컴파일·런타임이 일치하고, **위젯 5199개를 objectName·클래스·geometry까지 읽는다.** 현 설계의 유일한 기술적 불확실성이 소각됐다. `QT_PLUGIN_PATH`로 가리켰으므로 대상 앱 리포·배포 폴더에 아무것도 두지 않았다.
 
@@ -252,7 +256,7 @@ MSYS_NO_PATHCONV=1 cmd /c "$(cygpath -w "$경로/launch.bat")"
 
 ### 다음 세션 시작 지점
 
-M1~M4가 **실앱에서** 끝났고 **막힌 것은 없다.** 다음 작업은 둘 중에 고르는 문제다.
+M1~M5가 **실앱에서** 끝났고 M6가 절반 왔다. **막힌 것은 없다.** 다음 작업은 둘 중에 고르는 문제다.
 
 **0. 먼저 빌드하고 테스트한다.** 위 "구성요소"의 네 줄 + `node --test`. `skipped 0`을 확인한다 — 빌드가 없으면 통합 테스트가 조용히 건너뛴다. 기준값: **테스트 272개 통과, `skipped 0`, 작업 트리 깨끗.** (커밋 수는 문서를 고칠 때마다 늘어나므로 기준으로 쓰지 않는다.)
 
@@ -267,7 +271,9 @@ bash tools/zwwin/build.sh && bash fixtures/winapp/build.sh \
 
 #### A. 스스로 준비하는 시나리오를 실앱에서 한 바퀴 돌린다 — **명령 네 줄이면 된다**
 
-시나리오 파일과 실행 스크립트를 2026-09-10 에 다 만들어 뒀다. **이름과 경로는 실앱 목록으로 검증했고 구조 오류 0개다** — 오타로 막히지 않는다. 남은 것은 실제로 돌리는 것뿐이고, **앱 재시작이 필요해서** 그때 하지 않았다.
+시나리오 파일과 실행 스크립트가 다 있고 **이름·경로는 실앱 목록으로 검증돼 있다**(구조 오류 0개). 오타로 막히지는 않는다.
+
+**한 번 돌려봤고 2단계에서 막혔다** (2026-09-14). 원인과 대처는 아래 "①에서 막힐 수 있는 것" 에 있다 — 읽고 시작하면 같은 자리에서 안 멈춘다.
 
 ```
 bash tools/launch-zweave.sh && bash tools/wait-zweave.sh    # 띄우고 정착까지 (90초쯤)
@@ -277,6 +283,15 @@ node src/cli.ts run scenarios/panel-toggle-auto.ts          # ③ 전체를 돌�
 ```
 
 **①을 먼저 하는 이유**는 ②의 baseline 이 **준비된 상태에서** 떠야 하기 때문이다. ③을 먼저 부르면 baseline 이 없어서 거부되고 아무 단계도 안 돈다 — 그게 정상 동작이다.
+
+**①에서 막힐 수 있는 것 — 열려 있는 문서가 dirty 면 저장 확인 모달이 뜬다.**
+
+`openRecent` 는 `File > Recent files` 를 부르는데, **앱은 현재 문서에 변경이 있으면 먼저 `"Do you want to save?"` 를 띄운다**(`zwQtMessageBoxDialog` 302x161, Yes/No/Cancel). 그러면 문서 이름이 안 바뀌므로 `openRecent` 가 상한(60초)까지 기다리다 실패한다. 2026-09-14 에 실제로 그렇게 멈췄다.
+
+- **시작 전에 `node src/cli.ts doc` 으로 확인한다.** 종료 코드 3이면 dirty 다
+- dirty 면 **저장할지 버릴지는 사용자 판단이다.** 앱을 사람과 공유하므로 임의로 고르지 않는다
+- 막힌 뒤에 알아채면 `node src/cli.ts state` 에 모달이 보이고, 버튼은 `click --name "No"` 로 누른다. **`judgeClick` 이 "의심"(종료 코드 2)을 내지만 실제로는 눌린다** — 소유 다이얼로그라서 그렇다(열린 항목)
+- 앱을 새로 띄우면 `Untitled.zls` 가 깨끗한 상태로 열리므로 이 문제가 없다. **`launch-zweave.sh` 로 시작하는 경로가 안전하다**
 
 **볼 것은 ①의 마지막 단계다.** `expectPanel dock=avatar` 가 이 절차에서 유일하게 결과를 모르는 곳이다 — `setAction 'Avatar' checked:true` 가 dock 을 **열기만** 하는지 **앞 탭으로 세우기까지** 하는지 확인되지 않았다. 실패하면 "탭을 앞으로 세우는 수단이 따로 필요하다" 는 뜻이고, **그 답이 다음 작업의 입력이다.** `Window > Reset layout`(Ctrl+L)이 후보지만 사용자의 레이아웃을 바꾸므로 확인을 받고 쓴다.
 
@@ -359,7 +374,12 @@ Qt 모달 동작은 더 부탁할 필요가 없다 — **Qt 픽스처가 답했�
 - **`ActivateSelected`와 `DeactivateSelected`가 둘 다 `Shift+D`** — `shortcut.ini` 실측. 토글로 의도된 것인지 확인 필요 (M2에서 실제로 눌러보면 드러난다)
 - **앱이 정상 동작 중에도 내는 오류 — 사용자 판단 필요.** `zwprobe log`로 확인한 것: `zw3DEnvironmentManager: Environment does not exist!`(시작 시 1회), `zsRenderTarget: clearDepth=true, but no depth buffer bound to fbo!`(반복), `zwStateIdle: GetTool(): Tool object 'zwToolSelectionRect' is not attached!`. 이것들이 의도된 소음인지 실제 결함인지는 도메인 지식이 필요하다. **판정 기준을 세우기 전에 답이 필요하다** — 정상 상태에서도 ERROR가 나오면 "로그에 ERROR가 있으면 실패"라는 규칙을 쓸 수 없다
 
-- **진행 다이얼로그와 입력 대기 다이얼로그를 외부에서 구분할 수 있는가** — **진행 다이얼로그를 2026-09-10 에 처음 봤다.** 프로젝트를 여는 동안 `360x100` 소유 창이 두 번 떴고 제목이 `"Loading..."` 과 `"Loading.."` 로 미묘하게 달랐다 — 소스에서 읽어둔 것(`zwQtThreadProgressDialog`, 제목 `"Loading.."`)과 맞는다. **`state` 의 판정은 옳았다** (8초 busy → idle). 남은 것은 **프로세스 안에서 클래스를 읽는 것**인데 창이 8초만 살아 있어서 놓쳤다. 이제 **언제 뜨는지 알므로** 여는 순간에 `agent --live` 를 물으면 된다. `Development > MessageDialog samples`·`ZLSErrorDialog` 로 불러내는 길도 있다
+- **진행 다이얼로그와 입력 대기 다이얼로그를 외부에서 구분할 수 있는가** — **거의 닫혔다. 클래스가 갈린다.**
+  - **진행**: `zwQtThreadProgressDialog`, `360x100`, 제목 `"Loading..."`/`"Loading.."`. 프로젝트를 여는 동안 두 번 떴다가 8초 만에 스스로 사라진다 (2026-09-10)
+  - **입력 대기**: `zwQtMessageBoxDialog`, `302x161`, **UIA 로 내용이 그대로 읽힌다** — `DialogContentWidget.MessageLabel` 에 `"Do you want to save?"`, `DialogContentWidget.ButtonBox` 안에 `Yes`/`No`/`Cancel` (2026-09-14 실측)
+  - **`state` 는 둘 다 busy 로만 본다.** 둘을 가르려면 UIA 트리를 한 번 더 봐야 한다 — **버튼이 있으면 사람을 기다리는 것이고, 없으면 기다리면 사라진다.** 이 규칙은 아직 두 표본으로만 세운 것이라 `state` 에 넣지 않았다
+  - 남은 것: 다른 종류의 다이얼로그를 더 봐서 규칙이 버티는지 확인. `Development > MessageDialog samples`·`ZLSErrorDialog` 로 불러낼 수 있다
+- **`judgeClick` 이 소유 다이얼로그 안의 버튼을 "의심" 으로 본다** — 누른 자리의 최상위 창이 대상 창과 다르다고 판단하기 때문인데, **다이얼로그가 거기 있는 것이 정상이다.** 2026-09-14 에 `click --name "No"` 가 종료 코드 2를 내고도 실제로는 정확히 눌렸다. 대상 창이 **소유한** 창이면 정상으로 봐야 한다 — 지금은 사람이 결과를 보고 판단해야 한다
 - **시작 다이얼로그를 러너가 스스로 닫아야 하는가** — 앱을 새로 띄우면 `zwQtStartupSplashDialog` 가 떠서 시나리오가 거부된다(위 참조). **닫는 방법은 검증됐다** (`click 585 15 --title "Startup Splash"`, 2026-09-09 실앱). 남은 것은 정책이다: 러너가 매번 자동으로 닫을 것인가, 아니면 사용자가 "Don't show it again" 을 켜서 항목을 없앨 것인가. 자동으로 닫게 하려면 **좌표가 고정이라는 전제**가 붙는데 창 크기가 배율에 흔들릴 수 있어 확인이 필요하다
 
 
