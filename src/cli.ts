@@ -235,8 +235,11 @@ function cmdKey(rest: string[], flags: Map<string, string>): number {
     return 1
   }
 
+  // 필터가 없으면 대상 앱으로 좁힌다. **안 좁히면 화면의 첫 창에 키가 간다** —
+  // 2026-09-15 에 ESC 가 z-weave 가 아니라 "Program Manager"(바탕화면)로 갔다.
+  // 틀린 창에 간 키는 거기서 다른 명령이다.
   const method = flags.get('method') === 'post' ? 'post' : 'send'
-  const r = sendKey({ ...filterFrom(flags), stroke: entry.stroke, method })
+  const r = sendKey({ ...targetFilter(flags), stroke: entry.stroke, method })
 
   console.log(`전송  ${entry.name} = ${entry.spec}  (vk=${r.vk}${r.ctrl ? ' +ctrl' : ''}${r.alt ? ' +alt' : ''}${r.shift ? ' +shift' : ''})`)
   console.log(`대상  pid=${r.window.pid} "${r.window.title}"`)
