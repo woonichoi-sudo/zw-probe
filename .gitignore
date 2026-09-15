@@ -34,3 +34,6 @@ tmp/
 
 # 시나리오 실행 산출물. baseline 은 커밋하지만 실행 결과는 안 한다
 runs/
+
+# 외부에서 받은 에셋 (Poly Haven 텍스처 등, 수 MB 짜리 이미지). 출처 URL 은 WORKLOG 에 남긴다
+assets/
