@@ -282,6 +282,33 @@ test('--slow 는 같은 자리를 누르고 커서를 돌려놓는다 — 느려
   }
 })
 
+test('--stay 는 같은 자리를 누르고 커서를 돌려놓지 않는다', { skip }, async () => {
+  // 하위 메뉴(›)는 커서가 떠나면 닫힌다. 돌려놓지 않는 것 말고는 같아야 한다.
+  const child = spawn(FIXTURE_EXE, [], { detached: false, stdio: 'ignore' })
+  try {
+    const pid = child.pid!
+    const deadline = Date.now() + 8000
+    let w = listWindows({ pid })[0]
+    while ((w === undefined || w.width === 0) && Date.now() < deadline) {
+      await sleep(100)
+      w = listWindows({ pid })[0]
+    }
+    assert.ok(w !== undefined && w.width > 0, '픽스처 창을 찾지 못했다')
+    await sleep(200)
+
+    const cx = w.width - Math.floor(w.width / 4)
+    const cy = Math.floor(w.height / 4)
+    const r = click({ pid, x: cx, y: cy, stay: true })
+
+    assert.equal(judgeClick(r).onTarget, true, '클릭이 대상에 닿지 않았다')
+    assert.equal(r.screenX, w.x + cx)
+    assert.equal(r.screenY, w.y + cy)
+    assert.equal(r.cursorRestored, false, '--stay 인데 커서를 돌려놓았다고 보고했다')
+  } finally {
+    child.kill()
+  }
+})
+
 test('창 밖 좌표는 거부한다', { skip }, async () => {
   // 창 밖을 누르면 다른 앱이 맞는다. 되돌릴 수 없으므로 실행 전에 끊어야 한다.
   const child = spawn(FIXTURE_EXE, [], { detached: false, stdio: 'ignore' })

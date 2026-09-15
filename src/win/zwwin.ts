@@ -192,6 +192,11 @@ export type ClickOptions = WindowFilter & {
    * 0.5초씩 멈춘다. 누르는 자리와 방식은 같다. 시나리오에는 쓸 이유가 없다.
    */
   slow?: boolean
+  /**
+   * 커서를 누른 자리에 둔다(돌려놓지 않는다). **하위 메뉴(›)를 열 때 필요하다** —
+   * 커서가 떠나면 하위 메뉴가 닫힌다. 결과의 `cursorRestored` 는 false 로 온다.
+   */
+  stay?: boolean
 }
 
 /**
@@ -206,6 +211,7 @@ export function click(opts: ClickOptions): ClickResult {
   if (opts.double === true) args.push('--double')
   if (opts.holdMs !== undefined) args.push('--hold', String(opts.holdMs))
   if (opts.slow === true) args.push('--slow')
+  if (opts.stay === true) args.push('--stay')
   return run(args) as ClickResult
 }
 

@@ -9,7 +9,7 @@
 //   zwwin.exe shot --process z-weave --png out/shot.png [--raw out/shot.bgra] [--mode printwindow|screen]
 //   zwwin.exe windows [--process z-weave]
 //   zwwin.exe key --vk N [--ctrl] [--shift] [--alt] [--process z-weave]
-//   zwwin.exe click --x N --y N [--button right] [--double] [--slow] [--process z-weave]   창 왼쪽 위 기준
+//   zwwin.exe click --x N --y N [--button right] [--double] [--slow] [--stay] [--process z-weave]   창 왼쪽 위 기준
 //   zwwin.exe uia [--depth N] [--max N] [--process z-weave]
 
 using System;
@@ -504,6 +504,9 @@ internal static class Program
         // 사람이 눈으로 따라갈 수 있게 한다. 누르는 자리와 방식은 같다 — 느려질 뿐이다.
         bool slow = a.ContainsKey("slow");
         const int SlowGlideMs = 600, SlowPauseMs = 500;
+        // 커서를 누른 자리에 둔다. 하위 메뉴(›)는 커서가 떠나면 닫히므로, 돌려놓으면
+        // 열자마자 사라진다 — 2026-09-15 에 "Locate in 3D ›" 가 그렇게 안 열렸다.
+        bool stay = a.ContainsKey("stay");
 
         var wins = Filter(Enumerate(), a);
         if (wins.Count == 0) return Fail("조건에 맞는 창을 찾지 못했다.");
@@ -547,7 +550,7 @@ internal static class Program
             N.mouse_event(up, 0, 0, 0, UIntPtr.Zero);
         }
 
-        if (haveBefore)
+        if (haveBefore && !stay)
         {
             System.Threading.Thread.Sleep(slow ? SlowPauseMs : 20);
             N.SetCursorPos(before.X, before.Y);
@@ -565,7 +568,7 @@ internal static class Program
         // 누른 자리에 있던 창. 자식 위젯일 수 있으므로 최상위 조상도 함께 싣는다.
         sb.Append(",\"hwndAtPoint\":").Append(at.ToInt64());
         sb.Append(",\"rootAtPoint\":").Append(atRoot.ToInt64());
-        sb.Append(",\"cursorRestored\":").Append(haveBefore ? "true" : "false");
+        sb.Append(",\"cursorRestored\":").Append(haveBefore && !stay ? "true" : "false");
         sb.Append(",\"window\":");
         AppendWin(sb, w);
         sb.Append('}');

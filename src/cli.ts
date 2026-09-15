@@ -372,6 +372,7 @@ function cmdClick(rest: string[], flags: Map<string, string>): number {
     button: buttonArg,
     double: flags.has('double'),
     slow: flags.has('slow'),
+    stay: flags.has('stay'),
     ...(flags.has('hold') ? { holdMs: Number(flags.get('hold')) } : {}),
   })
 
@@ -380,7 +381,7 @@ function cmdClick(rest: string[], flags: Map<string, string>): number {
 
   const v = judgeClick(r)
   console.log(`판정  ${v.onTarget ? '정상' : '의심'} — ${v.reason}`)
-  if (!r.cursorRestored) {
+  if (!r.cursorRestored && !flags.has('stay')) {
     console.log('주의  커서를 원래 자리로 돌려놓지 못했다.')
   }
   return v.onTarget ? 0 : 2
@@ -991,7 +992,7 @@ async function main(): Promise<number> {
           '  조작 — 포그라운드를 점유한다\n' +
           '    zwprobe key <기능이름> [--process 이름] [--method post]\n' +
           '    zwprobe shortcuts [--filter 조각]\n' +
-          '    zwprobe click <x> <y> [--button right] [--double] [--slow]   좌표는 shot 의 PNG 기준. --slow 는 눈으로 보이게\n' +
+          '    zwprobe click <x> <y> [--button right] [--double] [--slow] [--stay]   좌표는 shot 의 PNG 기준. --slow 는 눈으로 보이게, --stay 는 커서를 두고 온다(하위 메뉴)\n' +
           '    zwprobe click --name "Simulation"   UIA 로 찾아 한가운데를 누른다\n' +
           '  시나리오\n' +
           '    zwprobe run <파일.ts> [--out 폴더] [--keep-going]   (0=통과 2=실패 1=거부)\n' +
