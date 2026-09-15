@@ -9,7 +9,7 @@
 //   zwwin.exe shot --process z-weave --png out/shot.png [--raw out/shot.bgra] [--mode printwindow|screen]
 //   zwwin.exe windows [--process z-weave]
 //   zwwin.exe key --vk N [--ctrl] [--shift] [--alt] [--process z-weave]
-//   zwwin.exe click --x N --y N [--button right] [--double] [--process z-weave]   창 왼쪽 위 기준
+//   zwwin.exe click --x N --y N [--button right] [--double] [--slow] [--process z-weave]   창 왼쪽 위 기준
 //   zwwin.exe uia [--depth N] [--max N] [--process z-weave]
 
 using System;
@@ -466,6 +466,20 @@ internal static class Program
         catch { }
     }
 
+    // 커서를 직선으로 옮긴다. 가감속(smoothstep)을 줘서 눈이 출발과 도착을 잡게 한다.
+    private static void Glide(int fromX, int fromY, int toX, int toY, int durationMs)
+    {
+        const int stepMs = 10;
+        int steps = Math.Max(1, durationMs / stepMs);
+        for (int i = 1; i <= steps; i++)
+        {
+            double t = (double)i / steps;
+            double e = t * t * (3 - 2 * t);
+            N.SetCursorPos(fromX + (int)Math.Round((toX - fromX) * e), fromY + (int)Math.Round((toY - fromY) * e));
+            System.Threading.Thread.Sleep(stepMs);
+        }
+    }
+
     private static int CmdClick(Dictionary<string, string> a)
     {
         string xS = Get(a, "x"), yS = Get(a, "y");
@@ -487,6 +501,9 @@ internal static class Program
         bool doubleClick = a.ContainsKey("double");
         int holdMs = 0;
         int.TryParse(Get(a, "hold") ?? "0", out holdMs);
+        // 사람이 눈으로 따라갈 수 있게 한다. 누르는 자리와 방식은 같다 — 느려질 뿐이다.
+        bool slow = a.ContainsKey("slow");
+        const int SlowGlideMs = 600, SlowPauseMs = 500;
 
         var wins = Filter(Enumerate(), a);
         if (wins.Count == 0) return Fail("조건에 맞는 창을 찾지 못했다.");
@@ -511,8 +528,9 @@ internal static class Program
 
         // SetCursorPos 는 물리 화면 좌표를 그대로 받으므로 다중 모니터에서도 맞는다.
         // mouse_event 에 ABSOLUTE 정규화(0~65535)를 쓰면 가상 데스크톱 계산이 끼어든다.
+        if (slow && haveBefore) Glide(before.X, before.Y, screenX, screenY, SlowGlideMs);
         bool moved = N.SetCursorPos(screenX, screenY);
-        System.Threading.Thread.Sleep(20); // 이동이 앉고 hover 가 반영되도록
+        System.Threading.Thread.Sleep(slow ? SlowPauseMs : 20); // 이동이 앉고 hover 가 반영되도록
 
         // 누르기 직전에 그 자리의 창을 읽는다. 대상이 가려져 있으면 여기서 드러난다.
         IntPtr at = N.WindowFromPoint(new N.POINT { X = screenX, Y = screenY });
@@ -531,7 +549,7 @@ internal static class Program
 
         if (haveBefore)
         {
-            System.Threading.Thread.Sleep(20);
+            System.Threading.Thread.Sleep(slow ? SlowPauseMs : 20);
             N.SetCursorPos(before.X, before.Y);
         }
 

@@ -187,6 +187,11 @@ export type ClickOptions = WindowFilter & {
   double?: boolean
   /** 누른 채로 유지할 시간. 0 이면 바로 뗀다 */
   holdMs?: number
+  /**
+   * 사람이 눈으로 따라갈 수 있게 한다 — 커서를 0.6초에 걸쳐 옮기고 누르기 전후로
+   * 0.5초씩 멈춘다. 누르는 자리와 방식은 같다. 시나리오에는 쓸 이유가 없다.
+   */
+  slow?: boolean
 }
 
 /**
@@ -200,6 +205,7 @@ export function click(opts: ClickOptions): ClickResult {
   if (opts.button !== undefined) args.push('--button', opts.button)
   if (opts.double === true) args.push('--double')
   if (opts.holdMs !== undefined) args.push('--hold', String(opts.holdMs))
+  if (opts.slow === true) args.push('--slow')
   return run(args) as ClickResult
 }
 

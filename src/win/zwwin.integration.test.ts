@@ -238,6 +238,50 @@ test('클릭 좌표가 캡처 좌표계와 같다 — 누른 사분면이 검게
   }
 })
 
+test('--slow 는 같은 자리를 누르고 커서를 돌려놓는다 — 느려질 뿐이다', { skip }, async () => {
+  // 사람이 눈으로 따라가라고 느리게 하는 모드다. **느려지는 것 말고는 아무것도 달라지면
+  // 안 된다** — 좌표 변환, 대상 판정, 누른 결과, 커서 복원이 다 같아야 한다.
+  // 창은 pid 로 좁힌다. 다른 테스트 파일이 같은 제목의 픽스처를 띄울 수 있다.
+  const dir = mkdtempSync(join(tmpdir(), 'zwprobe-slow-'))
+  const child = spawn(FIXTURE_EXE, [], { detached: false, stdio: 'ignore' })
+
+  try {
+    const pid = child.pid!
+    const deadline = Date.now() + 8000
+    let w = listWindows({ pid })[0]
+    while ((w === undefined || w.width === 0) && Date.now() < deadline) {
+      await sleep(100)
+      w = listWindows({ pid })[0]
+    }
+    assert.ok(w !== undefined && w.width > 0, '픽스처 창을 찾지 못했다')
+    await sleep(200)
+
+    const cx = Math.floor(w.width / 4)
+    const cy = Math.floor(w.height / 4)
+
+    const t0 = Date.now()
+    const r = click({ pid, x: cx, y: cy, slow: true })
+    const took = Date.now() - t0
+
+    assert.equal(judgeClick(r).onTarget, true, '클릭이 대상에 닿지 않았다')
+    assert.equal(r.screenX, w.x + cx)
+    assert.equal(r.screenY, w.y + cy)
+    assert.equal(r.cursorRestored, true)
+    // 옮기기 0.6초 + 멈춤 0.5초 두 번. 금방 끝났으면 플래그가 전달되지 않은 것이다.
+    assert.ok(took >= 1500, `${took}ms 만에 끝났다 — --slow 가 zwwin.exe 에 전달되지 않았다`)
+
+    await sleep(150)
+    const raw = join(dir, 'after.bgra')
+    const info = shot({ pid, png: join(dir, 'after.png'), raw })
+    const img: Bgra = { width: info.window.width, height: info.window.height, data: new Uint8Array(readFileSync(raw)) }
+    const px = pixelAt(img, cx, cy)
+    assert.ok(px.r < 20 && px.g < 20 && px.b < 20, `누른 사분면이 검지 않다 — ${show(px)}`)
+  } finally {
+    child.kill()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('창 밖 좌표는 거부한다', { skip }, async () => {
   // 창 밖을 누르면 다른 앱이 맞는다. 되돌릴 수 없으므로 실행 전에 끊어야 한다.
   const child = spawn(FIXTURE_EXE, [], { detached: false, stdio: 'ignore' })

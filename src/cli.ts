@@ -368,6 +368,7 @@ function cmdClick(rest: string[], flags: Map<string, string>): number {
     y,
     button: buttonArg,
     double: flags.has('double'),
+    slow: flags.has('slow'),
     ...(flags.has('hold') ? { holdMs: Number(flags.get('hold')) } : {}),
   })
 
@@ -987,7 +988,7 @@ async function main(): Promise<number> {
           '  조작 — 포그라운드를 점유한다\n' +
           '    zwprobe key <기능이름> [--process 이름] [--method post]\n' +
           '    zwprobe shortcuts [--filter 조각]\n' +
-          '    zwprobe click <x> <y> [--button right] [--double]   좌표는 shot 의 PNG 기준\n' +
+          '    zwprobe click <x> <y> [--button right] [--double] [--slow]   좌표는 shot 의 PNG 기준. --slow 는 눈으로 보이게\n' +
           '    zwprobe click --name "Simulation"   UIA 로 찾아 한가운데를 누른다\n' +
           '  시나리오\n' +
           '    zwprobe run <파일.ts> [--out 폴더] [--keep-going]   (0=통과 2=실패 1=거부)\n' +

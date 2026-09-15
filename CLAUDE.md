@@ -22,7 +22,7 @@ Z-Weave(C++/Qt5 데스크톱 의상 CAD)를 **외부에서 조작·관찰·판�
 | 이름 | 언어 | 역할 | 상태 |
 |---|---|---|---|
 | `zwprobe` | TypeScript / Node 24 | CLI, 시나리오 실행, OBJ 파싱, 픽셀 diff, 판정 | **동작** — 관찰 `shot`·`windows`·`state`·`uia`·`doc`·`log` / 조작 `key`·`click`·`shortcuts` / 시나리오 `run`·`baseline`·`diff` / 에이전트 `agent` |
-| `zwwin.exe` | C# (Windows 내장 `csc.exe`로 빌드) | 창 찾기, `PrintWindow` 캡처, `SendInput`, UIAutomation | **동작** — `windows`·`shot`·`key`·`click`·`uia` |
+| `zwwin.exe` | C# (Windows 내장 `csc.exe`로 빌드) | 창 찾기, `PrintWindow` 캡처, `keybd_event`·`mouse_event` 입력(실제 커서를 옮긴다), UIAutomation | **동작** — `windows`·`shot`·`key`·`click`·`uia` |
 | `zwagent.dll` | C++ / Qt 스타일 플러그인 | 앱 프로세스 안에서 위젯 트리·`QAction::trigger()`·`QWidget::grab()`, named pipe 명령 채널 | **동작** — 실앱에서 위젯 5199개 조회, 명령 120개 호출, 패널 단위 캡처. 읽기와 쓰기가 다 된다 |
 
 세 개가 각각 독립 실행된다. 자세한 구조는 설계문서 §4.
@@ -162,7 +162,7 @@ Bash(git --git-dir=*)  Bash(git --work-tree=*)  Bash(git push:*)
 | `doc` | 열린 파일명과 dirty (0=저장됨 3=변경있음) | ✅ |
 | `log` | 앱 로그 tail + severity 집계 | ✅ |
 | `key <기능이름>` | `shortcut.ini` 를 읽어 단축키를 보낸다 | ✅ |
-| `click <x> <y>` | 좌표를 누른다. `shot` 의 PNG 좌표와 같다 | ✅ (다이얼로그 닫기) |
+| `click <x> <y>` | 좌표를 누른다. `shot` 의 PNG 좌표와 같다. **`--slow`** 는 사람이 눈으로 보게 커서를 천천히 옮기고 전후로 멈춘다(1.6초, 좌표 뒤에 붙인다) | ✅ (다이얼로그 닫기) |
 | `click --name X` | UIA 로 찾아 한가운데를 누른다 | ✅ |
 | `shortcuts` | 단축키 매핑 + 충돌 | ✅ |
 | `run <파일.ts>` | 시나리오 실행 (0=통과 2=실패 1=시작 전 거부) | ✅ 10/10 · 자동 준비 13/13 |
