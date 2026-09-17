@@ -24,6 +24,7 @@ Z-Weave(C++/Qt5 데스크톱 의상 CAD)를 **외부에서 조작·관찰·판�
 | `zwprobe` | TypeScript / Node 24 | CLI, 시나리오 실행, OBJ 파싱, 픽셀 diff, 판정 | **동작** — 관찰 `shot`·`windows`·`state`·`uia`·`doc`·`log` / 조작 `key`·`click`·`shortcuts` / 시나리오 `run`·`baseline`·`diff` / 에이전트 `agent` |
 | `zwwin.exe` | C# (Windows 내장 `csc.exe`로 빌드) | 창 찾기, `PrintWindow` 캡처, `keybd_event`·`mouse_event` 입력(실제 커서를 옮긴다), UIAutomation | **동작** — `windows`·`shot`·`key`·`click`·`uia` |
 | `zwagent.dll` | C++ / Qt 스타일 플러그인 | 앱 프로세스 안에서 위젯 트리·`QAction::trigger()`·`QWidget::grab()`, named pipe 명령 채널 | **동작** — 실앱에서 위젯 5199개 조회, 명령 120개 호출, 패널 단위 캡처. 읽기와 쓰기가 다 된다 |
+| MCP 서버 | TypeScript | **다른 프로젝트의 세션**이 CLI 를 도구로 부르게 한다. JSON-RPC over stdio | **동작** — user 스코프 등록, 14개 도구 (2026-09-17) |
 
 세 개가 각각 독립 실행된다. 자세한 구조는 설계문서 §4.
 
@@ -139,9 +140,17 @@ Bash(git --git-dir=*)  Bash(git --work-tree=*)  Bash(git push:*)
 
 2026-09-15: **시나리오가 사전 조건부터 판정까지 혼자 돈다 — 실앱 13/13.** 사람이 앱을 준비하지 않는다. 테스트 272개 통과, `skipped 0`.
 
+2026-09-17: **MCP 서버를 만들었다 — 다른 프로젝트의 세션이 도구로 부른다.** 테스트 308개 통과, `skipped 0`. 위 "다른 프로젝트에서 쓰기" 절.
+
+**앱은 꺼져 있다** (2026-09-17 확인, `state` 종료 코드 1). 아래 2026-09-15 문단은 **그때의 상태이고 지금은 아니다** — 그 데님 바지는 저장하지 않았으므로 없어졌다. 다시 띄우면 `Untitled.zls` 가 깨끗하게 열린다.
+
+<details><summary>2026-09-15 세션 끝의 상태 (지금은 아니다)</summary>
+
 **앱은 떠 있다** (2026-09-15 세션 끝 확인). `-style zwagent` 로 띄웠고 파이프가 열려 있다. 문서는 `empty-scene.zls` 에 **Man 아바타 + 직접 만든 데님 스트레이트 바지(패턴 4·봉제 6, tack 없음, 허리 약 78cm — tack 없이 허리에 걸려 있다)를 올려 dirty(`*`)** 다 — 사용자 요청으로 만들었고 저장하지 않았다. 재질은 프리셋 Denim 을 복제한 `Denim Copy (1)` 에 Poly Haven `denim_fabric_04` 의 diff·normal·rough 맵(`assets/polyhaven/`, repeat 26.93cm). 시뮬레이션은 일시정지(17.5초). **오른쪽 패널은 보임** — Fabric 탭, `Fabric materials` 접힘·`Fabric material properties` 펼침. 2D 는 좁은 배치(가운데 선 x=1026), 패턴 4장 모두 선택됨. **이 상태로 `panel-toggle-auto` 를 돌리면 `openRecent` 앞에서 저장 확인 모달에 막힌다** — 저장할지 버릴지 사용자에게 먼저 묻는다. **`zwagent.dll` 을 다시 빌드하려면 먼저 닫는다**(아래 0단계). DLL 을 안 고칠 것이면 그대로 시나리오를 돌리면 된다.
 
 **띄우면 `Untitled.zls` 가 깨끗한 상태로 열린다** — 이 앱은 마지막 문서를 복원하지 않는다(이번 세션의 재시작 네 번이 모두 그랬다). 그래서 아래 "①에서 막힐 수 있는 것"(dirty 문서 저장 확인 모달)을 **새로 띄운 경우에는 안 만난다.**
+
+</details>
 
 > **이 줄은 세션이 끝날 때 실제로 확인하고 갱신한다.** 2026-09-10 에 "앱이 떠 있고 다른 문서가 dirty 다" 라고 적어두고 그 뒤에 상태를 바꿔놓고는 고치지 않았다 — **정본이 사실과 다르면 다음 세션이 틀린 전제로 시작한다.**
 
@@ -189,6 +198,25 @@ Bash(git --git-dir=*)  Bash(git --work-tree=*)  Bash(git push:*)
 **앱을 새로 띄우면 입력을 요구하는 다이얼로그가 뜬다 — `state` 가 busy(3)로 막는다.** 시작 시 `zwQtStartupSplashDialog`("Startup Splash", 602x531)가 뜬다. Asset library·Tutorials·Release note 탭과 "Don't show it again" 체크박스가 있는 프로모 창이고 **사람이 닫아야 사라진다.** 소유 창으로 남으므로 `state` 는 busy 를 돌려주고 **그 판정이 맞다** — 이게 떠 있으면 정말로 입력을 보내면 안 된다. 결과적으로 **앱을 새로 띄운 직후에는 시나리오가 거부된다.** 닫기 버튼은 이름이 없어(`zwQtButton` 16x16, 창 기준 `585,15`) 좌표뿐이다. 오래 켜둔 앱에서 이걸 못 봤던 이유는 사용자가 이미 닫아뒀기 때문이다.
 
 내용이 `zwCustomWebEngineView` 다 — **원격 HTML 이므로 이 창의 픽셀 baseline 은 뜨지 않는다.** 언제든 바뀐다.
+
+### 다른 프로젝트에서 쓰기 (MCP 서버)
+
+`src/mcp/server.ts` 가 CLI 를 MCP 도구로 내보낸다. **다른 프로젝트의 Claude Code 세션이 절대경로나 셸 명령 없이 Z-Weave 를 조작·관찰할 수 있다.** 2026-09-17 에 만들었고 user 스코프에 등록돼 있다.
+
+```
+claude mcp add --scope user zwprobe -- node D:/z-emotion/zw-probe/src/mcp/server.ts
+claude mcp list          # ✔ Connected 확인
+```
+
+**서버는 판단하지 않는다.** 하위 프로세스로 `node src/cli.ts <동사>` 를 부르고 stdout 과 종료 코드를 그대로 넘긴다 — CLI 를 모듈로 import 해서 안에서 다시 조립하면 **판정 규칙이 두 벌이 되고 어긋났을 때 어느 쪽이 맞는지 알 수 없다.** cwd 는 리포 루트로 고정되므로 `captures/`·`runs/`·`baselines/` 가 그대로 맞는다.
+
+- **도구 14개.** 관찰 `zw_state`·`zw_windows`·`zw_shot`·`zw_uia`·`zw_doc`·`zw_log`·`zw_shortcuts`·`zw_agent`·`zw_baseline`·`zw_diff` / 조작 `zw_key`·`zw_click`·`zw_agent_trigger`·`zw_run`. 조작하는 넷만 `destructiveHint` 로 나가고 나머지는 `readOnlyHint` 다
+- **종료 코드의 뜻을 결과 끝에 같이 싣는다** (`[종료 코드 3 — busy: …]`). 부르는 쪽은 CLAUDE.md 를 안 읽었으므로 숫자만 주면 해석을 지어낸다. 같은 이유로 도구 설명에 함정(printwindow 8px, 토글, `trigger` 는 큐에 넣을 뿐)을 같이 싣는다
+- **판정을 실은 종료 코드(2·3)는 `isError` 로 표시하지 않는다.** busy 나 "다르다" 는 정상 판정이다 — 오류로 내보내면 부른 쪽이 실패로 읽는다. 1 만 오류다
+- **모르는 인자·타입 불일치·`--` 로 시작하는 값·반쪽 좌표를 거부한다.** 조용히 무시하면 다른 명령이 조립되고, 그게 이 프로젝트에서 가장 나쁜 실패다. `zw_click` 의 `x`·`y` 는 짝으로만 받는다 — 하나만 주면 CLI 가 그 하나를 x 로 읽어 **다른 곳을 누른다**
+- **`agent` 계열의 `hello` 기본값을 `runs/zwagent-hello.json` 으로 둔다.** CLI 기본값(`%TEMP%`)에는 픽스처가 남긴 낡은 파일이 있다 (열린 항목)
+- **출력이 40000자를 넘으면 자르고 그렇다고 말한다.** `uia` 트리와 위젯 목록이 상대 세션의 컨텍스트를 통째로 먹는다. 잘렸다는 말이 없으면 "없다" 를 단정하게 된다
+- 캡처는 파일로 남고 출력에 **절대경로**가 나온다. 부르는 쪽이 `Read` 로 PNG 를 연다
 
 ### 시나리오에서 명령 채널을 쓸 때
 
@@ -285,7 +313,7 @@ MSYS_NO_PATHCONV=1 cmd /c "$(cygpath -w "$경로/launch.bat")"
 
 M1~M5가 **실앱에서** 끝났고 M6가 절반 왔다. **막힌 것은 없다.** A(자동 준비 시나리오의 실앱 검증)는 2026-09-15 에 끝났다 — **다음은 B 다.** 재현 절차가 없으면 아래 "B 가 없을 때" 를 한다.
 
-**0. 먼저 빌드하고 테스트한다.** 위 "구성요소"의 네 줄 + `node --test`. `skipped 0`을 확인한다 — 빌드가 없으면 통합 테스트가 조용히 건너뛴다. 기준값: **테스트 272개 통과, `skipped 0`, 작업 트리 깨끗.** (커밋 수는 문서를 고칠 때마다 늘어나므로 기준으로 쓰지 않는다.)
+**0. 먼저 빌드하고 테스트한다.** 위 "구성요소"의 네 줄 + `node --test`. `skipped 0`을 확인한다 — 빌드가 없으면 통합 테스트가 조용히 건너뛴다. 기준값: **테스트 308개 통과, `skipped 0`, 작업 트리 깨끗.** (커밋 수는 문서를 고칠 때마다 늘어나므로 기준으로 쓰지 않는다.)
 
 ```
 bash tools/zwwin/build.sh && bash fixtures/winapp/build.sh \
