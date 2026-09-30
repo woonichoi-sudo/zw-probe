@@ -3,17 +3,26 @@
 //   node src/cli.ts shot [--process z-weave] [--pid N] [--title 조각] [--out 경로]
 //   node src/cli.ts windows [--process z-weave]
 
-import { existsSync, mkdirSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { tmpdir } from 'node:os'
 
-import { TARGET_PROCESS, click, listWindows, sendKey, shot, uiaTree } from './win/zwwin.ts'
+import { TARGET_PROCESS, click, listWindows, sendKey, shot, startRecord, uiaTree } from './win/zwwin.ts'
 import { analyze, judgeCapture } from './image/stats.ts'
 import { readCapture, writeCaptureMeta } from './image/captureFile.ts'
 import { checkBaseline } from './image/captureMeta.ts'
 import { diff, judgeSame } from './image/diff.ts'
 import type { WindowFilter } from './win/zwwin.ts'
+import {
+  elapsedSeconds,
+  judgeRecording,
+  parseRecordResult,
+  parseRecordingState,
+  readMp4Summary,
+  validateRecordOptions,
+} from './record/record.ts'
+import type { RecordingState } from './record/record.ts'
 import { findConflicts, findShortcut } from './input/shortcut.ts'
 import { loadShortcuts } from './input/shortcutFile.ts'
 import { locateLog, logDir, readEntries } from './log/logFile.ts'
@@ -950,6 +959,166 @@ function cmdLog(flags: Map<string, string>): number {
   return 0
 }
 
+// ── 녹화 ─────────────────────────────────────────────────────
+//
+// start → (다른 명령으로 조작) → stop. zwwin.exe record 가 백그라운드로 돌고, 상태 파일이 그 사이를
+// 잇는다. 한 번에 하나만 녹화한다 — 둘을 띄우면 어느 stop 이 어느 영상을 끝내는지 섞인다.
+
+const RECORDING_STATE = resolve('runs/recording.json')
+
+const sleepMs = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function readRecordingState(): RecordingState | undefined {
+  if (!existsSync(RECORDING_STATE)) return undefined
+  const s = parseRecordingState(readFileSync(RECORDING_STATE, 'utf8'))
+  if (!s.ok) {
+    console.error(`상태 파일을 읽지 못했다 (${RECORDING_STATE}): ${s.reason}`)
+    return undefined
+  }
+  return s.value
+}
+
+async function cmdRecord(rest: string[], flags: Map<string, string>): Promise<number> {
+  const action = rest[0] ?? 'status'
+  if (action === 'start') return await recordStart(flags)
+  if (action === 'stop') return await recordStop(flags)
+  if (action === 'status') return recordStatus()
+  console.error(`record 뒤에는 start · stop · status 중 하나를 쓴다: '${action}'`)
+  return 1
+}
+
+async function recordStart(flags: Map<string, string>): Promise<number> {
+  const running = readRecordingState()
+  if (running && isAlive(running.pid)) {
+    console.error(`이미 녹화 중이다 (pid ${running.pid}, ${running.out}). 먼저 'zwprobe record stop'.`)
+    return 1
+  }
+
+  const v = validateRecordOptions({
+    out: flags.get('out') || `captures/rec-${timestamp()}.mp4`,
+    fps: flags.get('fps') || undefined,
+    maxSeconds: flags.get('max-seconds') || undefined,
+    mode: flags.get('mode') || undefined,
+    noCursor: flags.has('no-cursor'),
+  })
+  if (!v.ok) {
+    console.error(v.reason)
+    return 1
+  }
+  const opts = v.value
+
+  const filter = targetFilter(flags)
+  const wins = listWindows(filter)
+  if (wins.length === 0) {
+    console.error('녹화할 창을 찾지 못했다 — 앱이 떠 있는지 zwprobe state 로 본다.')
+    return 1
+  }
+
+  const out = resolve(opts.out)
+  const stamp = timestamp()
+  const result = resolve(`runs/recording-${stamp}.result.json`)
+  const stop = resolve(`runs/recording-${stamp}.stop`)
+  mkdirSync(dirname(out), { recursive: true })
+  mkdirSync(dirname(result), { recursive: true })
+  for (const f of [result, stop]) rmSync(f, { force: true })
+
+  const pid = startRecord({ ...filter, out, result, stop, fps: opts.fps, maxSeconds: opts.maxSeconds, mode: opts.mode, cursor: opts.cursor })
+  const state: RecordingState = {
+    pid, out, result, stop, startedAt: new Date().toISOString(), fps: opts.fps, maxSeconds: opts.maxSeconds, mode: opts.mode,
+  }
+  writeFileSync(RECORDING_STATE, JSON.stringify(state, null, 2))
+
+  // 인코더를 못 만들었거나 창을 못 찾았으면 바로 결과를 쓰고 끝난다. 그걸 여기서 잡는다 —
+  // 모르고 조작을 이어가면 녹화되지 않은 채 stop 에서야 알게 된다.
+  await sleepMs(1500)
+  if (existsSync(result)) {
+    const r = parseRecordResult(readFileSync(result, 'utf8'))
+    rmSync(RECORDING_STATE, { force: true })
+    if (!r.ok) {
+      console.error(`녹화가 시작하자마자 끝났다: ${r.error}`)
+      return 1
+    }
+  }
+  if (!isAlive(pid)) {
+    rmSync(RECORDING_STATE, { force: true })
+    console.error('녹화 프로세스가 결과 없이 끝났다.')
+    return 1
+  }
+
+  const w = wins[0]!
+  console.log(`녹화  시작 — pid=${pid}`)
+  console.log(`창    ${w.width}x${w.height} pid=${w.pid} "${w.title}"  (mode=${opts.mode}, ${opts.fps} fps, 커서 ${opts.cursor ? '그림' : '안 그림'})`)
+  console.log(`저장  ${out}  (끝나야 생긴다)`)
+  console.log(`상한  ${opts.maxSeconds}초 — 그 전에 'zwprobe record stop' 으로 끝낸다`)
+  return 0
+}
+
+async function recordStop(flags: Map<string, string>): Promise<number> {
+  const state = readRecordingState()
+  if (!state) {
+    console.error('진행 중인 녹화가 없다.')
+    return 1
+  }
+
+  writeFileSync(state.stop, '')
+  // 마무리(인코더 비우기·moov 쓰기)는 길이에 비례한다. 10분 녹화에 수 초.
+  const timeoutMs = Number(flags.get('timeout') || 60) * 1000
+  const deadline = Date.now() + timeoutMs
+  while (!existsSync(state.result) && Date.now() < deadline) {
+    if (!isAlive(state.pid) && !existsSync(state.result)) break
+    await sleepMs(200)
+  }
+
+  if (!existsSync(state.result)) {
+    console.error(
+      isAlive(state.pid)
+        ? `${timeoutMs / 1000}초 안에 마무리되지 않았다 (pid ${state.pid} 가 아직 돈다). --timeout 을 늘려 다시 stop 한다.`
+        : '녹화 프로세스가 결과를 쓰지 않고 끝났다 — 영상이 깨졌을 수 있다.',
+    )
+    return 1
+  }
+
+  const r = parseRecordResult(readFileSync(state.result, 'utf8'))
+  rmSync(RECORDING_STATE, { force: true })
+  rmSync(state.stop, { force: true })
+  if (!r.ok) {
+    console.error(`녹화 실패: ${r.error}`)
+    return 1
+  }
+
+  const file = existsSync(r.out) ? readMp4Summary(readFileSync(r.out)) : { hasMoov: false, samples: 0, seconds: 0 }
+  const verdict = judgeRecording(r, file)
+  console.log(`저장  ${r.out}  (${(r.bytes / 1024 / 1024).toFixed(1)} MB)`)
+  console.log(`영상  ${r.width}x${r.height} · ${r.seconds.toFixed(1)}초 · ${r.frames}프레임 @ ${r.fps} fps (복제 ${r.duplicated}) · mode=${r.mode}`)
+  console.log(`파일  moov ${file.hasMoov ? '있음' : '없음'} · ${file.samples}샘플 · ${file.seconds.toFixed(1)}초`)
+  console.log(`끝    ${r.stopReason === 'stop' ? 'stop 으로 멈췄다' : r.stopReason}`)
+  for (const n of verdict.notes) console.log(`주의  ${n}`)
+  console.log(`판정  ${verdict.usable ? '쓸 수 있다' : '쓸 수 없다'}`)
+  return verdict.usable ? 0 : 2
+}
+
+function recordStatus(): number {
+  const state = readRecordingState()
+  if (!state || !isAlive(state.pid)) {
+    console.log('녹화 중이 아니다.')
+    if (state && existsSync(state.result)) console.log(`끝난 녹화의 결과가 남아 있다 — 'zwprobe record stop' 으로 정리한다.`)
+    return 1
+  }
+  const t = elapsedSeconds(state, new Date())
+  console.log(`녹화 중 — pid=${state.pid} · ${t.elapsed.toFixed(0)}초 지남 · 상한까지 ${t.remaining.toFixed(0)}초`)
+  console.log(`저장  ${state.out}`)
+  return 0
+}
+
 async function main(): Promise<number> {
   const { verb, rest, flags } = parseArgs(process.argv.slice(2))
   switch (verb) {
@@ -979,6 +1148,8 @@ async function main(): Promise<number> {
       return cmdDiff(rest, flags)
     case 'agent':
       return await cmdAgent(flags)
+    case 'record':
+      return await cmdRecord(rest, flags)
     default:
       console.error(
         '사용법:\n' +

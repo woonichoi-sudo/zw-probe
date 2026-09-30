@@ -14,6 +14,9 @@
 //
 // 창을 클릭하면 그 사분면이 검게 칠해진다. 클릭 좌표 변환을 화면으로 검증하기 위한 것이다.
 //
+// --title T · --at X,Y 로 제목과 위치를 바꾼다. node --test 는 파일을 병렬로 돌리므로, 다른 테스트가
+// 제목 조각("zwprobe-fixture")으로 찾거나 (80,80) 을 실제로 누르는 동안 **겹치지 않는 창**이 필요할 때 쓴다.
+//
 // 빌드: bash fixtures/winapp/build.sh
 
 using System;
@@ -24,13 +27,13 @@ internal sealed class FixtureForm : Form
 {
     private readonly bool mWithDialog;
 
-    public FixtureForm(bool withDialog)
+    public FixtureForm(bool withDialog, string title, Point at)
     {
         mWithDialog = withDialog;
-        Text = "zwprobe-fixture";
+        Text = title;
         FormBorderStyle = FormBorderStyle.None; // 창 사각형 == 클라이언트 영역
         StartPosition = FormStartPosition.Manual;
-        Location = new Point(80, 80);
+        Location = at;
         ClientSize = new Size(400, 300);
         ShowInTaskbar = false;
         DoubleBuffered = true;
@@ -112,7 +115,18 @@ internal static class Program
     private static void Main(string[] args)
     {
         bool withDialog = Array.IndexOf(args, "--dialog") >= 0;
+        string title = "zwprobe-fixture";
+        var at = new Point(80, 80);
+        for (int i = 0; i + 1 < args.Length; i++)
+        {
+            if (args[i] == "--title") title = args[i + 1];
+            if (args[i] == "--at")
+            {
+                string[] xy = args[i + 1].Split(',');
+                at = new Point(int.Parse(xy[0]), int.Parse(xy[1]));
+            }
+        }
         Application.EnableVisualStyles();
-        Application.Run(new FixtureForm(withDialog));
+        Application.Run(new FixtureForm(withDialog, title, at));
     }
 }

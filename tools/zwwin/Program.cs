@@ -11,6 +11,7 @@
 //   zwwin.exe key --vk N [--ctrl] [--shift] [--alt] [--process z-weave]
 //   zwwin.exe click --x N --y N [--button right] [--double] [--slow] [--stay] [--process z-weave]   창 왼쪽 위 기준
 //   zwwin.exe uia [--depth N] [--max N] [--process z-weave]
+//   zwwin.exe record --out x.mp4 --result x.json --stop x.stop [--fps 10] [--max-seconds 600] [--mode screen|printwindow]   (Record.cs)
 
 using System;
 using System.Collections.Generic;
@@ -125,7 +126,7 @@ internal sealed class Win
     public long Area { get { return (long)Width * Height; } }
 }
 
-internal static class Program
+internal static partial class Program
 {
     private static int Main(string[] args)
     {
@@ -142,8 +143,9 @@ internal static class Program
                 case "key": return CmdKey(a);
                 case "click": return CmdClick(a);
                 case "uia": return CmdUia(a);
+                case "record": return CmdRecord(a);
                 default:
-                    return Fail("알 수 없는 명령: '" + verb + "'. windows, shot, key, click, uia 중 하나를 쓴다.");
+                    return Fail("알 수 없는 명령: '" + verb + "'. windows, shot, key, click, uia, record 중 하나를 쓴다.");
             }
         }
         catch (Exception ex)

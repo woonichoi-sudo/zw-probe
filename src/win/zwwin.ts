@@ -3,7 +3,7 @@
 // CLAUDE.md 절대 규칙 5 — 이 파일이 하는 일은 프로세스를 띄우고, stdout 을 JSON 으로
 // 파싱하고, 실패를 예외로 바꾸는 것뿐이다.
 
-import { spawnSync } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 
@@ -236,4 +236,36 @@ export function uiaTree(opts: UiaOptions = {}): UiaDumpResult {
   if (opts.depth !== undefined) args.push('--depth', String(opts.depth))
   if (opts.max !== undefined) args.push('--max', String(opts.max))
   return run(args) as UiaDumpResult
+}
+
+export type StartRecordOptions = WindowFilter & {
+  out: string
+  /** zwwin.exe 가 끝날 때 결과 JSON 을 쓸 곳. 백그라운드라 stdout 을 받을 수 없다 */
+  result: string
+  /** 이 파일이 생기면 녹화를 마무리한다 */
+  stop: string
+  fps: number
+  maxSeconds: number
+  mode: 'screen' | 'printwindow'
+  cursor: boolean
+}
+
+/**
+ * zwwin.exe record 를 **분리된 프로세스로** 띄우고 pid 를 돌려준다. 기다리지 않는다.
+ * 부른 쪽(CLI·MCP 서버)이 끝나도 녹화는 계속된다 — 그래야 녹화하는 동안 다른 명령을 부를 수 있다.
+ * 결과는 opts.result 에 나온다.
+ */
+export function startRecord(opts: StartRecordOptions): number {
+  const args = [
+    'record', '--out', opts.out, '--result', opts.result, '--stop', opts.stop,
+    '--fps', String(opts.fps), '--max-seconds', String(opts.maxSeconds), '--mode', opts.mode,
+    ...filterArgs(opts),
+  ]
+  if (!opts.cursor) args.push('--no-cursor')
+  const child = spawn(ZWWIN_EXE, args, { detached: true, stdio: 'ignore', windowsHide: true })
+  child.unref()
+  if (child.pid === undefined) {
+    throw new ZwwinError(`zwwin.exe record 를 띄우지 못했다 (${ZWWIN_EXE})`)
+  }
+  return child.pid
 }

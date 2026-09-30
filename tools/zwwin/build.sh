@@ -19,6 +19,7 @@ fi
 mkdir -p "$ROOT/bin"
 
 SRC="$(cygpath -w "$ROOT/tools/zwwin/Program.cs")"
+SRC_RECORD="$(cygpath -w "$ROOT/tools/zwwin/Record.cs")"
 OUT="$(cygpath -w "$ROOT/bin/zwwin.exe")"
 
 # UIAutomation 은 .NET Framework 에 들어 있지만 참조 어셈블리 폴더에는 없다.
@@ -43,6 +44,7 @@ MSYS_NO_PATHCONV=1 "$CSC" \
   -r:System.dll \
   -r:System.Drawing.dll \
   "${UIA_REFS[@]}" \
-  "$SRC"
+  "$SRC" \
+  "$SRC_RECORD"
 
 echo "빌드 완료: $ROOT/bin/zwwin.exe"

@@ -297,6 +297,35 @@ export const TOOLS: Tool[] = [
     ],
     exits: { 0: '같다', 2: '다르다', 1: '비교할 수 없다 (크기가 다르거나 파일을 못 읽었다)' },
   },
+  {
+    name: 'zw_record',
+    verb: 'record',
+    title: '화면 녹화 (MP4)',
+    desc:
+      '대상 창을 H.264 MP4 로 녹화한다. **백그라운드로 돈다** — action=start 로 시작하고, 그동안 zw_click·zw_key·' +
+      'zw_agent_trigger 로 조작한 뒤, action=stop 으로 끝낸다. stop 의 출력 "저장" 줄에 MP4 **절대경로**가 나온다.\n' +
+      '한 번에 하나만 녹화한다. **stop 을 부르지 않으면 max_seconds(기본 600초)까지 돈다** — 끝내는 것을 잊지 않는다. ' +
+      '프로세스를 죽이면 재생되지 않는 파일이 남으므로 반드시 stop 으로 끝낸다.\n' +
+      '기본 mode=screen 은 화면에 보이는 그대로(팝업·다이얼로그 포함) 찍는다 — 다른 창이 위를 덮으면 그것이 찍힌다. ' +
+      'zw_click·zw_key 는 대상 창을 앞으로 올리므로 보통 문제없다. 가려져도 찍어야 하면 printwindow(팝업은 빠진다). ' +
+      '마우스 커서를 그려 넣는다 — 어디를 눌렀는지 영상에서 보인다.',
+    mutates: false,
+    params: [
+      { name: 'action', type: 'string', required: true, choices: ['start', 'stop', 'status'], desc: 'start(시작) · stop(끝내고 저장) · status(진행 상태)', arg: { kind: 'positional', at: 0 } },
+      { name: 'out', type: 'string', desc: 'start: 저장 경로(.mp4). 기본은 captures/rec-<시각>.mp4', arg: { kind: 'flag', flag: 'out' } },
+      { name: 'fps', type: 'number', desc: 'start: 초당 프레임 1~60 (기본 10). 캡처가 못 따라가면 직전 화면을 복제해 시간을 맞춘다', arg: { kind: 'flag', flag: 'fps' } },
+      { name: 'max_seconds', type: 'number', desc: 'start: 최대 녹화 시간(초, 기본 600). stop 을 잊었을 때의 안전장치', arg: { kind: 'flag', flag: 'max-seconds' } },
+      { name: 'mode', type: 'string', choices: ['screen', 'printwindow'], desc: 'start: screen(기본, 팝업 포함) 또는 printwindow(가려져도 찍힘, 팝업 빠짐)', arg: { kind: 'flag', flag: 'mode' } },
+      { name: 'no_cursor', type: 'boolean', desc: 'start: 마우스 커서를 그리지 않는다', arg: { kind: 'switch', flag: 'no-cursor' } },
+      { name: 'timeout', type: 'number', desc: 'stop: 마무리를 기다릴 초 (기본 60)', arg: { kind: 'flag', flag: 'timeout' } },
+      ...FILTERS,
+    ],
+    exits: {
+      0: 'start: 녹화를 시작했다 · stop: 쓸 수 있는 영상을 저장했다 · status: 녹화 중이다',
+      2: 'stop: 저장했지만 쓸 수 없다 (프레임이 없거나 캡처가 대부분 실패, 이유가 출력에 있다)',
+      1: 'start: 시작하지 못했다(이미 녹화 중·창 없음·인코더 실패) · stop: 진행 중인 녹화가 없거나 마무리 실패 · status: 녹화 중이 아니다',
+    },
+  },
 ]
 
 export function findTool(name: string): Tool | undefined {

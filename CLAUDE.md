@@ -24,7 +24,7 @@ Z-Weave(C++/Qt5 데스크톱 의상 CAD)를 **외부에서 조작·관찰·판�
 | `zwprobe` | TypeScript / Node 24 | CLI, 시나리오 실행, OBJ 파싱, 픽셀 diff, 판정 | **동작** — 관찰 `shot`·`windows`·`state`·`uia`·`doc`·`log` / 조작 `key`·`click`·`shortcuts` / 시나리오 `run`·`baseline`·`diff` / 에이전트 `agent` |
 | `zwwin.exe` | C# (Windows 내장 `csc.exe`로 빌드) | 창 찾기, `PrintWindow` 캡처, `keybd_event`·`mouse_event` 입력(실제 커서를 옮긴다), UIAutomation | **동작** — `windows`·`shot`·`key`·`click`·`uia` |
 | `zwagent.dll` | C++ / Qt 스타일 플러그인 | 앱 프로세스 안에서 위젯 트리·`QAction::trigger()`·`QWidget::grab()`, named pipe 명령 채널 | **동작** — 실앱에서 위젯 5199개 조회, 명령 120개 호출, 패널 단위 캡처. 읽기와 쓰기가 다 된다 |
-| MCP 서버 | TypeScript | **다른 프로젝트의 세션**이 CLI 를 도구로 부르게 한다. JSON-RPC over stdio | **동작** — user 스코프 등록, 14개 도구 (2026-09-17) |
+| MCP 서버 | TypeScript | **다른 프로젝트의 세션**이 CLI 를 도구로 부르게 한다. JSON-RPC over stdio | **동작** — user 스코프 등록, 15개 도구 (2026-09-17, `zw_record` 2026-09-30) |
 
 세 개가 각각 독립 실행된다. 자세한 구조는 설계문서 §4.
 
@@ -142,6 +142,8 @@ Bash(git --git-dir=*)  Bash(git --work-tree=*)  Bash(git push:*)
 
 2026-09-17: **MCP 서버를 만들었다 — 다른 프로젝트의 세션이 도구로 부른다.** 테스트 308개 통과, `skipped 0`. 위 "다른 프로젝트에서 쓰기" 절.
 
+2026-09-30: **녹화(`record`·`zw_record`)를 붙였다.** Media Foundation 으로 H.264 MP4 — ffmpeg 없이 된다. 테스트 328개 통과, `skipped 0`. 아래 "녹화" 절. **MCP 서버는 도구 목록을 시작할 때 읽으므로 이미 떠 있는 세션에서는 `zw_record` 가 안 보인다** — 세션을 새로 열거나 `/mcp` 로 다시 연결한다.
+
 **앱은 꺼져 있다** (2026-09-17 확인, `state` 종료 코드 1). 아래 2026-09-15 문단은 **그때의 상태이고 지금은 아니다** — 그 데님 바지는 저장하지 않았으므로 없어졌다. 다시 띄우면 `Untitled.zls` 가 깨끗하게 열린다.
 
 <details><summary>2026-09-15 세션 끝의 상태 (지금은 아니다)</summary>
@@ -178,6 +180,7 @@ Bash(git --git-dir=*)  Bash(git --work-tree=*)  Bash(git push:*)
 | `run` 채널 단계 | `trigger`·`openRecent`·`grabPanel`·`setAction`·`expectAction`·`checkBaseline --panel` | ✅ `openRecent`·`setAction` / ⬜ 나머지는 픽스처만 |
 | `baseline [이름]` | 지금 화면을 정답으로 저장. 이름 없으면 목록 | ✅ |
 | `diff <a> <b>` | 두 캡처 픽셀 비교 (0=같다 2=다르다) | ✅ |
+| `record start\|stop\|status` | 창을 H.264 MP4 로 녹화한다. **백그라운드로 돌고** 그동안 다른 명령으로 조작한다. 커서를 그려 넣는다 | ✅ 실앱 10초 |
 | `agent` | `zwagent.dll` 의 hello 를 읽어 로드·ABI·위젯 트리 보고 (0=믿을 수 있는 트리 3=과도 상태) | ✅ 5199개 |
 | `agent --find X` | 라벨로 위젯을 찾아 **누를 창 기준 좌표**를 준다. 툴바 버튼이 여기서 닿는다 | ✅ |
 | `agent --live` | 파이프로 **지금**의 위젯 트리를 받는다. hello 스냅샷은 낡는다 | ✅ 5199개 |
@@ -210,7 +213,7 @@ claude mcp list          # ✔ Connected 확인
 
 **서버는 판단하지 않는다.** 하위 프로세스로 `node src/cli.ts <동사>` 를 부르고 stdout 과 종료 코드를 그대로 넘긴다 — CLI 를 모듈로 import 해서 안에서 다시 조립하면 **판정 규칙이 두 벌이 되고 어긋났을 때 어느 쪽이 맞는지 알 수 없다.** cwd 는 리포 루트로 고정되므로 `captures/`·`runs/`·`baselines/` 가 그대로 맞는다.
 
-- **도구 14개.** 관찰 `zw_state`·`zw_windows`·`zw_shot`·`zw_uia`·`zw_doc`·`zw_log`·`zw_shortcuts`·`zw_agent`·`zw_baseline`·`zw_diff` / 조작 `zw_key`·`zw_click`·`zw_agent_trigger`·`zw_run`. 조작하는 넷만 `destructiveHint` 로 나가고 나머지는 `readOnlyHint` 다
+- **도구 15개.** 관찰 `zw_state`·`zw_windows`·`zw_shot`·`zw_uia`·`zw_doc`·`zw_log`·`zw_shortcuts`·`zw_agent`·`zw_baseline`·`zw_diff`·`zw_record` / 조작 `zw_key`·`zw_click`·`zw_agent_trigger`·`zw_run`. 조작하는 넷만 `destructiveHint` 로 나가고 나머지는 `readOnlyHint` 다
 - **종료 코드의 뜻을 결과 끝에 같이 싣는다** (`[종료 코드 3 — busy: …]`). 부르는 쪽은 CLAUDE.md 를 안 읽었으므로 숫자만 주면 해석을 지어낸다. 같은 이유로 도구 설명에 함정(printwindow 8px, 토글, `trigger` 는 큐에 넣을 뿐)을 같이 싣는다
 - **판정을 실은 종료 코드(2·3)는 `isError` 로 표시하지 않는다.** busy 나 "다르다" 는 정상 판정이다 — 오류로 내보내면 부른 쪽이 실패로 읽는다. 1 만 오류다
 - **모르는 인자·타입 불일치·`--` 로 시작하는 값·반쪽 좌표를 거부한다.** 조용히 무시하면 다른 명령이 조립되고, 그게 이 프로젝트에서 가장 나쁜 실패다. `zw_click` 의 `x`·`y` 는 짝으로만 받는다 — 하나만 주면 CLI 가 그 하나를 x 로 읽어 **다른 곳을 누른다**
@@ -229,6 +232,24 @@ claude mcp list          # ✔ Connected 확인
 **`openRecent` 는 화면이 아니라 문서 이름으로 완료를 본다.** 여는 동안 진행 다이얼로그가 여러 개 이어서 뜨고 그 사이에 잠깐 idle 로 보이는 구간이 있으며, 그때 `doc` 은 아직 옛 파일명을 보고한다. 화면이나 idle 로 판정하면 너무 일찍 통과한다.
 
 **`checkBaseline --panel` 이 창 전체 비교보다 낫다.** 창 전체는 관계없는 곳이 바뀌어도 실패한다 — 탭 라벨이 잘려 469픽셀 오차를 낸 적이 있다. `ignore` 로 빼는 것보다 **애초에 안 담는 것**이 낫다(무엇이 변할지 미리 알 필요가 없고 좌표가 레이아웃에 안 묶인다).
+
+### 녹화 (2026-09-30)
+
+```
+zwprobe record start [--out x.mp4] [--fps 10] [--max-seconds 600] [--mode screen|printwindow] [--no-cursor]
+  … 이 사이에 click·key·agent --trigger 로 조작한다 …
+zwprobe record stop            # 0=쓸 수 있다 2=쓸 수 없다 1=실패. "저장" 줄에 MP4 절대경로
+zwprobe record status          # 0=녹화 중 1=아니다
+```
+
+- **`zwwin.exe record` 가 분리된 프로세스로 돈다.** 부른 CLI·MCP 호출은 바로 돌아온다. 그 사이를 `runs/recording.json` 이 잇고, **멈추는 신호는 정지 파일**이다 — 프로세스를 죽이면 moov 가 안 써져서 재생되지 않는 파일이 남는다. 한 번에 하나만 녹화한다
+- **인코더는 Windows 내장 Media Foundation**(SinkWriter, H.264)이다. `csc.exe` 만으로 빌드되도록 COM 인터페이스를 [tools/zwwin/Record.cs](tools/zwwin/Record.cs) 에 직접 선언했다 — **메서드 순서가 vtable 순서라 SDK 헤더 순서를 그대로 옮겼다.** 하나라도 어긋나면 다른 메서드가 불린다
+- **시간은 고정 간격으로 매기고, 뒤처지면 직전 화면을 복제한다.** 실제 캡처 시각을 넣으면 인코더가 고정 프레임률로 다시 매기며 일찍 온 프레임을 버린다(실측 50 중 43~47). `stop` 이 보고하는 "복제" 가 그 수다
+- **기본은 소프트웨어 인코더.** 하드웨어(NVIDIA MFT)는 같은 조건에서 50 중 43 만 썼다. `zwwin.exe record --hw` 로 켤 수 있다(진단용)
+- **`stop` 은 파일을 직접 읽어 판정한다** — moov 유무, 샘플 수, 길이(`readMp4Summary`). zwwin 이 "썼다" 고 한 것과 파일에 들어간 것이 다를 수 있다
+- **기본 mode 는 screen** — 화면 그대로라 팝업·다이얼로그(`Loading..` 등)가 담긴다. 다른 창이 위를 덮으면 그것이 찍힌다. click·key 는 대상 창을 앞으로 올리므로 보통 문제없다. 가려져도 찍어야 하면 printwindow(팝업은 빠진다)
+- **커서를 그려 넣는다.** PrintWindow·CopyFromScreen 둘 다 커서를 안 담는데, zwwin 의 클릭은 실제 커서를 움직이므로 어디를 눌렀는지 보여야 한다. printwindow 는 GetWindowRect 원점부터 그리므로 커서 위치를 그 원점 기준으로 옮긴다
+- 1920x1040 · 10 fps 에서 10초에 약 1.4 MB. 확인은 Chrome 으로 재생해서 했다(상하·색·커서)
 
 ### 명령 채널 (M5)
 
