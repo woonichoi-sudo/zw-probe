@@ -246,6 +246,36 @@ export const TOOLS: Tool[] = [
     exits: { 0: '큐에 넣었다 — 결과는 관찰해서 확인한다', 1: '부르지 못했다 (이름이 겹쳤거나 비활성이거나 파이프가 없다)' },
   },
   {
+    name: 'zw_mouse',
+    verb: 'mouse',
+    title: '위젯에 마우스 클릭·끌기 (프로세스 안)',
+    desc:
+      '위젯 하나(objectName)에 누름·move·뗌을 Qt 의 실제 입력 경로(QWindowSystemInterface)로 넣는다. ' +
+      '**실제 커서를 안 옮기고 포커스도 안 뺏는다** — zw_click 과 달리 누른 채 끌기가 된다. ' +
+      '전역 수정키 상태(keyboardModifiers)도 실제 입력처럼 바뀐다.\n' +
+      '할 일은 하나만: at(클릭) · from+to(끌기, steps 개 move) · events(JSON 배열 [{type,x,y,button,modifiers}]).\n' +
+      '좌표는 위젯 기준 px. **world=reset 이면 월드 cm** 이고 리셋 카메라(2D 뷰에서 선택을 비우고 Shift+F 한 직후)로 ' +
+      '바꾼다 — 그 카메라인지는 부르는 쪽이 맞춘다. 2D 뷰는 object=2dview.\n' +
+      '**2D 뷰 위 끌기는 형상을 옮긴다** — 되돌리기는 Ctrl+Z. 오른쪽 버튼은 받지 않는다(문맥 메뉴가 응답을 막는다). ' +
+      '앱을 `-style zwagent` 로 띄웠어야 한다.',
+    mutates: true,
+    params: [
+      { name: 'object', type: 'string', required: true, desc: '위젯 objectName (2D 뷰 = 2dview)', arg: { kind: 'flag', flag: 'object' } },
+      { name: 'at', type: 'string', desc: '클릭할 "x,y"', arg: { kind: 'flag', flag: 'at' } },
+      { name: 'from', type: 'string', desc: '끌기 시작 "x,y"', arg: { kind: 'flag', flag: 'from' } },
+      { name: 'to', type: 'string', desc: '끌기 끝 "x,y"', arg: { kind: 'flag', flag: 'to' } },
+      { name: 'events', type: 'string', desc: '이벤트 JSON 배열 (at·from 대신)', arg: { kind: 'flag', flag: 'events' } },
+      { name: 'steps', type: 'number', desc: '끌기의 move 개수 (기본 10)', arg: { kind: 'flag', flag: 'steps' } },
+      { name: 'button', type: 'string', choices: ['left', 'middle'], desc: '기본 left. middle = 2D 뷰 화면 이동', arg: { kind: 'flag', flag: 'button' } },
+      { name: 'world', type: 'string', choices: ['reset'], desc: '좌표를 월드 cm 로 — 리셋 카메라 기준', arg: { kind: 'flag', flag: 'world' } },
+      { name: 'shift', type: 'boolean', desc: 'Shift 를 누른 채', arg: { kind: 'switch', flag: 'shift' } },
+      { name: 'ctrl', type: 'boolean', desc: 'Ctrl 을 누른 채', arg: { kind: 'switch', flag: 'ctrl' } },
+      { name: 'alt', type: 'boolean', desc: 'Alt 를 누른 채', arg: { kind: 'switch', flag: 'alt' } },
+      { name: 'hello', type: 'string', desc: `hello 파일 경로. 기본 ${DEFAULT_HELLO}`, arg: { kind: 'flag', flag: 'hello' } },
+    ],
+    exits: { 0: '보냈다 — 결과는 관찰해서 확인한다', 1: '보내지 않았다 (인자·위젯·파이프 문제 — 하나도 안 갔다)' },
+  },
+  {
     name: 'zw_run',
     verb: 'run',
     title: '시나리오 실행',
@@ -430,7 +460,7 @@ export function buildArgv(tool: Tool, args: Record<string, unknown>): BuildResul
   const argv = [tool.verb, ...positionals.map((p) => p.value), ...flags]
 
   // agent 계열은 hello 기본값을 %TEMP% 가 아니라 이 리포의 것으로 둔다 (위 DEFAULT_HELLO).
-  if (tool.verb === 'agent' && args.hello === undefined) argv.push('--hello', DEFAULT_HELLO)
+  if ((tool.verb === 'agent' || tool.verb === 'mouse') && args.hello === undefined) argv.push('--hello', DEFAULT_HELLO)
 
   return { ok: true, argv }
 }

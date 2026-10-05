@@ -5,6 +5,10 @@
 # network 는 명령 채널(QLocalServer = Windows named pipe) 때문이다. 대상 앱 배포
 # 폴더에 Qt5Networkd.dll 이 이미 있어서 새 의존성이 생기지 않는다 (2026-09-09 확인).
 QT += widgets network
+# gui-private 는 mouse op 의 QWindowSystemInterface 때문이다 — 플랫폼 플러그인이 OS 입력을
+# 넘기는 바로 그 입구라 전역 버튼·수정키 상태까지 실제 입력과 같게 바뀐다. 헤더만 쓰고
+# 심볼은 이미 있는 Qt5Guid.dll 에서 온다.
+QT += gui-private
 TEMPLATE = lib
 CONFIG += plugin debug c++17
 TARGET = zwagent

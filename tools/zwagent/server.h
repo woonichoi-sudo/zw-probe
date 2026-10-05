@@ -54,6 +54,8 @@ private:
 	QByteArray handleTrigger(const QJsonObject& req, const QJsonValue& id, QJsonObject& out);
 	/// 위젯 하나를 파일로 찍는다. 근거는 server.cpp 의 주석.
 	QByteArray handleGrab(const QJsonObject& req, const QJsonValue& id, QJsonObject& out);
+	/// 위젯 하나에 마우스 이벤트를 차례로 넣는다. 근거는 server.cpp 의 주석.
+	QByteArray handleMouse(const QJsonObject& req, const QJsonValue& id, QJsonObject& out);
 
 	QLocalServer* m_server = nullptr;
 	QString m_name;

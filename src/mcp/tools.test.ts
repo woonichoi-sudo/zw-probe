@@ -31,7 +31,7 @@ test('모든 도구가 종료 코드의 뜻을 갖는다', () => {
 
 test('앱을 바꾸는 도구만 mutates 다', () => {
   const mutating = TOOLS.filter((t) => t.mutates).map((t) => t.name).sort()
-  assert.deepEqual(mutating, ['zw_agent_trigger', 'zw_click', 'zw_key', 'zw_run'])
+  assert.deepEqual(mutating, ['zw_agent_trigger', 'zw_click', 'zw_key', 'zw_mouse', 'zw_run'])
 })
 
 test('inputSchema — 필수 인자가 required 에 들어간다', () => {
@@ -153,4 +153,26 @@ test('buildArgv — trigger 는 --trigger 플래그로 나간다', () => {
     '--hello',
     DEFAULT_HELLO,
   ])
+})
+
+test('buildArgv — zw_mouse 는 mouse 동사로, hello 기본값을 리포 것으로 둔다', () => {
+  const r = build('zw_mouse', { object: '2dview', from: '0,90', to: '11,90', world: 'reset', shift: true, steps: 5 })
+  assert.ok(r.ok, r.ok ? '' : r.reason)
+  if (!r.ok) return
+  assert.deepEqual(r.argv, [
+    'mouse',
+    '--object', '2dview',
+    '--from', '0,90',
+    '--to', '11,90',
+    '--steps', '5',
+    '--world', 'reset',
+    '--shift',
+    '--hello', DEFAULT_HELLO,
+  ])
+})
+
+test('buildArgv — zw_mouse 는 object 가 필요하고 button·world 는 고를 수 있는 값만', () => {
+  assert.equal(build('zw_mouse', { at: '1,1' }).ok, false)
+  assert.equal(build('zw_mouse', { object: 'p', at: '1,1', button: 'right' }).ok, false)
+  assert.equal(build('zw_mouse', { object: 'p', at: '1,1', world: 'fit' }).ok, false)
 })

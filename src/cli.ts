@@ -38,12 +38,14 @@ import {
 } from './agent/protocol.ts'
 import type { Request } from './agent/protocol.ts'
 import { judgeClick } from './input/click.ts'
+import { needsWidgetSize, planMouse } from './input/mouseArgs.ts'
 import { activePanel, clickPoint, findNodes, findOne, readDocumentState } from './uia/tree.ts'
 import type { NodeQuery } from './uia/tree.ts'
 import { BASELINE_DIR, listBaselines, runScenario } from './scenario/run.ts'
 import type { Scenario } from './scenario/steps.ts'
 import {
   findByLabel,
+  findWidgets,
   flattenWidgets,
   judgeAbi,
   judgeTree,
@@ -660,6 +662,69 @@ function cmdDiff(rest: string[], flags: Map<string, string>): number {
 }
 
 /**
+ * 위젯 하나에 마우스 이벤트를 넣는다 — 클릭·끌기. **대상 앱을 바꾼다.**
+ *
+ * 인자 → 이벤트 목록은 순수 함수(`planMouse`)가, 이벤트 하나하나의 검사와 보내기는 플러그인이
+ * 한다. 여기는 둘을 잇고, 월드 좌표면 그 사이에 위젯 크기를 받아 온다.
+ */
+async function cmdMouse(flags: Map<string, string>): Promise<number> {
+  const path = flags.get('hello') || join(tmpdir(), 'zwagent-hello.json')
+  let pid: number
+  try {
+    const parsed = parseAgentHello(JSON.parse(readFileSync(path, 'utf8')))
+    if (!parsed.ok) {
+      console.error(`hello 파일이 쓸 수 없다: ${path}\n  ${parsed.reason}`)
+      return 1
+    }
+    pid = parsed.hello.pid
+  } catch (err) {
+    console.error(`hello 파일을 읽지 못했다: ${path}\n  ${err instanceof Error ? err.message : String(err)}`)
+    return 1
+  }
+
+  let size: { width: number; height: number } | undefined
+  if (needsWidgetSize(flags)) {
+    // **지금의** 크기 — 사람이 창이나 패널 크기를 바꿨으면 hello 스냅샷은 틀리다
+    const t = await call(pid, { id: 1, op: 'tree' })
+    if (!t.ok) {
+      console.error(`위젯 크기를 받지 못했다: ${t.error}`)
+      return 1
+    }
+    const hits = findWidgets(parseTreeResult(t.body).topLevelWidgets, flags.get('object') ?? '')
+    if (hits.length !== 1) {
+      console.error(`objectName "${flags.get('object') ?? ''}" 인 위젯이 ${hits.length}개다 — 하나여야 크기를 쓴다`)
+      return 1
+    }
+    size = { width: hits[0]!.width, height: hits[0]!.height }
+  }
+
+  const plan = planMouse(flags, size)
+  if (!plan.ok) {
+    console.error(plan.error)
+    return 1
+  }
+  if (plan.camera !== undefined) {
+    const c = plan.camera
+    console.log(
+      `카메라  리셋 가정 — 중심 (${c.cx}, ${c.cy}) cm · 필름 높이 ${c.filmHeight} cm · 위젯 ${c.width}x${c.height} · ${(c.height / c.filmHeight).toFixed(4)} px/cm`,
+    )
+  }
+  const first = plan.events[0]!
+  const last = plan.events[plan.events.length - 1]!
+  console.log(`보냄  ${plan.events.length}개 — ${first.type} (${first.x.toFixed(1)},${first.y.toFixed(1)}) … ${last.type} (${last.x.toFixed(1)},${last.y.toFixed(1)})`)
+
+  const res = await call(pid, { id: 2, op: 'mouse', objectName: plan.objectName, events: plan.events })
+  if (!res.ok) {
+    console.error(`보내지 않았다: ${res.error}`)
+    return 1
+  }
+  const b = res.body
+  console.log(`받음  ${b.objectName} (${b.class}) ${b.width}x${b.height} · 화면 원점 (${b.screenX},${b.screenY}) · 넣은 이벤트 ${b.delivered}개`)
+  console.log('주의  무슨 일이 일어났는지는 관찰해서 확인한다 — zwprobe agent --live · zwprobe shot · History')
+  return 0
+}
+
+/**
  * `zwagent.dll` 이 남긴 hello 파일을 읽어 보고한다.
  *
  * **플러그인이 프로세스 안에 들어갔는지 확인하는 유일한 방법이다.** stdout 은 대상
@@ -1148,6 +1213,8 @@ async function main(): Promise<number> {
       return cmdDiff(rest, flags)
     case 'agent':
       return await cmdAgent(flags)
+    case 'mouse':
+      return await cmdMouse(flags)
     case 'record':
       return await cmdRecord(rest, flags)
     default:
@@ -1171,7 +1238,10 @@ async function main(): Promise<number> {
           '    zwprobe diff <a> <b> [--tolerance N] [--max-changed 0.01]  (0=같다 2=다르다)\n' +
           '  에이전트 — 앱을 `-style zwagent` 로 띄운 뒤\n' +
           '    zwprobe agent     [--hello 경로] [--filter 조각] [--max N]\n' +
-          '                      (0=로드+UI 확인 3=로드했으나 UI 못 봄 1=못 읽음)',
+          '                      (0=로드+UI 확인 3=로드했으나 UI 못 봄 1=못 읽음)\n' +
+          '    zwprobe mouse     --object 2dview (--at x,y | --from x,y --to x,y [--steps N] | --events <JSON>)\n' +
+          '                      [--button middle] [--shift] [--ctrl] [--alt] [--world reset] [--hello 경로]\n' +
+          '                      위젯 기준 px. --world reset 이면 월드 cm (선택 빈 Shift+F 직후 카메라)',
       )
       return 1
   }

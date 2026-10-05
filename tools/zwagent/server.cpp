@@ -16,6 +16,8 @@
 #include <QJsonObject>
 #include <QLocalServer>
 #include <QLocalSocket>
+#include <QWindow>
+#include <qpa/qwindowsysteminterface.h>
 
 namespace
 {
@@ -174,6 +176,11 @@ QByteArray Server::handle(const QByteArray& line)
 		return handleGrab(req, id, out);
 	}
 
+	if (op == QStringLiteral("mouse"))
+	{
+		return handleMouse(req, id, out);
+	}
+
 	return fail(id, QStringLiteral("모르는 op: \"%1\"").arg(op));
 }
 
@@ -329,6 +336,142 @@ QByteArray Server::handleGrab(const QJsonObject& req, const QJsonValue& id, QJso
 	out[QStringLiteral("visible")] = w->isVisible();
 	if (!pngPath.isEmpty()) out[QStringLiteral("pngPath")] = pngPath;
 	if (!rawPath.isEmpty()) out[QStringLiteral("rawPath")] = rawPath;
+	return reply(out);
+}
+} // namespace zwagent
+
+namespace zwagent
+{
+namespace
+{
+struct MouseStep
+{
+	QEvent::Type type = QEvent::None;
+	QPoint pos;
+	Qt::MouseButton button = Qt::NoButton;
+	Qt::KeyboardModifiers mods = Qt::NoModifier;
+};
+} // namespace
+
+/**
+ * 위젯 하나에 마우스 이벤트를 차례로 넣는다. **trigger 다음으로 대상 앱을 바꾸는 곳이다.**
+ *
+ * **왜 QWindowSystemInterface 인가.** 플랫폼 플러그인이 OS 마우스 입력을 Qt 에 넘기는 바로
+ * 그 입구다. 그래서 ① 전역 상태(`QGuiApplication::keyboardModifiers()`·`mouseButtons()`)가
+ * 실제 입력처럼 바뀌고 — 대상 앱의 스냅·사각형 도구가 이것을 읽는다 — ② 위젯 찾기·마우스
+ * 잡기(grab)·더블클릭 판정이 Qt 자신의 규칙대로 된다. `sendEvent` 로 위젯에 바로 던지면
+ * 이벤트만 맞고 전역은 비어 있다. 실제 커서는 안 움직이고 창 포커스도 안 뺏는다.
+ *
+ * **다 검사한 뒤 보낸다.** 하나라도 틀리면 하나도 보내지 않는다 — 누름만 가고 뗌이 거부되면
+ * 앱에 눌린 버튼이 남는다. 같은 이유로 끝에 눌린 버튼이 남는 요청도 거부한다.
+ *
+ * **오른쪽 버튼은 받지 않는다.** 2D 뷰의 오른쪽 뗌이 문맥 메뉴를 띄울 수 있고, 메뉴의
+ * `exec()` 는 여기서 동기로 부른 뗌 안에서 이벤트 루프를 돌려 응답을 막는다.
+ *
+ * 좌표는 위젯 기준 px. 위젯 밖 좌표는 거부한다 — 밖의 점은 다른 위젯이 받는다.
+ */
+QByteArray Server::handleMouse(const QJsonObject& req, const QJsonValue& id, QJsonObject& out)
+{
+	const QString name = req.value(QStringLiteral("objectName")).toString();
+	if (name.isEmpty()) return fail(id, QStringLiteral("mouse 에는 objectName 이 필요하다."));
+
+	const QList<QWidget*> hits = findByObjectName(name);
+	if (hits.isEmpty()) return fail(id, QStringLiteral("objectName 이 \"%1\" 인 위젯이 없다.").arg(name));
+	if (hits.size() > 1)
+	{
+		return fail(id, QStringLiteral("objectName 이 \"%1\" 인 위젯이 %2개다.").arg(name).arg(hits.size()));
+	}
+	QWidget* w = hits.first();
+	if (!w->isVisible()) return fail(id, QStringLiteral("\"%1\" 이 보이지 않는다.").arg(name));
+
+	// 위젯을 품은 창. 자기 창이 있으면(native) 그것, 아니면 가장 가까운 native 조상
+	QWidget* host = w->windowHandle() != nullptr ? w : w->nativeParentWidget();
+	QWindow* win = host != nullptr ? host->windowHandle() : nullptr;
+	if (win == nullptr) return fail(id, QStringLiteral("\"%1\" 을 품은 창(QWindow)이 없다.").arg(name));
+
+	const QJsonValue evv = req.value(QStringLiteral("events"));
+	if (!evv.isArray() || evv.toArray().isEmpty())
+	{
+		return fail(id, QStringLiteral("events 는 비지 않은 배열이어야 한다."));
+	}
+
+	QList<MouseStep> steps;
+	Qt::MouseButtons held = Qt::NoButton;
+	const QJsonArray arr = evv.toArray();
+	for (int i = 0; i < arr.size(); i++)
+	{
+		const QJsonObject e = arr.at(i).toObject();
+		const QString at = QStringLiteral("events[%1]").arg(i);
+		MouseStep st;
+		const QString type = e.value(QStringLiteral("type")).toString();
+		if (type == QStringLiteral("press")) st.type = QEvent::MouseButtonPress;
+		else if (type == QStringLiteral("move")) st.type = QEvent::MouseMove;
+		else if (type == QStringLiteral("release")) st.type = QEvent::MouseButtonRelease;
+		else return fail(id, QStringLiteral("%1 의 type 은 press·move·release 중 하나다: \"%2\"").arg(at, type));
+
+		const QString button = e.value(QStringLiteral("button")).toString(QStringLiteral("left"));
+		if (button == QStringLiteral("left")) st.button = Qt::LeftButton;
+		else if (button == QStringLiteral("middle")) st.button = Qt::MiddleButton;
+		else
+		{
+			return fail(id, QStringLiteral("%1 의 button 은 left·middle 만 받는다: \"%2\" — 오른쪽 뗌은 문맥 메뉴가 응답을 막을 수 있다").arg(at, button));
+		}
+
+		const QJsonValue xv = e.value(QStringLiteral("x"));
+		const QJsonValue yv = e.value(QStringLiteral("y"));
+		if (!xv.isDouble() || !yv.isDouble()) return fail(id, QStringLiteral("%1 에 x·y(숫자)가 필요하다.").arg(at));
+		// Qt 마우스 이벤트 위치는 정수 위젯 좌표다(대상 앱은 event->x() 를 읽는다). 반올림을 여기 한 곳에서 한다.
+		st.pos = QPoint(qRound(xv.toDouble()), qRound(yv.toDouble()));
+		if (!w->rect().contains(st.pos))
+		{
+			return fail(id, QStringLiteral("%1 의 (%2,%3) 이 위젯 밖이다 — 위젯은 %4x%5")
+			                    .arg(at).arg(st.pos.x()).arg(st.pos.y()).arg(w->width()).arg(w->height()));
+		}
+
+		const QJsonObject m = e.value(QStringLiteral("modifiers")).toObject();
+		if (m.value(QStringLiteral("shift")).toBool()) st.mods |= Qt::ShiftModifier;
+		if (m.value(QStringLiteral("ctrl")).toBool()) st.mods |= Qt::ControlModifier;
+		if (m.value(QStringLiteral("alt")).toBool()) st.mods |= Qt::AltModifier;
+
+		if (st.type == QEvent::MouseButtonPress)
+		{
+			if (held & st.button) return fail(id, QStringLiteral("%1 은 이미 누른 버튼을 또 누른다.").arg(at));
+			held |= st.button;
+		}
+		else if (st.type == QEvent::MouseButtonRelease)
+		{
+			if (!(held & st.button)) return fail(id, QStringLiteral("%1 은 누르지 않은 버튼을 뗀다.").arg(at));
+			held &= ~Qt::MouseButtons(st.button);
+		}
+		steps.append(st);
+	}
+	if (held != Qt::NoButton) return fail(id, QStringLiteral("끝에 눌린 버튼이 남는다 — 뗌까지 한 요청에 넣는다."));
+
+	// 보낸다. 버튼 상태는 Qt 규칙대로 — 누름·뗌의 state 는 그 이벤트 **뒤의** 눌린 버튼들이다.
+	Qt::MouseButtons state = Qt::NoButton;
+	int delivered = 0;
+	for (const MouseStep& st : steps)
+	{
+		if (st.type == QEvent::MouseButtonPress) state |= st.button;
+		else if (st.type == QEvent::MouseButtonRelease) state &= ~Qt::MouseButtons(st.button);
+		const QPoint local = host == w ? st.pos : w->mapTo(host, st.pos);
+		const QPoint global = w->mapToGlobal(st.pos);
+		QWindowSystemInterface::handleMouseEvent<QWindowSystemInterface::SynchronousDelivery>(
+		    win, QPointF(local), QPointF(global), state,
+		    st.type == QEvent::MouseMove ? Qt::NoButton : st.button, st.type, st.mods);
+		delivered++;
+		// 이벤트 사이에 앱이 다시 그리고 큐에 쌓인 일을 처리하게 한다 — 실제 입력도 그 사이에 루프가 돈다
+		QCoreApplication::processEvents();
+	}
+
+	out[QStringLiteral("objectName")] = name;
+	out[QStringLiteral("class")] = QString::fromUtf8(w->metaObject()->className());
+	out[QStringLiteral("width")] = w->width();
+	out[QStringLiteral("height")] = w->height();
+	const QPoint tl = w->mapToGlobal(QPoint(0, 0));
+	out[QStringLiteral("screenX")] = tl.x();
+	out[QStringLiteral("screenY")] = tl.y();
+	out[QStringLiteral("delivered")] = delivered;
 	return reply(out);
 }
 } // namespace zwagent

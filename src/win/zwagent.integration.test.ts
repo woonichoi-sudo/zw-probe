@@ -429,3 +429,106 @@ test('QWidget::grab() 이 위젯 하나를 shot 과 같은 형식으로 찍는�
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('mouse — 위젯 좌표로 누름·move·뗌을 Qt 의 실제 입력 경로로 넣는다', { skip }, async () => {
+  // **이벤트에 실린 것과 전역 상태가 둘 다 맞아야 실제 입력과 같다.** 대상 앱의 스냅·사각형
+  // 도구가 `QGuiApplication::keyboardModifiers()` 를 읽는다 — sendEvent 로 위젯에만 던지면
+  // 이벤트의 수정키는 맞고 전역은 비어 있는 상태가 된다. 픽스처 mousePad 가 둘을 같이 적는다.
+  const dir = mkdtempSync(join(tmpdir(), 'zwprobe-mouse-'))
+  const hello = join(dir, 'hello.json')
+  const child = spawn(QTAPP_EXE, ['--mousepad', '-style', 'zwagent'], {
+    detached: false,
+    stdio: 'ignore',
+    env: qtEnv({ ZWAGENT_HELLO: hello }),
+  })
+  assert.ok(child.pid !== undefined, '픽스처 프로세스를 띄우지 못했다')
+  const pid = child.pid!
+
+  const logLines = async (): Promise<string[]> => {
+    const t = await call(pid, { id: 9, op: 'tree' }, { timeoutMs: 10000 })
+    assert.equal(t.ok, true)
+    if (!t.ok) return []
+    const log = findWidgets(parseTreeResult(t.body).topLevelWidgets, 'mouseLog')
+    assert.equal(log.length, 1, 'mouseLog 라벨이 하나여야 한다')
+    return (log[0]!.text ?? '').split('\n').filter((l) => l !== '')
+  }
+
+  try {
+    await waitForWindow(qtFilter(pid))
+    await waitForHello(hello)
+
+    const res = await call(
+      pid,
+      {
+        id: 1,
+        op: 'mouse',
+        objectName: 'mousePad',
+        events: [
+          { type: 'press', x: 10, y: 20, button: 'left' },
+          { type: 'move', x: 30, y: 40, button: 'left', modifiers: { shift: true } },
+          { type: 'move', x: 50, y: 60, button: 'left', modifiers: { shift: true } },
+          { type: 'release', x: 50, y: 60, button: 'left', modifiers: { shift: true } },
+        ],
+      },
+      { timeoutMs: 10000 },
+    )
+    assert.equal(res.ok, true, res.ok ? '' : res.error)
+    if (!res.ok) return
+    assert.equal(res.body.delivered, 4)
+    // MousePad 는 Q_OBJECT 가 없어 Qt 에는 QWidget 으로 보인다 — 크기로 그 위젯임을 본다
+    assert.ok(Number(res.body.width) > 60 && Number(res.body.height) > 60, '판 크기')
+
+    // **누름 앞의 move 는 Qt 가 만든다** — 누름 위치가 마지막 포인터 위치와 다르면 그 자리로의
+    // 버튼 없는 move 를 먼저 보낸다(QGuiApplicationPrivate::processMouseEvent). 실제 마우스도
+    // 그 자리를 지나 누르므로 실제 입력과 같다. 대상 앱에서는 그 move 가 호버가 된다.
+    assert.deepEqual(await logLines(), [
+      'move 10,20 b=- bs=- m=- kb=-',
+      'press 10,20 b=L bs=L m=- kb=-',
+      'move 30,40 b=- bs=L m=S kb=S',
+      'move 50,60 b=- bs=L m=S kb=S',
+      'release 50,60 b=L bs=- m=S kb=S',
+    ])
+
+    // 가운데 버튼 끌기 — 2D 뷰의 화면 이동
+    const mid = await call(
+      pid,
+      {
+        id: 2,
+        op: 'mouse',
+        objectName: 'mousePad',
+        events: [
+          { type: 'press', x: 5, y: 5, button: 'middle' },
+          { type: 'move', x: 6, y: 7, button: 'middle' },
+          { type: 'release', x: 6, y: 7, button: 'middle' },
+        ],
+      },
+      { timeoutMs: 10000 },
+    )
+    assert.equal(mid.ok, true, mid.ok ? '' : mid.error)
+    const lines = await logLines()
+    assert.deepEqual(lines.slice(-3), [
+      'press 5,5 b=M bs=M m=- kb=-',
+      'move 6,7 b=- bs=M m=- kb=-',
+      'release 6,7 b=M bs=- m=- kb=-',
+    ])
+
+    // 거부 — 하나도 보내지 않아야 한다 (반쯤 보낸 끌기는 앱에 눌린 버튼을 남긴다)
+    const before = lines.length
+    const bad: Array<[string, Record<string, unknown>, RegExp]> = [
+      ['없는 위젯', { objectName: '없는위젯', events: [{ type: 'press', x: 1, y: 1, button: 'left' }] }, /없다/],
+      ['위젯 밖', { objectName: 'mousePad', events: [{ type: 'press', x: 1, y: 1, button: 'left' }, { type: 'move', x: -5, y: 1, button: 'left' }] }, /밖/],
+      ['오른쪽 버튼', { objectName: 'mousePad', events: [{ type: 'press', x: 1, y: 1, button: 'right' }] }, /button/],
+      ['모르는 type', { objectName: 'mousePad', events: [{ type: 'wheel', x: 1, y: 1, button: 'left' }] }, /type/],
+      ['빈 events', { objectName: 'mousePad', events: [] }, /events/],
+    ]
+    for (const [what, body, why] of bad) {
+      const r = await call(pid, { id: 3, op: 'mouse', ...body } as never, { timeoutMs: 10000 })
+      assert.equal(r.ok, false, `${what} 는 거부돼야 한다`)
+      if (!r.ok) assert.match(r.error, why, what)
+    }
+    assert.equal((await logLines()).length, before, '거부한 요청의 이벤트가 하나라도 닿으면 안 된다')
+  } finally {
+    child.kill()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

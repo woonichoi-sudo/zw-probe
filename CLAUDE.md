@@ -144,6 +144,8 @@ Bash(git --git-dir=*)  Bash(git --work-tree=*)  Bash(git push:*)
 
 2026-09-30: **녹화(`record`·`zw_record`)를 붙였다.** Media Foundation 으로 H.264 MP4 — ffmpeg 없이 된다. 테스트 328개 통과, `skipped 0`. 아래 "녹화" 절. **MCP 서버는 도구 목록을 시작할 때 읽으므로 이미 떠 있는 세션에서는 `zw_record` 가 안 보인다** — 세션을 새로 열거나 `/mcp` 로 다시 연결한다.
 
+2026-10-05: **위젯에 마우스 끌기(`mouse`·`zw_mouse`)와 2D 뷰 월드 좌표(`--world reset`)를 붙였다.** QWindowSystemInterface 로 넣어 커서·포커스를 안 건드리고 전역 수정키도 맞는다. 실앱 보정 1px 안. 테스트 346개 중 343 통과 — **WinForms 픽스처 시험 3개 실패(이번 변경과 닿는 파일 없음, 원인 미확인)**, `skipped 0`. 경과는 WORKLOG. 새 MCP 도구라 떠 있는 세션은 `/mcp` 로 다시 연결해야 보인다.
+
 **앱은 꺼져 있다** (2026-09-17 확인, `state` 종료 코드 1). 아래 2026-09-15 문단은 **그때의 상태이고 지금은 아니다** — 그 데님 바지는 저장하지 않았으므로 없어졌다. 다시 띄우면 `Untitled.zls` 가 깨끗하게 열린다.
 
 <details><summary>2026-09-15 세션 끝의 상태 (지금은 아니다)</summary>

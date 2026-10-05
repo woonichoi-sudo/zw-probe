@@ -9,6 +9,7 @@
 
 import { parseAgentHello } from './hello.ts'
 import type { AgentWidget } from './hello.ts'
+import type { MouseEventSpec } from '../input/view2d.ts'
 
 /** 파이프 이름에 pid 가 들어간다. 고정 이름이면 병렬 테스트가 서로의 파이프를 잡는다. */
 export function pipeNameFor(pid: number): string {
@@ -33,6 +34,13 @@ export type Request =
   | { id: number; op: 'trigger'; text: string; path?: string }
   /** 위젯 하나를 파일로 찍는다. 플러그인이 직접 쓴다 — 파이프에 이미지를 싣지 않는다 */
   | { id: number; op: 'grab'; objectName: string; pngPath?: string; rawPath?: string }
+  /**
+   * 위젯 하나에 마우스 이벤트를 차례로 넣는다. **대상 앱을 바꾼다** — 2D 뷰 위 끌기는 형상을 옮긴다.
+   *
+   * 좌표는 위젯 기준 px. Qt 의 실제 입력 경로(QWindowSystemInterface)로 넣으므로 커서·포커스를
+   * 건드리지 않고 전역 버튼·수정키 상태도 바뀐다. 하나라도 틀리면 **하나도 보내지 않는다.**
+   */
+  | { id: number; op: 'mouse'; objectName: string; events: MouseEventSpec[] }
 
 /** 요청 한 줄. 끝의 줄바꿈까지 포함한다 — 서버가 줄로 끊어 읽는다. */
 export function encodeRequest(req: Request): string {

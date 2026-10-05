@@ -19,6 +19,8 @@
 #include <QAction>
 #include <QApplication>
 #include <QDialog>
+#include <QGuiApplication>
+#include <QMouseEvent>
 #include <QGridLayout>
 #include <QLabel>
 #include <QMainWindow>
@@ -74,6 +76,71 @@ QDialog* makeDialog(QWidget* parent, bool modal)
 
 	return d;
 }
+
+/**
+ * `--mousepad` 모드의 중앙 위젯 — **받은 마우스 이벤트를 라벨에 적는다.**
+ *
+ * zwagent 의 `mouse` op 을 대상 앱 없이 검증하기 위한 것이다. 한 줄에 이벤트 하나:
+ *   `press 10,20 b=L bs=L m=S kb=S`
+ *   b  = 이 이벤트의 버튼(button())   bs = 눌린 버튼 전체(buttons())
+ *   m  = 이벤트의 수정키(modifiers()) kb = **그 순간의 전역 수정키**
+ *        (QGuiApplication::keyboardModifiers()). 대상 앱의 스냅·사각형 도구가 이것을
+ *        읽으므로 이벤트에만 실린 수정키로는 부족하다 — 둘 다 맞아야 실제 입력과 같다.
+ * 라벨은 마우스를 받지 않게 둔다 — 받으면 라벨 영역의 이벤트가 라벨 좌표로 바뀐다.
+ */
+QString buttonLetters(Qt::MouseButtons b)
+{
+	QString s;
+	if (b & Qt::LeftButton) s += 'L';
+	if (b & Qt::MiddleButton) s += 'M';
+	if (b & Qt::RightButton) s += 'R';
+	return s.isEmpty() ? QStringLiteral("-") : s;
+}
+
+QString modifierLetters(Qt::KeyboardModifiers m)
+{
+	QString s;
+	if (m & Qt::ShiftModifier) s += 'S';
+	if (m & Qt::ControlModifier) s += 'C';
+	if (m & Qt::AltModifier) s += 'A';
+	return s.isEmpty() ? QStringLiteral("-") : s;
+}
+
+class MousePad : public QWidget
+{
+public:
+	explicit MousePad(QWidget* parent) : QWidget(parent)
+	{
+		setObjectName("mousePad");
+		setMouseTracking(true);
+		m_log = new QLabel(this);
+		m_log->setObjectName("mouseLog");
+		m_log->setAttribute(Qt::WA_TransparentForMouseEvents);
+		m_log->setGeometry(0, 0, 10, 10);
+	}
+
+protected:
+	void mousePressEvent(QMouseEvent* e) override { note("press", e); }
+	void mouseMoveEvent(QMouseEvent* e) override { note("move", e); }
+	void mouseReleaseEvent(QMouseEvent* e) override { note("release", e); }
+
+private:
+	void note(const char* kind, QMouseEvent* e)
+	{
+		m_lines << QStringLiteral("%1 %2,%3 b=%4 bs=%5 m=%6 kb=%7")
+		               .arg(QLatin1String(kind))
+		               .arg(e->x())
+		               .arg(e->y())
+		               .arg(buttonLetters(e->button()))
+		               .arg(buttonLetters(e->buttons()))
+		               .arg(modifierLetters(e->modifiers()))
+		               .arg(modifierLetters(QGuiApplication::keyboardModifiers()));
+		m_log->setText(m_lines.join('\n'));
+	}
+
+	QLabel* m_log = nullptr;
+	QStringList m_lines;
+};
 } // namespace
 
 int main(int argc, char** argv)
@@ -82,11 +149,13 @@ int main(int argc, char** argv)
 
 	bool wantModal = false;
 	bool wantModeless = false;
+	bool wantMousePad = false;
 	for (int i = 1; i < argc; i++)
 	{
 		const QString a = QString::fromLocal8Bit(argv[i]);
 		if (a == "--modal") wantModal = true;
 		if (a == "--modeless") wantModeless = true;
+		if (a == "--mousepad") wantMousePad = true;
 	}
 
 	QMainWindow window;
@@ -164,7 +233,16 @@ int main(int argc, char** argv)
 	auto* disabled = other->addAction("Disabled");
 	disabled->setEnabled(false);
 
-	window.setCentralWidget(central);
+	if (wantMousePad)
+	{
+		// 사분면 대신 마우스 받는 판 하나. 사분면 시험(캡처·grab)과 섞지 않으려고 따로 둔다.
+		central->hide();
+		window.setCentralWidget(new MousePad(&window));
+	}
+	else
+	{
+		window.setCentralWidget(central);
+	}
 	window.show();
 
 	if (wantModal || wantModeless)
