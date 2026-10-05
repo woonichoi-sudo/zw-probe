@@ -675,3 +675,15 @@ zweave-web(헤드리스 워커) 세션이 2D 편집(클릭 선택·끌기·키)�
 **실앱 보정이 1px 안에서 맞았다.** 빈 씬, 2dview 642x933, 빈 곳 클릭(포커스) → Shift+F → grab. 예측: x=0 축 321.0, y=0 축 848.2, 격자 42.41 px/10cm. 실측: 축 321·848, 격자 42.36(열)·42.41(행). 고DPI 배율을 앱이 끄므로(zwAppZWeave.cpp:182·204) 위젯 px = 물리 px 라는 전제도 이것으로 같이 확인됐다.
 
 **전체 스위트에서 WinForms 픽스처 시험 셋이 실패한다** — 캡처 사분면(우상이 검정)·클릭 사분면·UIA 좌표. 이번 변경과 닿는 파일이 없다(zwwin.ts·image·uia·fixtures/winapp 무변경). 원인은 아직 안 봤다.
+
+## 2026-10-05 — 키도 프로세스 안으로(`key --object`)
+
+**zwwin `key` 가 남의 창에 "s" 를 쳤다.** 사람이 다른 창을 쓰고 있으면 Windows 가 SetForegroundWindow 를 막는다. keybd_event 는 시스템 전역이라 그때 키가 사람이 쓰던 창으로 간다(종료 코드 2 "포그라운드 확보 못함" 은 이미 보낸 뒤의 보고다). 사람과 앱을 같이 쓰는 한 전역 키는 위험하다.
+
+**위젯에 QKeyEvent 를 `sendEvent` 로.** 대상 앱 2D 뷰는 `event->key()`·`modifiers()` 만 읽는다(zwQt2DView.cpp:930-964) — 실제 키와 같다. Qt 단축키 체계(QShortcutMap)는 건너뛰지만, 2D 뷰는 자기 단축키 경로(RunCommandByKey 류)로 S·A·Shift+F·방향키·Delete·SPACE 를 다 처리했다(실앱 확인). 가상키 → Qt 키는 TS(`qtKey.ts`), 값은 qnamespace.h. `PLUS`(VK_OEM_PLUS)는 Key_Equal/Key_Plus 가 정해지지 않아 거부한다.
+
+**한동안 드래그가 "안 먹는" 것처럼 보였다 — 원인은 입력 도구가 아니었다.** 문서를 연 뒤 10초 안팎에 시뮬레이션이 저절로 시작되고(로그 "scene mode has changed to SIMULATION"), 그 전환과 겹친 2D 드래그는 사라진다. 그걸 모르고 Shift·키 경로·커서·창 활성을 차례로 의심했다. 로그 시각을 맞춰 보고서야 풀렸다 — **실앱 조작이 이상하면 앱 로그의 상태 전환 시각부터 본다.** 상태 표시줄("Simulation mode") 은 열기 전 값이 남아 있어 대기 조건으로 못 쓰고, 연 뒤에 새로 찍힌 로그 줄을 기다려야 한다.
+
+**`doc` 의 종료 코드 3(변경 있음)** 이 `set -e` 스크립트를 멈춘다 — 실패가 아니라 판정이다.
+
+**남은 것**: 스플래시 닫기·Save 옵션 창 OK 는 objectName 없는 버튼이라 아직 실제 커서 클릭(zwwin)이다. 다음 플러그인 빌드 때 mouse op 에 창 제목·라벨로 위젯을 집는 길을 더한다.

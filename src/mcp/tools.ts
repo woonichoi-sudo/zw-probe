@@ -188,10 +188,15 @@ export const TOOLS: Tool[] = [
     desc:
       'shortcut.ini 의 기능 이름으로 단축키를 보낸다. **창을 포그라운드로 올린다** — keybd_event 가 ' +
       '시스템 전역이라 그래야 한다. 이름은 zw_shortcuts 로 찾는다.\n' +
-      '**단축키는 포커스가 있는 뷰로 간다** — 2D 를 누른 뒤 3D 단축키를 보내면 무시된다.',
+      '**단축키는 포커스가 있는 뷰로 간다** — 2D 를 누른 뒤 3D 단축키를 보내면 무시된다.\n' +
+      '**object 를 주면 프로세스 안에서 그 위젯에 바로 보낸다**(zwagent, 앱을 `-style zwagent` 로 띄웠어야 한다) — ' +
+      '포그라운드를 뺏지 않고 사람이 다른 창을 써도 키가 새지 않는다. 2D 뷰는 object=2dview. **가능하면 이쪽을 쓴다** — ' +
+      '포그라운드를 못 잡으면 전역 키가 사람이 쓰던 창으로 간다.',
     mutates: true,
     params: [
       { name: 'feature', type: 'string', required: true, desc: '기능 이름 (예: SimulationStart, MainUndo, CameraFit)', arg: { kind: 'positional', at: 0 } },
+      { name: 'object', type: 'string', desc: '받을 위젯 objectName (2D 뷰 = 2dview). 주면 프로세스 안으로 보낸다', arg: { kind: 'flag', flag: 'object' } },
+      { name: 'hello', type: 'string', desc: `object 와 함께: hello 파일 경로. 기본 ${DEFAULT_HELLO}`, arg: { kind: 'flag', flag: 'hello' } },
       ...FILTERS,
     ],
     exits: { 0: '보냈다', 2: '포그라운드를 확보하지 못했다 — 키가 다른 창으로 갔을 수 있다', 1: '기능 이름을 찾지 못했다' },
@@ -460,7 +465,7 @@ export function buildArgv(tool: Tool, args: Record<string, unknown>): BuildResul
   const argv = [tool.verb, ...positionals.map((p) => p.value), ...flags]
 
   // agent 계열은 hello 기본값을 %TEMP% 가 아니라 이 리포의 것으로 둔다 (위 DEFAULT_HELLO).
-  if ((tool.verb === 'agent' || tool.verb === 'mouse') && args.hello === undefined) argv.push('--hello', DEFAULT_HELLO)
+  if ((tool.verb === 'agent' || tool.verb === 'mouse' || (tool.verb === 'key' && args.object !== undefined)) && args.hello === undefined) argv.push('--hello', DEFAULT_HELLO)
 
   return { ok: true, argv }
 }

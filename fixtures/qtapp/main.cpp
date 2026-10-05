@@ -20,6 +20,7 @@
 #include <QApplication>
 #include <QDialog>
 #include <QGuiApplication>
+#include <QKeyEvent>
 #include <QMouseEvent>
 #include <QGridLayout>
 #include <QLabel>
@@ -123,8 +124,21 @@ protected:
 	void mousePressEvent(QMouseEvent* e) override { note("press", e); }
 	void mouseMoveEvent(QMouseEvent* e) override { note("move", e); }
 	void mouseReleaseEvent(QMouseEvent* e) override { note("release", e); }
+	// 키도 적는다 — zwagent `key` op 검증용. 키 값은 16진, 글자는 그대로
+	void keyPressEvent(QKeyEvent* e) override { noteKey("keypress", e); }
+	void keyReleaseEvent(QKeyEvent* e) override { noteKey("keyrelease", e); }
 
 private:
+	void noteKey(const char* kind, QKeyEvent* e)
+	{
+		m_lines << QStringLiteral("%1 k=%2 m=%3 t=%4")
+		               .arg(QLatin1String(kind))
+		               .arg(e->key(), 0, 16)
+		               .arg(modifierLetters(e->modifiers()))
+		               .arg(e->text().isEmpty() ? QStringLiteral("-") : e->text());
+		m_log->setText(m_lines.join('\n'));
+	}
+
 	void note(const char* kind, QMouseEvent* e)
 	{
 		m_lines << QStringLiteral("%1 %2,%3 b=%4 bs=%5 m=%6 kb=%7")

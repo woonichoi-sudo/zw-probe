@@ -532,3 +532,58 @@ test('mouse — 위젯 좌표로 누름·move·뗌을 Qt 의 실제 입력 경�
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('key — 위젯에 QKeyEvent 누름·뗌을 보낸다 (포그라운드·포커스 불필요)', { skip }, async () => {
+  // 대상 앱 2D 뷰는 event->key()·modifiers() 만 읽는다. 위젯에 바로 보내면 OS 포그라운드를
+  // 뺏지 않는다 — zwwin key 는 포그라운드를 못 잡으면 남의 창에 키가 간다(2026-10-05 실제로).
+  const dir = mkdtempSync(join(tmpdir(), 'zwprobe-key-'))
+  const hello = join(dir, 'hello.json')
+  const child = spawn(QTAPP_EXE, ['--mousepad', '-style', 'zwagent'], {
+    detached: false,
+    stdio: 'ignore',
+    env: qtEnv({ ZWAGENT_HELLO: hello }),
+  })
+  assert.ok(child.pid !== undefined, '픽스처 프로세스를 띄우지 못했다')
+  const pid = child.pid!
+  const logLines = async (): Promise<string[]> => {
+    const t = await call(pid, { id: 9, op: 'tree' }, { timeoutMs: 10000 })
+    if (!t.ok) return []
+    const log = findWidgets(parseTreeResult(t.body).topLevelWidgets, 'mouseLog')
+    return (log[0]?.text ?? '').split('\n').filter((l) => l !== '')
+  }
+  try {
+    await waitForWindow(qtFilter(pid))
+    await waitForHello(hello)
+    const send = (body: Record<string, unknown>) => call(pid, { id: 1, op: 'key', objectName: 'mousePad', ...body } as never, { timeoutMs: 10000 })
+
+    const a = await send({ key: 0x53, text: 's' })
+    assert.equal(a.ok, true, a.ok ? '' : a.error)
+    const b = await send({ key: 0x46, text: 'F', modifiers: { shift: true } })
+    assert.equal(b.ok, true, b.ok ? '' : b.error)
+    const c = await send({ key: 0x01000007, text: '' })
+    assert.equal(c.ok, true, c.ok ? '' : c.error)
+    assert.deepEqual(await logLines(), [
+      'keypress k=53 m=- t=s',
+      'keyrelease k=53 m=- t=s',
+      'keypress k=46 m=S t=F',
+      'keyrelease k=46 m=S t=F',
+      'keypress k=1000007 m=- t=-',
+      'keyrelease k=1000007 m=- t=-',
+    ])
+
+    const bad: Array<[string, Record<string, unknown>, RegExp]> = [
+      ['없는 위젯', { objectName: '없는위젯', key: 0x53 }, /없다/],
+      ['키 없음', { text: 's' }, /key/],
+      ['키 0', { key: 0 }, /key/],
+    ]
+    for (const [what, body, why] of bad) {
+      const r = await send(body)
+      assert.equal(r.ok, false, `${what} 는 거부돼야 한다`)
+      if (!r.ok) assert.match(r.error, why, what)
+    }
+    assert.equal((await logLines()).length, 6, '거부한 요청의 키가 닿으면 안 된다')
+  } finally {
+    child.kill()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

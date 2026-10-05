@@ -9,7 +9,7 @@
 
 import { parseAgentHello } from './hello.ts'
 import type { AgentWidget } from './hello.ts'
-import type { MouseEventSpec } from '../input/view2d.ts'
+import type { Modifiers, MouseEventSpec } from '../input/view2d.ts'
 
 /** 파이프 이름에 pid 가 들어간다. 고정 이름이면 병렬 테스트가 서로의 파이프를 잡는다. */
 export function pipeNameFor(pid: number): string {
@@ -41,6 +41,11 @@ export type Request =
    * 건드리지 않고 전역 버튼·수정키 상태도 바뀐다. 하나라도 틀리면 **하나도 보내지 않는다.**
    */
   | { id: number; op: 'mouse'; objectName: string; events: MouseEventSpec[] }
+  /**
+   * 위젯 하나에 키 누름·뗌을 보낸다. **대상 앱을 바꾼다.** 포그라운드를 안 뺏는다 —
+   * `key` 는 Qt::Key 값(qtKey.ts 가 가상키에서 바꾼다).
+   */
+  | { id: number; op: 'key'; objectName: string; key: number; text: string; modifiers?: Modifiers }
 
 /** 요청 한 줄. 끝의 줄바꿈까지 포함한다 — 서버가 줄로 끊어 읽는다. */
 export function encodeRequest(req: Request): string {

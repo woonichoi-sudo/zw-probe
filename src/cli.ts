@@ -39,6 +39,8 @@ import {
 import type { Request } from './agent/protocol.ts'
 import { judgeClick } from './input/click.ts'
 import { needsWidgetSize, planMouse } from './input/mouseArgs.ts'
+import { toQtKey } from './input/qtKey.ts'
+import type { ShortcutEntry } from './input/shortcut.ts'
 import { activePanel, clickPoint, findNodes, findOne, readDocumentState } from './uia/tree.ts'
 import type { NodeQuery } from './uia/tree.ts'
 import { BASELINE_DIR, listBaselines, runScenario } from './scenario/run.ts'
@@ -230,7 +232,7 @@ function cmdShortcuts(flags: Map<string, string>): number {
   return 0
 }
 
-function cmdKey(rest: string[], flags: Map<string, string>): number {
+function cmdKey(rest: string[], flags: Map<string, string>): number | Promise<number> {
   const name = rest[0]
   if (name === undefined) {
     console.error('기능 이름이 필요하다. 목록은 `zwprobe shortcuts` 로 본다.')
@@ -245,6 +247,9 @@ function cmdKey(rest: string[], flags: Map<string, string>): number {
     console.error(`"${name}" 을 ${file.path} 에서 찾지 못했다. \`zwprobe shortcuts --filter ${name}\` 로 확인한다.`)
     return 1
   }
+
+  // `--object` 면 프로세스 안에서 그 위젯에 보낸다 — 포그라운드를 안 뺏으니 남의 창으로 새지 않는다.
+  if (flags.has('object')) return keyInProcess(entry, flags)
 
   // 필터가 없으면 대상 앱으로 좁힌다. **안 좁히면 화면의 첫 창에 키가 간다** —
   // 2026-09-15 에 ESC 가 z-weave 가 아니라 "Program Manager"(바탕화면)로 갔다.
@@ -659,6 +664,43 @@ function cmdDiff(rest: string[], flags: Map<string, string>): number {
 
   if (!d.comparable) return 1
   return v.same ? 0 : 2
+}
+
+/** hello 파일에서 대상 앱 pid. 못 읽으면 이유를 찍고 null */
+function helloPid(flags: Map<string, string>): number | null {
+  const path = flags.get('hello') || join(tmpdir(), 'zwagent-hello.json')
+  try {
+    const parsed = parseAgentHello(JSON.parse(readFileSync(path, 'utf8')))
+    if (parsed.ok) return parsed.hello.pid
+    console.error(`hello 파일이 쓸 수 없다: ${path}` + String.fromCharCode(10) + `  ${parsed.reason}`)
+  } catch (err) {
+    console.error(`hello 파일을 읽지 못했다: ${path}` + String.fromCharCode(10) + `  ${err instanceof Error ? err.message : String(err)}`)
+  }
+  return null
+}
+
+/** 단축키 하나를 위젯에 QKeyEvent 로 (zwagent `key`). 키 값은 qtKey.ts 가 정한다 */
+async function keyInProcess(entry: ShortcutEntry, flags: Map<string, string>): Promise<number> {
+  const pid = helloPid(flags)
+  if (pid === null) return 1
+  let qk: { key: number; text: string }
+  try {
+    qk = toQtKey(entry.stroke)
+  } catch (err) {
+    console.error(err instanceof Error ? err.message : String(err))
+    return 1
+  }
+  const st = entry.stroke
+  const modifiers = { ...(st.shift ? { shift: true } : {}), ...(st.ctrl ? { ctrl: true } : {}), ...(st.alt ? { alt: true } : {}) }
+  const objectName = flags.get('object') ?? ''
+  const res = await call(pid, { id: 1, op: 'key', objectName, key: qk.key, text: qk.text, modifiers })
+  if (!res.ok) {
+    console.error(`보내지 않았다: ${res.error}`)
+    return 1
+  }
+  console.log(`전송  ${entry.name} = ${entry.spec}  (Qt 키 0x${qk.key.toString(16)} → ${objectName}, 프로세스 안)`)
+  console.log(`받음  ${res.body.class} · 누름 ${res.body.pressAccepted === true ? '받아들임' : '무시됨(위젯이 accept 안 함)'}`)
+  return 0
 }
 
 /**
@@ -1194,7 +1236,7 @@ async function main(): Promise<number> {
     case 'shortcuts':
       return cmdShortcuts(flags)
     case 'key':
-      return cmdKey(rest, flags)
+      return await cmdKey(rest, flags)
     case 'log':
       return cmdLog(flags)
     case 'state':

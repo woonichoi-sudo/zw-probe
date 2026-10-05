@@ -176,3 +176,12 @@ test('buildArgv — zw_mouse 는 object 가 필요하고 button·world 는 고�
   assert.equal(build('zw_mouse', { object: 'p', at: '1,1', button: 'right' }).ok, false)
   assert.equal(build('zw_mouse', { object: 'p', at: '1,1', world: 'fit' }).ok, false)
 })
+
+test('buildArgv — zw_key 에 object 를 주면 프로세스 안으로 (hello 기본값이 붙는다), 안 주면 그대로', () => {
+  const a = build('zw_key', { feature: 'Delete', object: '2dview' })
+  assert.ok(a.ok)
+  if (a.ok) assert.deepEqual(a.argv, ['key', 'Delete', '--object', '2dview', '--hello', DEFAULT_HELLO])
+  const b = build('zw_key', { feature: 'Delete' })
+  assert.ok(b.ok)
+  if (b.ok) assert.deepEqual(b.argv, ['key', 'Delete'])
+})

@@ -16,6 +16,7 @@
 #include <QJsonObject>
 #include <QLocalServer>
 #include <QLocalSocket>
+#include <QKeyEvent>
 #include <QWindow>
 #include <qpa/qwindowsysteminterface.h>
 
@@ -179,6 +180,11 @@ QByteArray Server::handle(const QByteArray& line)
 	if (op == QStringLiteral("mouse"))
 	{
 		return handleMouse(req, id, out);
+	}
+
+	if (op == QStringLiteral("key"))
+	{
+		return handleKey(req, id, out);
 	}
 
 	return fail(id, QStringLiteral("모르는 op: \"%1\"").arg(op));
@@ -472,6 +478,57 @@ QByteArray Server::handleMouse(const QJsonObject& req, const QJsonValue& id, QJs
 	out[QStringLiteral("screenX")] = tl.x();
 	out[QStringLiteral("screenY")] = tl.y();
 	out[QStringLiteral("delivered")] = delivered;
+	return reply(out);
+}
+} // namespace zwagent
+
+namespace zwagent
+{
+/**
+ * 위젯 하나에 키 누름·뗌을 `sendEvent` 로 보낸다. **대상 앱을 바꾼다** — 2D 뷰의 Delete 는 지운다.
+ *
+ * **왜 창이 아니라 위젯에 바로 보내는가.** zwwin 의 `key` 는 시스템 전역(keybd_event)이라 창을
+ * 포그라운드로 올려야 하고, 사람이 다른 창을 쓰고 있으면 Windows 가 그걸 막아 **키가 남의 창으로
+ * 간다**(2026-10-05 실제로). 대상 앱 2D 뷰는 `event->key()`·`modifiers()` 만 읽으므로
+ * (zwQt2DView.cpp:930-964) 위젯에 직접 넣은 QKeyEvent 가 실제 키와 같다. 포커스도 안 바꾼다.
+ *
+ * 키 값(Qt::Key)과 글자는 TS 가 정한다(qtKey.ts) — 여기는 받은 대로 넣는다(절대 규칙 5).
+ */
+QByteArray Server::handleKey(const QJsonObject& req, const QJsonValue& id, QJsonObject& out)
+{
+	const QString name = req.value(QStringLiteral("objectName")).toString();
+	if (name.isEmpty()) return fail(id, QStringLiteral("key 에는 objectName 이 필요하다."));
+	const QJsonValue kv = req.value(QStringLiteral("key"));
+	if (!kv.isDouble() || kv.toDouble() <= 0) return fail(id, QStringLiteral("key(Qt::Key 값, 양수)가 필요하다."));
+	const int key = static_cast<int>(kv.toDouble());
+
+	const QList<QWidget*> hits = findByObjectName(name);
+	if (hits.isEmpty()) return fail(id, QStringLiteral("objectName 이 \"%1\" 인 위젯이 없다.").arg(name));
+	if (hits.size() > 1)
+	{
+		return fail(id, QStringLiteral("objectName 이 \"%1\" 인 위젯이 %2개다.").arg(name).arg(hits.size()));
+	}
+	QWidget* w = hits.first();
+	if (!w->isVisible()) return fail(id, QStringLiteral("\"%1\" 이 보이지 않는다.").arg(name));
+
+	Qt::KeyboardModifiers mods = Qt::NoModifier;
+	const QJsonObject m = req.value(QStringLiteral("modifiers")).toObject();
+	if (m.value(QStringLiteral("shift")).toBool()) mods |= Qt::ShiftModifier;
+	if (m.value(QStringLiteral("ctrl")).toBool()) mods |= Qt::ControlModifier;
+	if (m.value(QStringLiteral("alt")).toBool()) mods |= Qt::AltModifier;
+	const QString text = req.value(QStringLiteral("text")).toString();
+
+	QKeyEvent press(QEvent::KeyPress, key, mods, text);
+	QCoreApplication::sendEvent(w, &press);
+	QCoreApplication::processEvents();
+	QKeyEvent release(QEvent::KeyRelease, key, mods, text);
+	QCoreApplication::sendEvent(w, &release);
+	QCoreApplication::processEvents();
+
+	out[QStringLiteral("objectName")] = name;
+	out[QStringLiteral("class")] = QString::fromUtf8(w->metaObject()->className());
+	out[QStringLiteral("key")] = key;
+	out[QStringLiteral("pressAccepted")] = press.isAccepted();
 	return reply(out);
 }
 } // namespace zwagent
