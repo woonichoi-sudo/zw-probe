@@ -150,12 +150,28 @@ void collectByName(QWidget* w, const QString& name, QList<QWidget*>& out)
 		if (auto* cw = qobject_cast<QWidget*>(child)) collectByName(cw, name, out);
 	}
 }
+
+void collectByClass(QWidget* w, const QByteArray& cls, QList<QWidget*>& out)
+{
+	if (w->isVisible() && cls == w->metaObject()->className()) out.append(w);
+	for (QObject* child : w->children())
+	{
+		if (auto* cw = qobject_cast<QWidget*>(child)) collectByClass(cw, cls, out);
+	}
+}
 } // namespace
 
 QList<QWidget*> findByObjectName(const QString& name)
 {
 	QList<QWidget*> out;
 	if (name.isEmpty()) return out;
+	const QString prefix = QStringLiteral("class:");
+	if (name.startsWith(prefix))
+	{
+		const QByteArray cls = name.mid(prefix.size()).toUtf8();
+		for (QWidget* w : QApplication::topLevelWidgets()) collectByClass(w, cls, out);
+		return out;
+	}
 	for (QWidget* w : QApplication::topLevelWidgets()) collectByName(w, name, out);
 	return out;
 }

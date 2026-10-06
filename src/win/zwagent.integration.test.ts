@@ -16,7 +16,7 @@ import { join } from 'node:path'
 import { QTAPP_EXE, ZWAGENT_DLL, qtEnv, qtFilter, qtFixtureMissing } from './qtFixture.ts'
 import { listWindows, shot, uiaTree } from './zwwin.ts'
 import { diff, judgeSame } from '../image/diff.ts'
-import { findWidgets, judgeAbi, parseAgentHello } from '../agent/hello.ts'
+import { findWidgets, flattenWidgets, judgeAbi, parseAgentHello } from '../agent/hello.ts'
 import { call } from '../agent/pipe.ts'
 import {
   callableActions,
@@ -582,6 +582,110 @@ test('key — 위젯에 QKeyEvent 누름·뗌을 보낸다 (포그라운드·포
       if (!r.ok) assert.match(r.error, why, what)
     }
     assert.equal((await logLines()).length, 6, '거부한 요청의 키가 닿으면 안 된다')
+  } finally {
+    child.kill()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('class:<클래스명> — objectName 이 빈 위젯(대상 앱 3D 뷰)을 클래스로 찾아 mouse·key 를 보낸다', { skip }, async () => {
+  // 대상 앱의 3D 뷰(zwQt3DView)는 objectName 이 비어 있어 이름으로 못 가리킨다. 실제 커서로는
+  // 3D 기즈모가 잡히지 않았다(2026-10-06). 보이는 위젯 중 그 클래스가 **정확히 하나**일 때만 보낸다.
+  // 픽스처에서 유일한 클래스는 QMainWindow 다 — 창 좌표로 넣으면 그 자리의 자식(mousePad)이 받는다.
+  const dir = mkdtempSync(join(tmpdir(), 'zwprobe-class-'))
+  const hello = join(dir, 'hello.json')
+  const child = spawn(QTAPP_EXE, ['--mousepad', '-style', 'zwagent'], {
+    detached: false,
+    stdio: 'ignore',
+    env: qtEnv({ ZWAGENT_HELLO: hello }),
+  })
+  assert.ok(child.pid !== undefined, '픽스처 프로세스를 띄우지 못했다')
+  const pid = child.pid!
+  const tree = async () => {
+    const t = await call(pid, { id: 9, op: 'tree' }, { timeoutMs: 10000 })
+    assert.equal(t.ok, true)
+    return t.ok ? parseTreeResult(t.body).topLevelWidgets : []
+  }
+  const logLines = async (): Promise<string[]> => {
+    const log = findWidgets(await tree(), 'mouseLog')
+    return (log[0]?.text ?? '').split('\n').filter((l) => l !== '')
+  }
+  try {
+    await waitForWindow(qtFilter(pid))
+    await waitForHello(hello)
+
+    // 패드 한가운데를 창(QMainWindow) 좌표로 — 정답은 트리의 화면 좌표에서 구한다(구현과 독립)
+    const all = flattenWidgets(await tree())
+    const win = all.filter((w) => w.visible && w.class === 'QMainWindow')
+    assert.equal(win.length, 1, '보이는 QMainWindow 가 하나여야 한다')
+    const pad = all.find((w) => w.objectName === 'mousePad')!
+    const px = pad.screenX - win[0]!.screenX + 30
+    const py = pad.screenY - win[0]!.screenY + 40
+
+    const res = await call(
+      pid,
+      {
+        id: 1,
+        op: 'mouse',
+        objectName: 'class:QMainWindow',
+        events: [
+          { type: 'press', x: px, y: py, button: 'left' },
+          { type: 'move', x: px + 10, y: py, button: 'left' },
+          { type: 'release', x: px + 10, y: py, button: 'left' },
+        ],
+      },
+      { timeoutMs: 10000 },
+    )
+    assert.equal(res.ok, true, res.ok ? '' : res.error)
+    if (!res.ok) return
+    assert.equal(res.body.class, 'QMainWindow')
+    assert.deepEqual((await logLines()).slice(-3), [
+      'press 30,40 b=L bs=L m=- kb=-',
+      'move 40,40 b=- bs=L m=- kb=-',
+      'release 40,40 b=L bs=- m=- kb=-',
+    ])
+
+    // 거부 — 없는 클래스. 이벤트가 하나도 닿으면 안 된다 (여러 개인 경우는 아래 테스트 — mousepad 모드엔 보이는 위젯이 둘 이상인 클래스가 없다)
+    const before = (await logLines()).length
+    const r = await call(pid, { id: 3, op: 'mouse', objectName: 'class:없는클래스', events: [{ type: 'press', x: 1, y: 1, button: 'left' }, { type: 'release', x: 1, y: 1, button: 'left' }] } as never, { timeoutMs: 10000 })
+    assert.equal(r.ok, false, '없는 클래스는 거부돼야 한다')
+    if (!r.ok) assert.match(r.error, /없다/)
+    const kr = await call(pid, { id: 4, op: 'key', objectName: 'class:없는클래스', key: 0x53, text: 's' } as never, { timeoutMs: 10000 })
+    assert.equal(kr.ok, false, '없는 클래스 key 는 거부돼야 한다')
+    assert.equal((await logLines()).length, before, '거부한 요청이 닿으면 안 된다')
+
+    // key 도 같은 찾기를 쓴다 — 응답의 class 로 확인
+    const k = await call(pid, { id: 5, op: 'key', objectName: 'class:QMainWindow', key: 0x53, text: 's' } as never, { timeoutMs: 10000 })
+    assert.equal(k.ok, true, k.ok ? '' : k.error)
+    if (k.ok) assert.equal(k.body.class, 'QMainWindow')
+  } finally {
+    child.kill()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('class:<클래스명> — 보이는 위젯이 여럿이면 고르지 않고 거부한다', { skip }, async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'zwprobe-class2-'))
+  const hello = join(dir, 'hello.json')
+  const child = spawn(QTAPP_EXE, ['-style', 'zwagent'], { detached: false, stdio: 'ignore', env: qtEnv({ ZWAGENT_HELLO: hello }) })
+  assert.ok(child.pid !== undefined, '픽스처 프로세스를 띄우지 못했다')
+  const pid = child.pid!
+  try {
+    await waitForWindow(qtFilter(pid))
+    await waitForHello(hello)
+    const t = await call(pid, { id: 9, op: 'tree' }, { timeoutMs: 10000 })
+    assert.equal(t.ok, true)
+    if (!t.ok) return
+    const counts = new Map<string, number>()
+    for (const w of flattenWidgets(parseTreeResult(t.body).topLevelWidgets)) if (w.visible) counts.set(w.class, (counts.get(w.class) ?? 0) + 1)
+    const many = [...counts].find(([, n]) => n >= 2)
+    assert.ok(many !== undefined, '보이는 위젯이 둘 이상인 클래스가 픽스처에 있어야 한다')
+    const [cls, n] = many!
+    const r = await call(pid, { id: 1, op: 'mouse', objectName: `class:${cls}`, events: [{ type: 'press', x: 1, y: 1, button: 'left' }, { type: 'release', x: 1, y: 1, button: 'left' }] } as never, { timeoutMs: 10000 })
+    assert.equal(r.ok, false, '여러 개면 거부돼야 한다')
+    if (!r.ok) assert.match(r.error, new RegExp(`${n}개`))
+    const k = await call(pid, { id: 2, op: 'key', objectName: `class:${cls}`, key: 0x53, text: 's' } as never, { timeoutMs: 10000 })
+    assert.equal(k.ok, false, '여러 개면 key 도 거부돼야 한다')
   } finally {
     child.kill()
     rmSync(dir, { recursive: true, force: true })

@@ -40,5 +40,7 @@ bool haveVisibleUi();
 void putTopLevelWidgets(QJsonObject& root, int budget, int maxDepth);
 
 /// objectName 이 정확히 일치하는 위젯 전부. **여럿일 수 있다** — 고르는 것은 부르는 쪽이다.
+/// `class:<클래스명>` 이면 **보이는** 위젯 중 metaObject 클래스명이 같은 것 — objectName 이 빈
+/// 위젯(대상 앱 3D 뷰 zwQt3DView)을 가리키는 길이다.
 QList<QWidget*> findByObjectName(const QString& name);
 } // namespace zwagent
