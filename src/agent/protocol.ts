@@ -46,6 +46,10 @@ export type Request =
    * `key` 는 Qt::Key 값(qtKey.ts 가 가상키에서 바꾼다).
    */
   | { id: number; op: 'key'; objectName: string; key: number; text: string; modifiers?: Modifiers }
+  /** 지금 열린 팝업 메뉴(2D 뷰 문맥 메뉴)의 항목 — popup.ts 가 읽는다 */
+  | { id: number; op: 'popup' }
+  /** 열린 팝업 메뉴에서 항목 하나를 고른다 — **대상 앱을 바꾼다**. 메뉴를 닫고 큐에서 실행 */
+  | { id: number; op: 'popupTrigger'; path: string[] }
 
 /** 요청 한 줄. 끝의 줄바꿈까지 포함한다 — 서버가 줄로 끊어 읽는다. */
 export function encodeRequest(req: Request): string {

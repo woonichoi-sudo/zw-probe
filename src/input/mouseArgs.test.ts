@@ -68,7 +68,7 @@ test('planMouse — 거부: 무엇을 할지가 하나로 정해지지 않으면
     [{ object: 'p', at: '1,1', from: '1,1', to: '2,2' }, /하나만/],
     [{ object: 'p', from: '1,1' }, /--to/],
     [{ object: 'p', at: '1,x' }, /x,y/],
-    [{ object: 'p', at: '1,1', button: 'right' }, /button/],
+    [{ object: 'p', at: '1,1', button: 'side' }, /button/],
     [{ object: 'p', from: '0,0', to: '1,1', steps: '0' }, /steps/],
     [{ object: 'p', events: '{"a":1}' }, /배열/],
     [{ object: 'p', events: 'not json' }, /JSON/],
@@ -83,4 +83,10 @@ test('planMouse — 거부: 무엇을 할지가 하나로 정해지지 않으면
   const r = planMouse(f({ object: 'p', at: '1,1', world: 'reset' }))
   assert.equal(r.ok, false)
   if (!r.ok) assert.match(r.error, /크기/)
+})
+
+test('planMouse — 오른쪽 버튼(문맥 메뉴 — 2D 메뉴는 popup 이라 응답을 막지 않는다)', () => {
+  const r = planMouse(f({ object: 'p', at: '3,4', button: 'right' }))
+  assert.equal(r.ok, true)
+  if (r.ok) assert.ok(r.events.length === 2 && r.events.every((e) => e.button === 'right'))
 })

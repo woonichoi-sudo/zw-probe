@@ -37,6 +37,7 @@ import {
   parseTreeResult,
 } from './agent/protocol.ts'
 import type { Request } from './agent/protocol.ts'
+import { findPopupItem, parsePopup, popupLines } from './agent/popup.ts'
 import { judgeClick } from './input/click.ts'
 import { needsWidgetSize, planMouse } from './input/mouseArgs.ts'
 import { toQtKey } from './input/qtKey.ts'
@@ -868,6 +869,40 @@ async function cmdAgent(flags: Map<string, string>): Promise<number> {
     console.log(`\n찍었다  ${grab} (${b.class}) ${width}x${height}${b.visible === true ? '' : ' [숨김]'}`)
     console.log(`저장  ${out}`)
     console.log(`      ${rawPath}`)
+    return 0
+  }
+
+  // `--popup` 은 지금 열린 팝업 메뉴(2D 뷰 문맥 메뉴)의 항목. `--json` 이면 응답 그대로.
+  // `--popup-trigger "A > B"` 는 그 메뉴에서 항목을 고른다 — **대상 앱을 바꾼다**. 고르기 전에 TS 가 항목을 확인한다
+  if (flags.has('popup') || flags.has('popup-trigger')) {
+    const res = await call(h.pid, { id: 1, op: 'popup' })
+    if (!res.ok) {
+      console.error(`\n팝업 메뉴를 읽지 못했다: ${res.error}`)
+      return 1
+    }
+    const p = parsePopup(res.body)
+    const want = flags.get('popup-trigger')
+    if (want === undefined) {
+      if (flags.has('json')) console.log(JSON.stringify(p))
+      else if (!p.open) console.log('\n열린 팝업 메뉴가 없다')
+      else console.log(`\n열린 팝업 메뉴:\n${popupLines(p.items).map((l) => `  ${l}`).join('\n')}`)
+      return 0
+    }
+    if (!p.open) {
+      console.error('\n열린 팝업 메뉴가 없다')
+      return 1
+    }
+    const f = findPopupItem(p.items, want)
+    if (!f.ok) {
+      console.error(`\n고르지 않았다: ${f.error}`)
+      return 1
+    }
+    const t = await call(h.pid, { id: 2, op: 'popupTrigger', path: f.path })
+    if (!t.ok) {
+      console.error(`\n고르지 않았다: ${t.error}`)
+      return 1
+    }
+    console.log(`\n골랐다  "${f.path.join(' > ')}" (메뉴를 닫고 큐에서 실행 — 결과는 관찰로 확인)`)
     return 0
   }
 

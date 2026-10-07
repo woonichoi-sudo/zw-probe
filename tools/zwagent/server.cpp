@@ -17,6 +17,10 @@
 #include <QLocalServer>
 #include <QLocalSocket>
 #include <QKeyEvent>
+#include <QApplication>
+#include <QMenu>
+#include <QPointer>
+#include <QTimer>
 #include <QWindow>
 #include <qpa/qwindowsysteminterface.h>
 
@@ -27,6 +31,47 @@ QByteArray reply(const QJsonObject& body)
 {
 	// Compact 로 쓴다 — 실앱 트리가 6MB 이고 들여쓰기가 그걸 더 키운다.
 	return QJsonDocument(body).toJson(QJsonDocument::Compact);
+}
+
+
+/// 열린 팝업 메뉴의 항목을 차례대로 — 보이는 것만, 하위 메뉴는 items 로. 판정은 TS(popup.ts)가 한다.
+QJsonArray popupItems(const QMenu* menu, int depth = 0)
+{
+	QJsonArray arr;
+	if (menu == nullptr || depth > 8) return arr;
+	for (const QAction* a : menu->actions())
+	{
+		if (a == nullptr || !a->isVisible()) continue;
+		QJsonObject o;
+		o[QStringLiteral("text")] = a->text();
+		o[QStringLiteral("enabled")] = a->isEnabled();
+		o[QStringLiteral("checkable")] = a->isCheckable();
+		if (a->isCheckable()) o[QStringLiteral("checked")] = a->isChecked();
+		o[QStringLiteral("separator")] = a->isSeparator();
+		if (a->menu() != nullptr) o[QStringLiteral("items")] = popupItems(a->menu(), depth + 1);
+		arr.append(o);
+	}
+	return arr;
+}
+
+/// 지금 열린 팝업 메뉴(가장 바깥). 하위 메뉴가 열려 있으면 그 부모를 거슬러 올라간다.
+QMenu* openPopup()
+{
+	QMenu* m = qobject_cast<QMenu*>(QApplication::activePopupWidget());
+	for (int i = 0; m != nullptr && i < 8; i++)
+	{
+		QMenu* up = nullptr;
+		if (const QAction* self = m->menuAction())
+		{
+			for (QWidget* w : self->associatedWidgets())
+			{
+				if (auto* pm = qobject_cast<QMenu*>(w); pm != nullptr && pm->isVisible()) { up = pm; break; }
+			}
+		}
+		if (up == nullptr) break;
+		m = up;
+	}
+	return m;
 }
 
 QByteArray fail(const QJsonValue& id, const QString& why)
@@ -170,6 +215,55 @@ QByteArray Server::handle(const QByteArray& line)
 	if (op == QStringLiteral("trigger"))
 	{
 		return handleTrigger(req, id, out);
+	}
+
+	if (op == QStringLiteral("popup"))
+	{
+		// 열린 팝업 메뉴(문맥 메뉴)의 항목. 없으면 open false
+		QMenu* m = openPopup();
+		out[QStringLiteral("open")] = m != nullptr;
+		if (m != nullptr) out[QStringLiteral("items")] = popupItems(m);
+		return reply(out);
+	}
+
+	if (op == QStringLiteral("popupTrigger"))
+	{
+		// 열린 팝업 메뉴에서 경로(글자 목록)로 항목 하나를 고른다 — 실제 클릭처럼 메뉴를 닫고 실행한다
+		// (QMenuPrivate::activateAction: hideUpToMenuBar 뒤 activate). 모달이 뜰 수 있어 응답 뒤에 큐로
+		const QJsonArray path = req.value(QStringLiteral("path")).toArray();
+		QMenu* top = openPopup();
+		if (top == nullptr) return fail(id, QStringLiteral("열린 팝업 메뉴가 없다."));
+		if (path.isEmpty()) return fail(id, QStringLiteral("popupTrigger 에는 path(글자 배열)가 필요하다."));
+		const QMenu* level = top;
+		QAction* hit = nullptr;
+		for (int i = 0; i < path.size(); i++)
+		{
+			const QString t = path.at(i).toString();
+			QList<QAction*> hits;
+			for (QAction* a : level->actions())
+				if (a != nullptr && a->isVisible() && !a->isSeparator() && a->text() == t) hits.append(a);
+			if (hits.size() != 1) return fail(id, QStringLiteral("\"%1\" 인 항목이 %2개다.").arg(t).arg(hits.size()));
+			hit = hits.first();
+			if (!hit->isEnabled()) return fail(id, QStringLiteral("\"%1\" 은 꺼져 있다.").arg(t));
+			if (i < path.size() - 1)
+			{
+				if (hit->menu() == nullptr) return fail(id, QStringLiteral("\"%1\" 은 하위 메뉴가 아니다.").arg(t));
+				level = hit->menu();
+			}
+			else if (hit->menu() != nullptr)
+			{
+				return fail(id, QStringLiteral("\"%1\" 은 하위 메뉴다.").arg(t));
+			}
+		}
+		QPointer<QMenu> pm(top);
+		QPointer<QAction> pa(hit);
+		QTimer::singleShot(0, [pm, pa]() {
+			if (pm) pm->hide();
+			if (pa) pa->activate(QAction::Trigger);
+		});
+		out[QStringLiteral("text")] = hit->text();
+		out[QStringLiteral("queued")] = true;
+		return reply(out);
 	}
 
 	if (op == QStringLiteral("grab"))
@@ -418,9 +512,12 @@ QByteArray Server::handleMouse(const QJsonObject& req, const QJsonValue& id, QJs
 		const QString button = e.value(QStringLiteral("button")).toString(QStringLiteral("left"));
 		if (button == QStringLiteral("left")) st.button = Qt::LeftButton;
 		else if (button == QStringLiteral("middle")) st.button = Qt::MiddleButton;
+		// 오른쪽 — 2D 뷰 문맥 메뉴는 QMenu::popup() 이라 응답을 막지 않는다(열린 메뉴는 popup·popupTrigger 로).
+		// 오른쪽 누름이 모달 창을 exec 하는 상태(곡선 분할 도구)에서는 그 창이 닫힐 때까지 응답이 늦는다.
+		else if (button == QStringLiteral("right")) st.button = Qt::RightButton;
 		else
 		{
-			return fail(id, QStringLiteral("%1 의 button 은 left·middle 만 받는다: \"%2\" — 오른쪽 뗌은 문맥 메뉴가 응답을 막을 수 있다").arg(at, button));
+			return fail(id, QStringLiteral("%1 의 button 은 left·middle·right 만 받는다: \"%2\"").arg(at, button));
 		}
 
 		const QJsonValue xv = e.value(QStringLiteral("x"));

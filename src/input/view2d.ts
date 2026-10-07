@@ -22,7 +22,7 @@ export type Camera2D = { cx: number; cy: number; filmHeight: number; width: numb
  * 오른쪽 버튼은 없다 — 2D 뷰에서 오른쪽 뗌이 문맥 메뉴를 띄울 수 있고, 메뉴의 `exec()` 가
  * 플러그인의 응답을 막는다. 필요해지면 trigger 처럼 큐에 넣는 길을 따로 연다.
  */
-export type MouseButton = 'left' | 'middle'
+export type MouseButton = 'left' | 'middle' | 'right'
 export type Modifiers = { shift?: boolean; ctrl?: boolean; alt?: boolean }
 export type MouseEventSpec = {
   type: 'press' | 'move' | 'release'

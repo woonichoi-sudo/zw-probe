@@ -31,8 +31,8 @@ export function planMouse(flags: Map<string, string>, size?: { width: number; he
   if (modes.length > 1) return { ok: false, error: `--at · --from · --events 는 하나만 준다: ${modes.join(', ')}` }
 
   const button = (flags.get('button') || 'left') as MouseButton
-  if (button !== 'left' && button !== 'middle') {
-    return { ok: false, error: `--button 은 left·middle 만 받는다: "${button}"` }
+  if (button !== 'left' && button !== 'middle' && button !== 'right') {
+    return { ok: false, error: `--button 은 left·middle·right 만 받는다: "${button}"` }
   }
   const mods: Modifiers = {}
   for (const k of ['shift', 'ctrl', 'alt'] as const) if (flags.has(k)) mods[k] = true
