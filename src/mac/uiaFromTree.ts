@@ -39,6 +39,14 @@ export function controlTypeOf(cls: string): string {
   return 'Pane'
 }
 
+/**
+ * 단축 표시 `&` 를 걷어낸다 — Qt 의 접근성 이름이 그렇게 한다(`&No` → `No`, `&&` → `&`). Windows UIA 실측이
+ * `Yes`·`No`·`Cancel` 이었다(2026-09-14). 안 걷으면 `click --name No` 가 정확 일치를 놓친다.
+ */
+export function stripMnemonic(s: string): string {
+  return s.replace(/&(&?)/g, (_m, amp: string) => amp)
+}
+
 export type UiaFromTreeOptions = {
   /** 창 기준 좌표의 원점(창 클라이언트 영역의 화면 좌표) */
   originX: number
@@ -66,7 +74,7 @@ export function uiaFromTree(
       return
     }
     const id = w.objectName === '' ? '' : parentId === '' ? w.objectName : `${parentId}.${w.objectName}`
-    const name = w.accessibleName || w.text || (depth === 0 ? (w.windowTitle ?? '') : '') || ''
+    const name = stripMnemonic(w.accessibleName || w.text || (depth === 0 ? (w.windowTitle ?? '') : '') || '')
     nodes.push({
       depth,
       controlType: controlTypeOf(w.class),
@@ -109,4 +117,36 @@ export function findTopLevel(
       t.height === win.height,
   )
   return hits.length === 1 ? hits[0]! : null
+}
+
+/**
+ * 소유 창(다이얼로그)의 노드를 소유 창 아래로 붙인다. **Windows UIA 가 그렇게 보여준다** — 소유 다이얼로그는
+ * 데스크톱이 아니라 소유 창의 자식으로 달린다(CLAUDE.md "텍스처 슬롯" 실측). 그래서 메인 창 기준 `uia`·
+ * `click --name` 이 다이얼로그 버튼까지 닿는다. 깊이는 하나 내리고 좌표는 그대로(같은 원점으로 만든 것).
+ */
+export function nestOwned(base: readonly UiaNode[], owned: readonly UiaNode[][]): UiaNode[] {
+  // 위젯 부모가 소유 창인 다이얼로그는 이미 트리 안에 있다(QDialog 는 자식 위젯이다) — 두 번 넣지 않는다
+  const key = (n: UiaNode) => `${n.class}@${n.screenX},${n.screenY},${n.width}x${n.height}`
+  const have = new Set(base.filter((n) => n.depth > 0).map(key))
+  const fresh = owned.filter((nodes) => nodes.length > 0 && !have.has(key(nodes[0]!)))
+  return [...base, ...fresh.flatMap((nodes) => nodes.map((n) => ({ ...n, depth: n.depth + 1 })))]
+}
+
+/** `root` 가 (직접·간접으로) 소유한 창 id 들. 소유 고리가 있어도 끝난다. */
+export function ownedBy(root: number, windows: ReadonlyArray<{ id: number; owner: number }>): number[] {
+  const out: number[] = []
+  const seen = new Set<number>([root])
+  let frontier = [root]
+  while (frontier.length > 0) {
+    const next: number[] = []
+    for (const w of windows) {
+      if (frontier.includes(w.owner) && !seen.has(w.id)) {
+        seen.add(w.id)
+        out.push(w.id)
+        next.push(w.id)
+      }
+    }
+    frontier = next
+  }
+  return out
 }

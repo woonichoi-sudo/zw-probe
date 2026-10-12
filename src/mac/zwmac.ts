@@ -23,7 +23,7 @@ import { parseTreeResult } from '../agent/protocol.ts'
 import { toQtKey } from '../input/qtKey.ts'
 import type { WindowInfo } from '../win/zwwin.ts'
 import { WS } from '../win/windowState.ts'
-import { findTopLevel, uiaFromTree } from './uiaFromTree.ts'
+import { findTopLevel, nestOwned, ownedBy, uiaFromTree } from './uiaFromTree.ts'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 export const ENCODER = resolve(HERE, '../../bin/zwmac-encode')
@@ -275,7 +275,18 @@ async function cmdUia(a: Map<string, string>): Promise<Raw> {
   const tree = parseTreeResult((r as { body: Record<string, unknown> }).body)
   const top = findTopLevel(tree.topLevelWidgets, { ...first.agent })
   if (top === null) throw new Error(`위젯 트리에서 창 "${first.agent.title}"(${first.agent.class}) 를 하나로 찾지 못했다.`)
-  const { nodes, truncated } = uiaFromTree(top, { originX: first.info.x, originY: first.info.y, maxDepth: depth, maxNodes: max })
+  const origin = { originX: first.info.x, originY: first.info.y, maxDepth: depth, maxNodes: max }
+  const main = uiaFromTree(top, origin)
+  // 소유 창(다이얼로그)을 아래에 붙인다 — Windows UIA 모양(nestOwned 주석)
+  const all = (await ask(first.info.pid, { op: 'windows' }, 5000)) as unknown as AgentWindows
+  const owned: ReturnType<typeof uiaFromTree>[] = []
+  for (const oid of ownedBy(first.info.hwnd, all.windows)) {
+    const ow = all.windows.find((w) => w.id === oid)!
+    const ot = findTopLevel(tree.topLevelWidgets, ow)
+    if (ot !== null) owned.push(uiaFromTree(ot, origin))
+  }
+  const nodes = nestOwned(main.nodes, owned.map((o) => o.nodes))
+  const truncated = main.truncated || owned.some((o) => o.truncated)
   return { ok: true, elapsedMs: Date.now() - t0, maxDepth: depth, maxNodes: max, truncated, nodes, window: first.info }
 }
 

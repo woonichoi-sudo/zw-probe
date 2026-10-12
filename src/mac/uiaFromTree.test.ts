@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 
 import type { AgentWidget } from '../agent/hello.ts'
 import { activePanel, findNodes } from '../uia/tree.ts'
-import { controlTypeOf, findTopLevel, uiaFromTree } from './uiaFromTree.ts'
+import { controlTypeOf, findTopLevel, nestOwned, ownedBy, stripMnemonic, uiaFromTree } from './uiaFromTree.ts'
 
 function w(p: Partial<AgentWidget> & { class: string }): AgentWidget {
   return { objectName: '', visible: true, enabled: true, x: 0, y: 0, width: 10, height: 10, screenX: 0, screenY: 0, ...p }
@@ -70,4 +70,29 @@ test('findTopLevel — 클래스·이름·사각형이 다 맞는 보이는 것 
   const win = { class: 'zwQtMainWindow', objectName: 'zwQtMainWindow', x: 0, y: 66, width: 1512, height: 831 }
   assert.equal(findTopLevel([a, hidden], win), a)
   assert.equal(findTopLevel([a, { ...a }], win), null, '둘이면 고르지 않는다')
+})
+
+test('nestOwned·ownedBy — 소유 다이얼로그를 소유 창 아래 한 단계 깊이로 붙인다 (Windows UIA 모양)', () => {
+  const wins = [{ id: 1, owner: 0 }, { id: 2, owner: 1 }, { id: 3, owner: 2 }, { id: 4, owner: 0 }, { id: 5, owner: 5 }]
+  assert.deepEqual(ownedBy(1, wins), [2, 3])
+  assert.deepEqual(ownedBy(5, wins), [])
+  const base = uiaFromTree(w({ class: 'zwQtMainWindow' }), { originX: 0, originY: 0 }).nodes
+  const dlg = uiaFromTree(w({ class: 'zwQtMessageBoxDialog', children: [w({ class: 'QPushButton', text: 'No' })] }), { originX: 0, originY: 0 }).nodes
+  const all = nestOwned(base, [dlg])
+  assert.deepEqual(all.map((n) => [n.class, n.depth]), [['zwQtMainWindow', 0], ['zwQtMessageBoxDialog', 1], ['QPushButton', 2]])
+  assert.equal(findNodes(all, { name: 'No' }).length, 1)
+})
+
+test('stripMnemonic — Qt 접근성 이름처럼 & 를 걷는다', () => {
+  assert.equal(stripMnemonic('&No'), 'No')
+  assert.equal(stripMnemonic('Save && Exit'), 'Save & Exit')
+  assert.equal(stripMnemonic('Plain'), 'Plain')
+})
+
+test('nestOwned — 위젯 트리에 이미 있는 다이얼로그는 두 번 넣지 않는다', () => {
+  const dlg = w({ class: 'QDialog', screenX: 5, screenY: 5, children: [w({ class: 'QPushButton', text: '&No' })] })
+  const base = uiaFromTree(w({ class: 'zwQtMainWindow', children: [dlg] }), { originX: 0, originY: 0 }).nodes
+  const again = uiaFromTree(dlg, { originX: 0, originY: 0 }).nodes
+  const all = nestOwned(base, [again])
+  assert.equal(findNodes(all, { name: 'No' }).length, 1)
 })

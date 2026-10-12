@@ -359,19 +359,26 @@ QByteArray Server::handleClickWindow(const QJsonObject& req, const QJsonValue& i
 	out[QStringLiteral("blocked")] = isBlocked(w);
 	out[QStringLiteral("queued")] = true;
 
+	// **그 점의 맨 위 창이 받는다** — 실제 클릭과 같다. 소유 다이얼로그가 메인 위에 떠 있으면 다이얼로그가
+	// 받는다(Windows zwwin 의 클릭도 화면 좌표라 그렇다). 메인 창에 그대로 넣으면 모달에 막혀 버려진다.
+	QWidget* dest = (root != nullptr && root->isVisible() && root->windowHandle() != nullptr) ? root : w;
+	if (dest != w) win = dest->windowHandle();
+	const QPoint pt = dest->mapFromGlobal(global);
+	out[QStringLiteral("deliveredTo")] = idName(dest);
+
 	// 응답 뒤에 넣는다. 누름이 모달을 exec 하면 그 안에서 루프가 돈다 — 뗌은 그 루프가 처리한다
 	QPointer<QWindow> pw(win);
-	const auto press = [pw, local, global, b, mods](Qt::MouseButtons state, QEvent::Type t) {
+	const auto press = [pw, pt, global, b, mods](Qt::MouseButtons state, QEvent::Type t) {
 		if (!pw) return;
 		QWindowSystemInterface::handleMouseEvent<QWindowSystemInterface::SynchronousDelivery>(
-		    pw, QPointF(local), QPointF(global), state, b, t, mods);
+		    pw, QPointF(pt), QPointF(global), state, b, t, mods);
 	};
 	g_lastPointer = global;
-	QTimer::singleShot(0, [press, pw, local, global, mods, dbl, holdMs, b]() {
+	QTimer::singleShot(0, [press, pw, pt, global, mods, dbl, holdMs, b]() {
 		if (!pw) return;
 		// 먼저 그 자리로 옮긴다 — hover·enter 를 받는 위젯이 있다
 		QWindowSystemInterface::handleMouseEvent<QWindowSystemInterface::SynchronousDelivery>(
-		    pw, QPointF(local), QPointF(global), Qt::NoButton, Qt::NoButton, QEvent::MouseMove, mods);
+		    pw, QPointF(pt), QPointF(global), Qt::NoButton, Qt::NoButton, QEvent::MouseMove, mods);
 		press(b, QEvent::MouseButtonPress);
 		const auto release = [press, dbl, b]() {
 			press(Qt::NoButton, QEvent::MouseButtonRelease);
@@ -398,6 +405,9 @@ QByteArray Server::handleKeyWindow(const QJsonObject& req, const QJsonValue& id,
 	const qint64 wid = static_cast<qint64>(req.value(QStringLiteral("window")).toDouble());
 	QWidget* w = windowById(wid);
 	if (w == nullptr) return failJson(id, QStringLiteral("id 가 %1 인 보이는 창이 없다.").arg(wid));
+	// **모달이 막고 있으면 키는 모달이 받는다** — 실제 키보드와 같다(막힌 창을 활성화하면 OS 가 모달을
+	// 앞으로 올린다). 막힌 창에 그대로 넣으면 Qt 가 버린다. 어디로 갔는지는 응답의 window 가 말한다.
+	if (isBlocked(w) && QApplication::activeModalWidget() != nullptr) w = QApplication::activeModalWidget();
 	const QJsonValue kv = req.value(QStringLiteral("key"));
 	if (!kv.isDouble() || kv.toDouble() <= 0) return failJson(id, QStringLiteral("key(Qt::Key 값, 양수)가 필요하다."));
 	const int key = static_cast<int>(kv.toDouble());
