@@ -13,7 +13,7 @@ Z-Weave(C++/Qt5 데스크톱 의상 CAD)를 **외부에서 조작·관찰·판�
 
 1. **Z-Weave 소스는 0줄도 수정하지 않는다.** 이 프로젝트의 존재 이유가 완전 분리다. 앱 수정이 필요해 보이면 먼저 사용자에게 근거를 제시하고 승인을 받는다.
 2. **Z-Weave 리포에 파일을 추가하지 않는다.** 산출물은 전부 이 폴더에 둔다. 예외는 빌드 산출물 폴더(`cmake_build/bin/*/styles/`)에 DLL을 배치하는 것 — 이건 리포와 무관하다.
-3. **이 리포에서는 Claude가 커밋을 알아서 한다.** 규칙은 아래 "커밋과 기록" 절. **push와 PR은 하지 않는다** — 사용자 스코프 deny로 차단돼 있고 원격도 없다. 대상 앱 리포(`d:/z-emotion/Z-Weave`)에는 어떤 git 명령도 실행하지 않는다.
+3. **이 리포에서는 Claude가 커밋을 알아서 한다.** 규칙은 아래 "커밋과 기록" 절. **push 는 Claude 가 직접 하지 않고 hook 이 한다** — `git push` 는 사용자 스코프 deny 로 막혀 있고, `main` 에 커밋하면 [tools/git-hooks/post-commit](tools/git-hooks/post-commit) 이 `origin`(`git@github.com:woonichoi-sudo/zw-probe.git`, 2026-10-12)으로 올린다. PR 은 하지 않는다. 대상 앱 리포(`d:/z-emotion/Z-Weave`)에는 어떤 git 명령도 실행하지 않는다.
 4. **불확실한 것은 싸게 먼저 검증한다.** 큰 걸 만들고 나서 전제가 틀린 걸 발견하는 순서를 피한다.
 5. **판단은 전부 `zwprobe`(TS)에, I/O는 가장자리에.** `zwwin.exe`와 `zwagent.dll`은 아무것도 판단하지 않는다 — 찾고, 캡처하고, JSON을 뱉을 뿐이다. 판정·비교·해석은 순수 함수로 TS에 둔다. 이 경계가 무너지면 테스트 불가능한 덩어리가 생긴다. 설계문서 §11.1.
 
@@ -120,7 +120,9 @@ Bash(git --git-dir=*)  Bash(git --work-tree=*)  Bash(git push:*)
 
 **남는 구멍(알려진 것):** ① 파일 수정이 열려 있다(위). ② 의도적 우회(8.3 단축 이름, 정션·심볼릭 링크)는 문자열 패턴으로 못 잡는다. 위협 모델은 적대적 우회가 아니라 자기 실수다. ③ 사용자 스코프의 `Bash(git --git-dir:*)` 구멍은 **다른 리포에 대해서는 그대로 열려 있다.** 이 프로젝트의 규칙은 대상 앱 경로만 겨냥하지 않으므로 함께 막히지만, 근본 수정은 사용자 스코프에서 해야 한다.
 
-**브랜치** — `main`에서 직접 작업한다. 원격이 없고 PR 흐름도 없는 1인 도구 프로젝트이므로 브랜치 분기가 순수 오버헤드다. 팀 공유를 시작하면 이 규칙을 재검토한다.
+**자동 push** (2026-10-12) — `main` 에 커밋하면 `post-commit` hook 이 `origin/main` 으로 push 한다. 연결은 `git config core.hooksPath tools/git-hooks` 이고 **로컬 설정이라 새로 clone 하면 다시 해야 한다.** 커밋 시점은 여전히 위 규칙(테스트 통과한 최소 단위)이 정한다 — hook 이 커밋까지 하면 "기능이 완성됐다" 를 판단할 수 없어 깨진 상태가 올라간다. push 가 실패해도 커밋은 남고 다음 커밋 때 함께 올라간다. `main` 이 아닌 브랜치(작업 트리)는 올리지 않는다.
+
+**브랜치** — `main`에서 직접 작업한다. PR 흐름이 없는 1인 도구 프로젝트이므로 브랜치 분기가 순수 오버헤드다. 팀 공유를 시작하면 이 규칙을 재검토한다.
 
 **기록은 세 곳으로 나눈다. 중복해서 쓰지 않는다.**
 
@@ -441,7 +443,7 @@ Qt 모달 동작은 더 부탁할 필요가 없다 — **Qt 픽스처가 답했�
 
 ## 열린 항목
 
-- **팀 공유 여부** — 미정. 원격 없이 로컬 `main`에서만 작업한다
+- **팀 공유 여부** — 미정. GitHub 원격(`origin`)에 `main` 을 올리지만 작업은 로컬 `main` 에서 직접 한다
 - **`ActivateSelected`와 `DeactivateSelected`가 둘 다 `Shift+D`** — `shortcut.ini` 실측. 토글로 의도된 것인지 확인 필요 (M2에서 실제로 눌러보면 드러난다)
 - **앱이 정상 동작 중에도 내는 오류 — 사용자 판단 필요.** `zwprobe log`로 확인한 것: `zw3DEnvironmentManager: Environment does not exist!`(시작 시 1회), `zsRenderTarget: clearDepth=true, but no depth buffer bound to fbo!`(반복), `zwStateIdle: GetTool(): Tool object 'zwToolSelectionRect' is not attached!`. 이것들이 의도된 소음인지 실제 결함인지는 도메인 지식이 필요하다. **판정 기준을 세우기 전에 답이 필요하다** — 정상 상태에서도 ERROR가 나오면 "로그에 ERROR가 있으면 실패"라는 규칙을 쓸 수 없다
 

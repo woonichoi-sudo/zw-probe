@@ -1,0 +1,15 @@
+#!/bin/sh
+# 커밋되면 origin 으로 push 한다. main 에서만 — 다른 브랜치(작업 트리 등)는 원격에 올리지 않는다.
+# 연결: git config core.hooksPath tools/git-hooks
+# 커밋은 이미 끝났으므로 push 가 실패해도 커밋은 남는다. 다음 커밋 때 함께 올라간다.
+
+branch=$(git symbolic-ref --short -q HEAD)
+[ "$branch" = "main" ] || exit 0
+git remote get-url origin >/dev/null 2>&1 || exit 0
+
+if git push -q origin main; then
+  echo "[post-commit] origin/main 으로 push 했다"
+else
+  echo "[post-commit] push 실패 — 커밋은 남아 있다. 나중에 git push 로 올린다" >&2
+fi
+exit 0
