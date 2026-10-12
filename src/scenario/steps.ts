@@ -65,8 +65,14 @@ export type Step =
        */
       panel?: string
     }
-  /** 열린 파일명과 dirty 를 확인한다 */
-  | { do: 'expectDoc'; fileName?: string; dirty?: boolean }
+  /**
+   * 열린 파일명과 dirty 를 확인한다.
+   *
+   * `timeoutMs` 를 주면 **파일명이 그렇게 될 때까지 기다린다** (`fileName` 필수). 다이얼로그를 거쳐 문서를
+   * 열 때 쓴다 — 여는 동안 진행 창 사이에 잠깐 idle 로 보이는 틈이 있어 `waitIdle` 이 너무 일찍 통과한다
+   * (2026-10-12 실측: 통과했는데 제목이 아직 옛 파일명이었다). `openRecent` 가 안에서 하는 것과 같다.
+   */
+  | { do: 'expectDoc'; fileName?: string; dirty?: boolean; timeoutMs?: number }
   /** 요소가 있는가 / 없는가 */
   | { do: 'expectElement'; name?: string; id?: string; class?: string; type?: string; present?: boolean }
   /**
@@ -210,6 +216,7 @@ export function describeStep(step: Step): string {
       const parts = [
         step.fileName !== undefined ? `파일명="${step.fileName}"` : '',
         step.dirty !== undefined ? `dirty=${step.dirty}` : '',
+        step.timeoutMs !== undefined ? `${step.timeoutMs}ms 까지 기다림` : '',
       ]
         .filter((s) => s !== '')
         .join(' ')
@@ -428,6 +435,12 @@ export function validateScenario(sc: Scenario, ctx: ValidationContext = {}): Val
       case 'expectDoc': {
         if (step.fileName === undefined && step.dirty === undefined) {
           push('expectDoc 에 fileName 이나 dirty 중 하나는 있어야 한다.')
+        }
+        if (step.timeoutMs !== undefined && step.fileName === undefined) {
+          push('expectDoc 의 timeoutMs 는 fileName 을 기다리는 것이다 — fileName 이 필요하다.')
+        }
+        if (step.timeoutMs !== undefined && !(step.timeoutMs > 0)) {
+          push('expectDoc 의 timeoutMs 는 양수여야 한다.')
         }
         break
       }

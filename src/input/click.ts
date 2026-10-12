@@ -7,7 +7,7 @@
 // 그래서 `zwwin.exe` 가 누르기 직전에 `WindowFromPoint` 로 그 자리의 창을 읽어 사실로
 // 싣고, 여기서 대상과 대조한다.
 
-import type { ClickResult } from '../win/zwwin.ts'
+import type { ClickResult, WindowInfo } from '../win/zwwin.ts'
 
 export type ClickVerdict = {
   /** 의도한 창에 닿았는가 */
@@ -16,12 +16,32 @@ export type ClickVerdict = {
   reason: string
 }
 
-export function judgeClick(r: ClickResult): ClickVerdict {
+/**
+ * `before` — **누르기 전에** 읽은 같은 프로세스의 창 목록. 누른 자리의 최상위 창이 대상 창이 (직접·간접으로)
+ * **소유한** 창이면 정상이다 — 다이얼로그 버튼을 누르면 다이얼로그가 거기 있는 것이 맞다(2026-09-14·
+ * 2026-10-12 저장 확인 창 "No"). 누른 뒤의 목록은 안 된다 — 눌린 다이얼로그는 이미 닫혀 있다.
+ * 소유자가 없는 팝업(콤보 목록, owner=0)은 여기서 못 가른다(열린 항목).
+ */
+export function isOwnedBy(root: number, target: number, before: readonly WindowInfo[]): boolean {
+  const byId = new Map(before.map((w) => [w.hwnd, w]))
+  let cur = byId.get(root)
+  for (let i = 0; i < 16 && cur !== undefined; i++) {
+    if (cur.owner === target) return true
+    if (cur.owner === 0) return false
+    cur = byId.get(cur.owner)
+  }
+  return false
+}
+
+export function judgeClick(r: ClickResult, before: readonly WindowInfo[] = []): ClickVerdict {
   if (!r.moved) {
     return { onTarget: false, reason: 'SetCursorPos 가 실패했다. 커서를 옮기지 못했으니 누른 자리를 알 수 없다.' }
   }
   if (r.hwndAtPoint === 0) {
     return { onTarget: false, reason: `(${r.screenX},${r.screenY}) 에 창이 없다. 화면 밖 좌표일 수 있다.` }
+  }
+  if (r.rootAtPoint !== r.window.hwnd && isOwnedBy(r.rootAtPoint, r.window.hwnd, before)) {
+    return { onTarget: true, reason: `대상 창이 소유한 창(hwnd=${r.rootAtPoint}, 다이얼로그)의 (${r.screenX},${r.screenY}) 를 눌렀다.` }
   }
   if (r.rootAtPoint !== r.window.hwnd) {
     return {

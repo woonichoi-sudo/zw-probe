@@ -424,3 +424,9 @@ test('describeStep — setAction 은 목표 상태를 보여준다', () => {
   )
   assert.equal(describeStep({ do: 'setAction', text: 'X', checked: false }), 'setAction "X" → 끔')
 })
+
+test('expectDoc timeoutMs — 기다릴 파일명이 있어야 하고 양수여야 한다', () => {
+  assert.deepEqual(validateScenario(sc([{ do: 'expectDoc', fileName: 'a.zls', timeoutMs: 60000 }])), [])
+  assert.equal(validateScenario(sc([{ do: 'expectDoc', dirty: true, timeoutMs: 1000 }])).length, 1)
+  assert.equal(validateScenario(sc([{ do: 'expectDoc', fileName: 'a.zls', timeoutMs: 0 }])).length, 1)
+})

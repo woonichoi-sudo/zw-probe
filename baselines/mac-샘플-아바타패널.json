@@ -1,0 +1,15 @@
+{
+  "format": "bgra8",
+  "width": 420,
+  "height": 760,
+  "takenAt": "2026-10-12T04:17:46.647Z",
+  "mode": "grab",
+  "window": {
+    "title": "sample-copy.zls *",
+    "class": "ads::CDockWidget",
+    "pid": 66524,
+    "fileVersion": "5.1.84",
+    "width": 420,
+    "height": 760
+  }
+}

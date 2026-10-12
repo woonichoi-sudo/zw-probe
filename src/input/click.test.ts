@@ -90,3 +90,15 @@ test('judgeClick — 가려짐을 포그라운드 실패보다 먼저 보고한�
   const v = judgeClick(result({ rootAtPoint: 777, activated: false }))
   assert.match(v.reason, /가려져 있다/)
 })
+
+test('judgeClick — 누른 자리가 대상이 소유한 다이얼로그면 정상 (누르기 전 창 목록으로 본다)', () => {
+  const main = { ...targetWindow(), hwnd: 10, owner: 0 }
+  const dlg = { ...main, hwnd: 20, owner: 10, width: 302, height: 132 }
+  const nested = { ...main, hwnd: 30, owner: 20 }
+  const popup = { ...main, hwnd: 40, owner: 0 }
+  const r = (root: number) => result({ window: main, rootAtPoint: root, hwndAtPoint: root })
+  assert.equal(judgeClick(r(20), [main, dlg]).onTarget, true)
+  assert.equal(judgeClick(r(30), [main, dlg, nested]).onTarget, true, '다이얼로그가 띄운 다이얼로그')
+  assert.equal(judgeClick(r(20)).onTarget, false, '목록이 없으면 예전처럼 의심')
+  assert.equal(judgeClick(r(40), [main, popup]).onTarget, false, '소유자 없는 팝업은 아직 못 가른다')
+})

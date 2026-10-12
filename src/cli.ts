@@ -382,6 +382,8 @@ function cmdClick(rest: string[], flags: Map<string, string>): number {
     return 1
   }
 
+  // 누르기 전의 창 목록 — 다이얼로그 버튼을 누르면 그 다이얼로그는 누른 뒤엔 없다(judgeClick 의 소유 판정)
+  const before = listWindows(f)
   const r = click({
     ...f,
     x,
@@ -396,7 +398,7 @@ function cmdClick(rest: string[], flags: Map<string, string>): number {
   console.log(`클릭  ${r.button}${r.double ? ' ×2' : ''} 창 기준 (${r.x},${r.y}) → 화면 (${r.screenX},${r.screenY})`)
   console.log(`대상  ${r.window.width}x${r.window.height} hwnd=${r.window.hwnd} pid=${r.window.pid} "${r.window.title}"`)
 
-  const v = judgeClick(r)
+  const v = judgeClick(r, before.filter((w) => w.pid === r.window.pid))
   console.log(`판정  ${v.onTarget ? '정상' : '의심'} — ${v.reason}`)
   if (!r.cursorRestored && !flags.has('stay')) {
     console.log('주의  커서를 원래 자리로 돌려놓지 못했다.')

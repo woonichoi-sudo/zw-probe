@@ -482,6 +482,9 @@ export async function runScenario(sc: Scenario, opts: RunOptions = {}): Promise<
             reason = hit.reason
             break
           }
+          // 누르기 전의 같은 프로세스 창 목록 — 다이얼로그 버튼이면 누른 뒤엔 그 창이 없다(judgeClick)
+          const targetPid = classifyWindows(listWindows(filter)).main?.pid
+          const windowsBefore = targetPid === undefined ? [] : listWindows({ pid: targetPid })
           const r = click({
             ...filter,
             x: hit.node.wx + Math.floor(hit.node.width / 2),
@@ -489,7 +492,7 @@ export async function runScenario(sc: Scenario, opts: RunOptions = {}): Promise<
             ...(step.button !== undefined ? { button: step.button } : {}),
             ...(step.double !== undefined ? { double: step.double } : {}),
           })
-          const v = judgeClick(r)
+          const v = judgeClick(r, windowsBefore)
           outcome = v.onTarget ? 'pass' : 'fail'
           reason = `[${hit.node.controlType}] "${hit.node.name}" — ${v.reason}`
           break
@@ -538,6 +541,14 @@ export async function runScenario(sc: Scenario, opts: RunOptions = {}): Promise<
           break
         }
         case 'expectDoc': {
+          if (step.timeoutMs !== undefined && step.fileName !== undefined) {
+            const w = await waitForDocument(filter, step.fileName, step.timeoutMs)
+            if (!w.ok) {
+              outcome = 'fail'
+              reason = w.reason
+              break
+            }
+          }
           const s = readDocumentState(uiaTree({ ...filter, depth: 3 }), { fromTitle: process.platform === 'darwin' })
           const bad: string[] = []
           if (step.fileName !== undefined && s.fileName !== step.fileName) {
