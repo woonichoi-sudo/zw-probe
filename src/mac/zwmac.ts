@@ -214,6 +214,8 @@ async function cmdKey(a: Map<string, string>): Promise<Raw> {
     modifiers: { ctrl: stroke.ctrl, alt: stroke.alt, shift: stroke.shift },
     holdMs: a.has('hold') ? Number(a.get('hold')) : 0,
   })
+  // 키도 같다 — 뗌은 앱 안 타이머로 간다. 누른 시간만큼 기다린 뒤 돌아온다
+  if (a.has('hold')) await new Promise((r) => setTimeout(r, Number(a.get('hold')) + 100))
   return {
     ok: true,
     method: 'inprocess',
@@ -243,6 +245,10 @@ async function cmdClick(a: Map<string, string>): Promise<Raw> {
     double: a.has('double'),
     holdMs: a.has('hold') ? Number(a.get('hold')) : 0,
   })
+  // **누른 시간만큼 기다린 뒤 돌아온다** — 떼기는 앱 안 타이머로 나중에 간다. 바로 돌아오면 다음 명령이 떼기보다
+  // 먼저 닿는다(2026-10-12: --hold 800 이 249ms 에 돌아왔다). zwwin 은 누른 채 기다렸다가 돌아온다.
+  const holdMs = a.has('hold') ? Number(a.get('hold')) : 0
+  if (holdMs > 0) await new Promise((r) => setTimeout(r, holdMs + 100))
   if (slow) await new Promise((r) => setTimeout(r, 500))
   const hit = body.hit as { id: number }
   const root = body.root as { id: number }
@@ -394,6 +400,8 @@ async function cmdRecord(a: Map<string, string>): Promise<Raw> {
     stopReason,
     window: first.info,
     encoder: encOut.trim(),
+    // 영상 0초에 해당하는 벽시계 시각(ms) — 영상 속 사건과 명령 시각을 맞출 때 쓴다
+    startedAtMs: t0,
   }
   writeFileSync(resultPath, JSON.stringify(result))
   return result

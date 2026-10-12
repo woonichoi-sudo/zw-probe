@@ -151,9 +151,9 @@ Bash(git --git-dir=*)  Bash(git --work-tree=*)
 
 2026-10-05: **위젯에 마우스 끌기(`mouse`·`zw_mouse`)와 2D 뷰 월드 좌표(`--world reset`)를 붙였다.** QWindowSystemInterface 로 넣어 커서·포커스를 안 건드리고 전역 수정키도 맞는다. 실앱 보정 1px 안. 테스트 346개 중 343 통과 — **WinForms 픽스처 시험 3개 실패(이번 변경과 닿는 파일 없음, 원인 미확인)**, `skipped 0`. 경과는 WORKLOG. 새 MCP 도구라 떠 있는 세션은 `/mcp` 로 다시 연결해야 보인다. 같은 날 **`key --object`(MCP `zw_key` 의 `object`)** — 위젯에 QKeyEvent 를 프로세스 안에서 보낸다(포그라운드 불필요). 테스트 353개 중 350 통과(실패 3개는 위와 같은 WinForms 시험).
 
-2026-10-12: **macOS 에서 같은 CLI·시나리오·MCP 가 실앱에 돈다.** Mac 실앱 시나리오 15/15(`scenarios/mac-panel-toggle.ts`). Mac 의 `node --test` 381개 중 361 통과, 실패 0, 건너뜀 20(전부 "Windows 전용" 사유). 아래 "macOS" 절, 경과는 WORKLOG. **Windows 스위트는 이번에 돌려보지 않았다** — Windows 쪽 코드는 경로 분기만 더했지만 다음 Windows 세션에서 `skipped 0` 을 확인한다.
+2026-10-12: **macOS 에서 같은 CLI·시나리오·MCP 가 실앱에 돈다.** Mac 실앱 시나리오 15/15(`scenarios/mac-panel-toggle.ts`)·28/28(`scenarios/mac-documents.ts`, MCP `zw_run` 으로도). CLI 동사·`click`/`key` 옵션·녹화(커서·`--no-cursor`·printwindow, 시간축 한 프레임 안)·`--popup-trigger`·MCP 16개 도구를 실앱에서 다 불렀다. Mac 의 `node --test` 381개 중 361 통과, 실패 0, 건너뜀 20(전부 "Windows 전용" 사유). 아래 "macOS" 절, 경과는 WORKLOG. **Windows 스위트는 이번에 돌려보지 않았다** — Windows 쪽 코드는 경로 분기만 더했지만 다음 Windows 세션에서 `skipped 0` 을 확인한다.
 
-**macOS 의 앱은 떠 있다** (2026-10-12 세션 끝 확인). `sample.zls` 를 `--open` 으로 띄웠다가 최근 파일로 두 번 다시 열어 dirty(`*`)다 — 열면서 앱이 스스로 바꾼 것(History: Avatar UI changed·Apply draping item)이고 **저장하지 않는다.** Avatar 탭이 앞이다.
+**macOS 의 앱은 떠 있다** (2026-10-12 세션 끝 확인). `runs/zls/sample-copy.zls`(샘플 복사본, 커밋 안 됨)를 `--open` 으로 띄웠고 문서 시나리오를 거쳐 다시 `sample-copy.zls` 가 열려 dirty(`*`)다. 앱 내부 클립보드에 패턴 하나가 복사돼 있다(`--popup-trigger Copy` 시험) — 열면서 앱이 스스로 바꾼 것(History: Avatar UI changed·Apply draping item)이고 **저장하지 않는다.** Avatar 탭이 앞이다.
 
 **Windows 의 앱은 꺼져 있다** (2026-09-17 확인, `state` 종료 코드 1). 아래 2026-09-15 문단은 **그때의 상태이고 지금은 아니다** — 그 데님 바지는 저장하지 않았으므로 없어졌다. 다시 띄우면 `Untitled.zls` 가 깨끗하게 열린다.
 
@@ -266,6 +266,8 @@ claude mcp list          # ✔ Connected 확인
 **토글은 `trigger` 로 사전 조건을 만들 수 없다. `setAction` 을 쓴다.** `Window > UI panels > Avatar` 를 무턱대고 부르면 **이미 켜져 있을 때 꺼진다** — 사전 조건을 만들려는 단계가 사전 조건을 깨뜨린다. `setAction` 은 지금 상태를 읽고 다를 때만 부르고, 같으면 "부르지 않았다" 를 보고한다.
 
 **`setAction` 이 켜는 것은 dock 이지 활성 탭이 아니다** (2026-09-15 실측). `Window > UI panels > Avatar` 의 체크는 "탭이 있다" 는 뜻이라 탭 여섯 개가 늘 켬이다 — 부르지도 않고 활성 탭은 그대로 남는다. **앞 탭으로 세우려면 탭 라벨을 누른다:** `{ do: 'clickName', name: 'Avatar', id: 'dockWidgetTabLabel', expectChange: false }`. 라벨 폭이 선택 상태에 따라 변하므로(같은 라벨 한가운데가 1559↔1537) 좌표가 아니라 이름이고, 이미 활성이면 화면이 안 바뀌는 게 정상이므로 `expectChange: false` 다. 됐는지는 뒤의 `expectPanel` 이 본다.
+
+**다이얼로그를 거쳐 문서를 열면 `expectDoc` 에 `timeoutMs` 를 준다** (2026-10-12). `waitIdle` 은 여는 도중의 틈에 일찍 통과한다 — 통과했는데 제목이 아직 옛 파일명이었다. 순서는 `trigger`(`expectChange: false`, 다이얼로그는 별도 창이라 메인 픽셀이 안 바뀐다) → 이유 단 `sleep` → `expectElement name="Do you want to save?"` → `clickName No`(`expectChange: false`) → `expectDoc {fileName, timeoutMs}` → `waitIdle`. `scenarios/mac-documents.ts` 가 그 모양이다.
 
 **`openRecent` 는 화면이 아니라 문서 이름으로 완료를 본다.** 여는 동안 진행 다이얼로그가 여러 개 이어서 뜨고 그 사이에 잠깐 idle 로 보이는 구간이 있으며, 그때 `doc` 은 아직 옛 파일명을 보고한다. 화면이나 idle 로 판정하면 너무 일찍 통과한다.
 
@@ -482,6 +484,7 @@ Qt 모달 동작은 더 부탁할 필요가 없다 — **Qt 픽스처가 답했�
 - **`ActivateSelected`와 `DeactivateSelected`가 둘 다 `Shift+D`** — `shortcut.ini` 실측. 토글로 의도된 것인지 확인 필요 (M2에서 실제로 눌러보면 드러난다)
 - **앱이 정상 동작 중에도 내는 오류 — 사용자 판단 필요.** `zwprobe log`로 확인한 것: `zw3DEnvironmentManager: Environment does not exist!`(시작 시 1회), `zsRenderTarget: clearDepth=true, but no depth buffer bound to fbo!`(반복), `zwStateIdle: GetTool(): Tool object 'zwToolSelectionRect' is not attached!`. 이것들이 의도된 소음인지 실제 결함인지는 도메인 지식이 필요하다. **판정 기준을 세우기 전에 답이 필요하다** — 정상 상태에서도 ERROR가 나오면 "로그에 ERROR가 있으면 실패"라는 규칙을 쓸 수 없다
 
+- **대상 앱이 파일 열기 중에 영원히 멈출 수 있다 — 대상 앱 버그로 보인다** (2026-10-12, macOS 실측). `zwQt3DView::Render()`(`view_3d/zwQt3DView.cpp:846`)가 `tryLock` 에 성공한 뒤 `!mSceneLoaded || GetCurrentData()==nullptr` 이면 **unlock 없이 return** 한다. 로딩 중에 3D 뷰가 한 번 그려지면 뮤텍스가 남고, 다음 열기의 작업 스레드가 `zwQtThreadProgressDialog.cpp:83`(`locker3d`)에서 영원히 기다린다 — "Loading.." 이 안 닫힌다. 스택은 `sample` 로 떴다(`runs/hang-stack-20261012.txt`, 커밋 안 됨). 2D 뷰 `Render()` 는 같은 구조인데 이 조기 반환이 없다. **계기는 우리 캡처였다** — 시나리오가 "No" 클릭 뒤 화면 변화를 보려고 grab 했고 그때 로딩 중이었다. 그래서 **로딩을 일으키는 클릭·trigger 에는 `expectChange: false` 를 준다.** 대상 앱 팀에 알릴지 사용자 판단
 - **macOS 에서 shortcut.ini 가 안 써진다 — 대상 앱 버그로 보인다** (2026-10-12). `zwShortcutManager::WriteToDisk` 가 `AppDataLocation/<버전>/` 폴더를 안 만들고 연다. 폴더를 만들어 두자 앱이 기본값을 썼다. **Mac 사용자가 단축키를 바꿔도 저장이 안 될 것이다**(확인 안 함). 대상 앱 팀에 알릴지 사용자 판단
 - **같은 프로세스에서 문서를 다시 열면 2D 봉제선 쌍 색이 매번 다르다** (2026-10-12, macOS). 새로 띄워 연 두 번은 픽셀까지 같았다. 의도된 표시(쌍마다 다른 색)로 보이지만 **사용자 판단 필요.** 다시 열 때만 로그에 `Reuse filed entry: avatar_custom/...`·`TakeSnapshot(), but nothing changed!` ERROR 가 나온다
 - **Windows 에서도 파일 인자로 열리는가** — 메인 창 코드는 플랫폼 분기가 없다. 확인되면 위 "Windows에는 파일 열기 인자가 없다" 를 고친다
@@ -491,7 +494,7 @@ Qt 모달 동작은 더 부탁할 필요가 없다 — **Qt 픽스처가 답했�
   - **입력 대기**: `zwQtMessageBoxDialog`, `302x161`, **UIA 로 내용이 그대로 읽힌다** — `DialogContentWidget.MessageLabel` 에 `"Do you want to save?"`, `DialogContentWidget.ButtonBox` 안에 `Yes`/`No`/`Cancel` (2026-09-14 실측)
   - **`state` 는 둘 다 busy 로만 본다.** 둘을 가르려면 UIA 트리를 한 번 더 봐야 한다 — **버튼이 있으면 사람을 기다리는 것이고, 없으면 기다리면 사라진다.** 이 규칙은 아직 두 표본으로만 세운 것이라 `state` 에 넣지 않았다
   - 남은 것: 다른 종류의 다이얼로그를 더 봐서 규칙이 버티는지 확인. `Development > MessageDialog samples`·`ZLSErrorDialog` 로 불러낼 수 있다
-- **`judgeClick` 이 소유 다이얼로그 안의 버튼을 "의심" 으로 본다** — 누른 자리의 최상위 창이 대상 창과 다르다고 판단하기 때문인데, **다이얼로그가 거기 있는 것이 정상이다.** 2026-09-14 에 `click --name "No"` 가 종료 코드 2를 내고도 실제로는 정확히 눌렸다. **2026-09-15 에 콤보박스의 펼친 목록에서도 같았다** — 그런데 이 팝업은 `owner=0`(소유자 없음)이라 **"소유한 창이면 정상" 규칙으로는 못 가른다.** 규칙을 세울 때 두 경우를 다 담아야 한다
+- **`judgeClick` 이 소유 다이얼로그 안의 버튼을 "의심" 으로 본다** — **절반 닫혔다 (2026-10-12): 누르기 전 창 목록에서 누른 자리의 최상위 창이 대상이 소유한 창이면 정상이다**(Mac 실앱 저장 확인 창 "No"·"Cancel" 로 확인, Windows 는 같은 데이터라 같게 동작할 것이나 미확인). 소유자 없는 팝업(콤보 목록)은 아래 그대로다. 옛 내용: — 누른 자리의 최상위 창이 대상 창과 다르다고 판단하기 때문인데, **다이얼로그가 거기 있는 것이 정상이다.** 2026-09-14 에 `click --name "No"` 가 종료 코드 2를 내고도 실제로는 정확히 눌렸다. **2026-09-15 에 콤보박스의 펼친 목록에서도 같았다** — 그런데 이 팝업은 `owner=0`(소유자 없음)이라 **"소유한 창이면 정상" 규칙으로는 못 가른다.** 규칙을 세울 때 두 경우를 다 담아야 한다
 - **콤보박스 목록 항목은 UIA 이름으로 못 누른다** — 펼친 목록이 별도 최상위 팝업이라 메인 창의 UIA 트리에 없다. 2026-09-15 에 `shot --mode screen` 에서 좌표를 읽어 눌렀다(`Woman` = 창 기준 `1446,182`). 목록은 형상을 만들 수 없는 곳이라 확인이 가볍지만, 항목 위치는 목록 길이·스크롤에 묶인다. **현재 선택값에도 묶인다** — 목록이 지금 값을 콤보 칸 자리에 겹치게 펼쳐지므로, None 일 때 `182` 가 Woman 이었고 Woman 일 때 같은 `182` 가 Man 이었다(2026-09-15). **매번 열고 캡처한 뒤 좌표를 읽는다.** 기억한 좌표를 다시 쓰면 다른 항목이 눌린다
 - **패널 안 요소를 찾기 전에 활성 패널을 확인한다** (2026-09-15 실수). Avatar 탭이 활성인 캡처를 본 뒤 `uia --type ComboBox` 로 하나만 나온 것을 눌렀는데, 그 사이 활성 탭이 **Simulation 으로 바뀌어 있어서 frame rate 목록을 열었다**(값은 안 바꾸고 Esc 로 닫았다). "하나만 맞았다" 는 겹침 검사는 **엉뚱한 패널의 유일한 요소**를 막지 못한다. 탭이 바뀐 원인은 모른다 — 사이에 한 것은 바탕화면으로 간 Esc·`uia`·`agent --actions` 뿐이고, 사람 조작일 수도 있다. 다시 보이면 원인을 판다 대상 창이 **소유한** 창이면 정상으로 봐야 한다 — 지금은 사람이 결과를 보고 판단해야 한다
 - **최대화된 창의 `printwindow` 캡처가 창 기준 좌표보다 +8,+8 밀려 있다** (2026-09-15 실측). 같은 화면을 두 모드로 찍었더니 `File` 메뉴 글자가 `screen` 에서 (48,7), `printwindow` 에서 (56,15) 였고, `click --name File` 이 창 기준 (48,7) 을 눌러 메뉴가 열렸다 — **맞는 쪽은 `screen` 이다.** 탭 라벨도 같은 8px 로 어긋났고 `printwindow` 는 오른쪽·아래 8px 가 잘린다. 픽스처의 "클릭 좌표 = 캡처 좌표" 테스트는 통과하므로 최대화 여부가 갈림길로 보이지만 **추정이고 확인 안 됐다.** **영향:** 이름 클릭은 괜찮고(오늘 확인) baseline 비교도 같은 모드끼리라 괜찮다. **`printwindow` PNG 에서 좌표를 읽어 `click` 하면 8px 틀린다** — 조용히 틀리는 종류다. 또 **`printwindow` 는 펼친 메뉴(별도 팝업 창)를 안 담는다** — 메뉴를 보려면 `--mode screen`
