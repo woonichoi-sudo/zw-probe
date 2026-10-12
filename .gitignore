@@ -32,6 +32,9 @@ tmp/
 # Claude Code 개인 오버라이드
 .claude/settings.local.json
 
+# Claude Code 작업 트리 (백그라운드 세션이 격리용으로 만든다)
+.claude/worktrees/
+
 # 시나리오 실행 산출물. baseline 은 커밋하지만 실행 결과는 안 한다
 runs/
 
