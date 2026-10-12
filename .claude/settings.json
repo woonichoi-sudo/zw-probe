@@ -6,8 +6,7 @@
       "Bash(pushd:*)",
       "Bash(popd:*)",
       "Bash(git --git-dir=*)",
-      "Bash(git --work-tree=*)",
-      "Bash(git push:*)"
+      "Bash(git --work-tree=*)"
     ]
   }
 }
