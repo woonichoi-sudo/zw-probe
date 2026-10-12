@@ -23,8 +23,9 @@ Z-Weave(C++/Qt5 데스크톱 의상 CAD)를 **외부에서 조작·관찰·판�
 |---|---|---|---|
 | `zwprobe` | TypeScript / Node 24 | CLI, 시나리오 실행, OBJ 파싱, 픽셀 diff, 판정 | **동작** — 관찰 `shot`·`windows`·`state`·`uia`·`doc`·`log` / 조작 `key`·`click`·`shortcuts` / 시나리오 `run`·`baseline`·`diff` / 에이전트 `agent` |
 | `zwwin.exe` | C# (Windows 내장 `csc.exe`로 빌드) | 창 찾기, `PrintWindow` 캡처, `keybd_event`·`mouse_event` 입력(실제 커서를 옮긴다), UIAutomation | **동작** — `windows`·`shot`·`key`·`click`·`uia` |
+| `zwmac` | TypeScript (`src/mac/zwmac.ts`) + Swift 인코더 | **macOS 에서 zwwin.exe 자리.** 같은 동사·플래그·JSON 을 zwagent 창 단위 op 로 낸다 — 권한(TCC) 불필요 | **동작** — 2026-10-12, 아래 "macOS" 절 |
 | `zwagent.dll` | C++ / Qt 스타일 플러그인 | 앱 프로세스 안에서 위젯 트리·`QAction::trigger()`·`QWidget::grab()`, named pipe 명령 채널 | **동작** — 실앱에서 위젯 5199개 조회, 명령 120개 호출, 패널 단위 캡처. 읽기와 쓰기가 다 된다 |
-| MCP 서버 | TypeScript | **다른 프로젝트의 세션**이 CLI 를 도구로 부르게 한다. JSON-RPC over stdio | **동작** — user 스코프 등록, 15개 도구 (2026-09-17, `zw_record` 2026-09-30) |
+| MCP 서버 | TypeScript | **다른 프로젝트의 세션**이 CLI 를 도구로 부르게 한다. JSON-RPC over stdio | **동작** — user 스코프 등록(Windows), 16개 도구 (2026-09-17, `zw_record` 2026-09-30, `zw_mouse` 2026-10-05). macOS 에서도 돈다 — 이 Mac 에는 미등록 |
 
 세 개가 각각 독립 실행된다. 자세한 구조는 설계문서 §4.
 
@@ -150,7 +151,11 @@ Bash(git --git-dir=*)  Bash(git --work-tree=*)
 
 2026-10-05: **위젯에 마우스 끌기(`mouse`·`zw_mouse`)와 2D 뷰 월드 좌표(`--world reset`)를 붙였다.** QWindowSystemInterface 로 넣어 커서·포커스를 안 건드리고 전역 수정키도 맞는다. 실앱 보정 1px 안. 테스트 346개 중 343 통과 — **WinForms 픽스처 시험 3개 실패(이번 변경과 닿는 파일 없음, 원인 미확인)**, `skipped 0`. 경과는 WORKLOG. 새 MCP 도구라 떠 있는 세션은 `/mcp` 로 다시 연결해야 보인다. 같은 날 **`key --object`(MCP `zw_key` 의 `object`)** — 위젯에 QKeyEvent 를 프로세스 안에서 보낸다(포그라운드 불필요). 테스트 353개 중 350 통과(실패 3개는 위와 같은 WinForms 시험).
 
-**앱은 꺼져 있다** (2026-09-17 확인, `state` 종료 코드 1). 아래 2026-09-15 문단은 **그때의 상태이고 지금은 아니다** — 그 데님 바지는 저장하지 않았으므로 없어졌다. 다시 띄우면 `Untitled.zls` 가 깨끗하게 열린다.
+2026-10-12: **macOS 에서 같은 CLI·시나리오·MCP 가 실앱에 돈다.** Mac 실앱 시나리오 15/15(`scenarios/mac-panel-toggle.ts`). Mac 의 `node --test` 381개 중 361 통과, 실패 0, 건너뜀 20(전부 "Windows 전용" 사유). 아래 "macOS" 절, 경과는 WORKLOG. **Windows 스위트는 이번에 돌려보지 않았다** — Windows 쪽 코드는 경로 분기만 더했지만 다음 Windows 세션에서 `skipped 0` 을 확인한다.
+
+**macOS 의 앱은 떠 있다** (2026-10-12 세션 끝 확인). `sample.zls` 를 `--open` 으로 띄웠다가 최근 파일로 두 번 다시 열어 dirty(`*`)다 — 열면서 앱이 스스로 바꾼 것(History: Avatar UI changed·Apply draping item)이고 **저장하지 않는다.** Avatar 탭이 앞이다.
+
+**Windows 의 앱은 꺼져 있다** (2026-09-17 확인, `state` 종료 코드 1). 아래 2026-09-15 문단은 **그때의 상태이고 지금은 아니다** — 그 데님 바지는 저장하지 않았으므로 없어졌다. 다시 띄우면 `Untitled.zls` 가 깨끗하게 열린다.
 
 <details><summary>2026-09-15 세션 끝의 상태 (지금은 아니다)</summary>
 
@@ -207,6 +212,33 @@ Bash(git --git-dir=*)  Bash(git --work-tree=*)
 **앱을 새로 띄우면 입력을 요구하는 다이얼로그가 뜬다 — `state` 가 busy(3)로 막는다.** 시작 시 `zwQtStartupSplashDialog`("Startup Splash", 602x531)가 뜬다. Asset library·Tutorials·Release note 탭과 "Don't show it again" 체크박스가 있는 프로모 창이고 **사람이 닫아야 사라진다.** 소유 창으로 남으므로 `state` 는 busy 를 돌려주고 **그 판정이 맞다** — 이게 떠 있으면 정말로 입력을 보내면 안 된다. 결과적으로 **앱을 새로 띄운 직후에는 시나리오가 거부된다.** 닫기 버튼은 이름이 없어(`zwQtButton` 16x16, 창 기준 `585,15`) 좌표뿐이다. 오래 켜둔 앱에서 이걸 못 봤던 이유는 사용자가 이미 닫아뒀기 때문이다.
 
 내용이 `zwCustomWebEngineView` 다 — **원격 HTML 이므로 이 창의 픽셀 baseline 은 뜨지 않는다.** 언제든 바뀐다.
+
+### macOS (2026-10-12)
+
+**같은 CLI·시나리오·MCP 가 macOS 실앱(Qt 6.5.3 디버그 빌드, `~/Developer/Z-Weave/cmake_build/bin/Debug/z-weave`)에 돈다.** 빌드와 실행:
+
+```
+bash tools/zwagent/build.sh     → bin/plugins/styles/libzwagent_debug.dylib
+bash tools/zwmac/build.sh       → bin/zwmac-encode   (녹화 인코더, Swift)
+bash fixtures/qtapp/build.sh    → bin/zwqtfixture    (Qt 6 로 소스 수정 없이 빌드된다)
+bash tools/launch-zweave.sh --open <파일.zls>   띄우며 연다 (다이얼로그 없이, 최근 목록에도 들어간다)
+bash tools/wait-zweave.sh                       정착까지 (Mac 은 ~56초)
+node src/cli.ts key ClearSelection --title "Startup Splash"   시작 다이얼로그 닫기 (Mac 은 Esc — 닫기 버튼이 OS 제목 막대에 있다)
+```
+
+- **창 단위 일을 프로세스 안에서 한다.** 밖에서 하려면 화면 기록·손쉬운 사용 권한(TCC)이 필요하다(이 터미널은 둘 다 없다). zwagent 의 `windows`·`shotWindow`·`clickWindow`·`keyWindow` op(`tools/zwagent/windows.cpp`)를 `src/mac/zwmac.ts` 가 zwwin 과 같은 JSON 으로 옮기고, `zwwin.ts` 가 플랫폼만 보고 고른다. **판정 코드는 그대로다.** 그래서 **zwagent 를 얹어 띄운 앱만 보인다**
+- **커서·포그라운드를 안 뺏는다** — 단, 키는 창 범위 단축키를 맞추려고 대상 창을 활성화한다(Windows 와 같다). 클릭은 그 점의 맨 위 창이, 키는 모달에 막혔으면 그 모달이 받는다(실제 입력과 같게)
+- **UIA 는 없다 — 위젯 트리를 UIA 노드 모양으로 옮긴다**(`src/mac/uiaFromTree.ts`). Qt 의 AutomationId 규칙, 숨은 위젯 제외, 소유 다이얼로그를 소유 창 아래로, `&` 걷기까지 Windows 실측과 같게 했다 — `uia`·`click --name`·`expectPanel`(`dock_avatar`)이 그대로 맞는다
+- **문서 이름·dirty 는 창 제목에 있다**(대상 앱의 비 Windows 분기, `zwQtFramelessWindow.cpp:58-66`). `doc` 이 macOS 에서 제목을 읽는다
+- **Retina — 캡처는 논리 크기다.** grab 은 2배로 나오는데 줄여서 PNG 좌표 = 클릭 좌표 = 트리 좌표를 지킨다
+- **플러그인 이름이 `_debug.dylib` 로 끝나야 한다.** 디버그 Qt 가 아니면 보지도 않고 건너뛴다. 의존도 `_debug` 프레임워크로 바꾼다(`zwagent.pro` 의 `install_name_tool`) — 안 그러면 QtCore 가 두 벌이다
+- **단축키는 handleShortcutEvent 를 먼저 거친다** — Qt 6 의 macOS 는 플랫폼 플러그인이 단축키를 본다. 이걸 빼면 메뉴 단축키(Shift+P)가 조용히 무시된다
+- **녹화는 `--fps 4` 로 한다.** 프로세스 안 grab 이 프레임당 ~200ms 다. 10 이면 절반 넘게 복제
+- **로그·shortcut.ini 는 `~/Library/Application Support/z-emotion/z-weave/`** (같은 루트). shortcut.ini 는 앱이 버전 폴더를 안 만들어 Mac 에서 안 써진다 — `launch-zweave.sh` 가 폴더를 먼저 만든다(열린 항목)
+- **파일은 인자로 열린다** — 메인 창이 `arguments()[1]` 이 있는 파일이면 연다(`zwQtMainWindow::InitLoadingFile`). Mac 에는 최근 파일이 처음에 비어 있으므로 이게 첫 길이다. 기본 파일 열기 창은 NSOpenPanel 이라 아직 못 다룬다
+- **3D 뷰를 끌 때는 옷이 없는 배경에서 시작한다** — 옷 위를 누르면 카메라가 아니라 패턴 선택이다(2026-10-12 실수, 형상은 안 바뀌었다)
+- **baseline 은 앱을 새로 띄워 연 직후에 뜨고 비교한다** — 같은 프로세스에서 다시 열면 2D 봉제선 쌍 색이 매번 달라진다(열린 항목)
+- 2D 뷰는 `objectName` `2dview`(`zwQtGLBaseWidget`), 3D 뷰는 `class:zwQt3DView` — Windows 와 같다
 
 ### 다른 프로젝트에서 쓰기 (MCP 서버)
 
@@ -442,6 +474,7 @@ Qt 모달 동작은 더 부탁할 필요가 없다 — **Qt 픽스처가 답했�
 | .NET SDK (`dotnet`) | **없음** — SDK에 의존하는 방식을 쓰지 않는다 |
 | Python | Store 스텁만. 실사용 불가 |
 | Visual Studio | 2022 Community |
+| **macOS** (2026-10-12) | macOS 15.7 arm64, Node 24.21, Xcode 명령줄 도구(clang·swiftc). Qt 는 대상 앱 리포의 `external/Qt-6.5.3-LTS-LGPL-AppleClang_ARM64`. ffmpeg·Python 없음. 화면 기록·손쉬운 사용 권한 없음(필요 없게 만들었다) |
 
 ## 열린 항목
 
@@ -449,6 +482,10 @@ Qt 모달 동작은 더 부탁할 필요가 없다 — **Qt 픽스처가 답했�
 - **`ActivateSelected`와 `DeactivateSelected`가 둘 다 `Shift+D`** — `shortcut.ini` 실측. 토글로 의도된 것인지 확인 필요 (M2에서 실제로 눌러보면 드러난다)
 - **앱이 정상 동작 중에도 내는 오류 — 사용자 판단 필요.** `zwprobe log`로 확인한 것: `zw3DEnvironmentManager: Environment does not exist!`(시작 시 1회), `zsRenderTarget: clearDepth=true, but no depth buffer bound to fbo!`(반복), `zwStateIdle: GetTool(): Tool object 'zwToolSelectionRect' is not attached!`. 이것들이 의도된 소음인지 실제 결함인지는 도메인 지식이 필요하다. **판정 기준을 세우기 전에 답이 필요하다** — 정상 상태에서도 ERROR가 나오면 "로그에 ERROR가 있으면 실패"라는 규칙을 쓸 수 없다
 
+- **macOS 에서 shortcut.ini 가 안 써진다 — 대상 앱 버그로 보인다** (2026-10-12). `zwShortcutManager::WriteToDisk` 가 `AppDataLocation/<버전>/` 폴더를 안 만들고 연다. 폴더를 만들어 두자 앱이 기본값을 썼다. **Mac 사용자가 단축키를 바꿔도 저장이 안 될 것이다**(확인 안 함). 대상 앱 팀에 알릴지 사용자 판단
+- **같은 프로세스에서 문서를 다시 열면 2D 봉제선 쌍 색이 매번 다르다** (2026-10-12, macOS). 새로 띄워 연 두 번은 픽셀까지 같았다. 의도된 표시(쌍마다 다른 색)로 보이지만 **사용자 판단 필요.** 다시 열 때만 로그에 `Reuse filed entry: avatar_custom/...`·`TakeSnapshot(), but nothing changed!` ERROR 가 나온다
+- **Windows 에서도 파일 인자로 열리는가** — 메인 창 코드는 플랫폼 분기가 없다. 확인되면 위 "Windows에는 파일 열기 인자가 없다" 를 고친다
+- **macOS 의 NSOpenPanel(임의 경로 열기)** — 프로세스 안에서 `[NSApp modalWindow]` 에 합성 NSEvent 로 경로를 넣는 길이 있을 것이다. 권한은 필요 없을 것으로 보이지만 확인 안 했다
 - **진행 다이얼로그와 입력 대기 다이얼로그를 외부에서 구분할 수 있는가** — **거의 닫혔다. 클래스가 갈린다.**
   - **진행**: `zwQtThreadProgressDialog`, `360x100`, 제목 `"Loading..."`/`"Loading.."`. 프로젝트를 여는 동안 두 번 떴다가 8초 만에 스스로 사라진다 (2026-09-10)
   - **입력 대기**: `zwQtMessageBoxDialog`, `302x161`, **UIA 로 내용이 그대로 읽힌다** — `DialogContentWidget.MessageLabel` 에 `"Do you want to save?"`, `DialogContentWidget.ButtonBox` 안에 `Yes`/`No`/`Cancel` (2026-09-14 실측)
@@ -458,7 +495,7 @@ Qt 모달 동작은 더 부탁할 필요가 없다 — **Qt 픽스처가 답했�
 - **콤보박스 목록 항목은 UIA 이름으로 못 누른다** — 펼친 목록이 별도 최상위 팝업이라 메인 창의 UIA 트리에 없다. 2026-09-15 에 `shot --mode screen` 에서 좌표를 읽어 눌렀다(`Woman` = 창 기준 `1446,182`). 목록은 형상을 만들 수 없는 곳이라 확인이 가볍지만, 항목 위치는 목록 길이·스크롤에 묶인다. **현재 선택값에도 묶인다** — 목록이 지금 값을 콤보 칸 자리에 겹치게 펼쳐지므로, None 일 때 `182` 가 Woman 이었고 Woman 일 때 같은 `182` 가 Man 이었다(2026-09-15). **매번 열고 캡처한 뒤 좌표를 읽는다.** 기억한 좌표를 다시 쓰면 다른 항목이 눌린다
 - **패널 안 요소를 찾기 전에 활성 패널을 확인한다** (2026-09-15 실수). Avatar 탭이 활성인 캡처를 본 뒤 `uia --type ComboBox` 로 하나만 나온 것을 눌렀는데, 그 사이 활성 탭이 **Simulation 으로 바뀌어 있어서 frame rate 목록을 열었다**(값은 안 바꾸고 Esc 로 닫았다). "하나만 맞았다" 는 겹침 검사는 **엉뚱한 패널의 유일한 요소**를 막지 못한다. 탭이 바뀐 원인은 모른다 — 사이에 한 것은 바탕화면으로 간 Esc·`uia`·`agent --actions` 뿐이고, 사람 조작일 수도 있다. 다시 보이면 원인을 판다 대상 창이 **소유한** 창이면 정상으로 봐야 한다 — 지금은 사람이 결과를 보고 판단해야 한다
 - **최대화된 창의 `printwindow` 캡처가 창 기준 좌표보다 +8,+8 밀려 있다** (2026-09-15 실측). 같은 화면을 두 모드로 찍었더니 `File` 메뉴 글자가 `screen` 에서 (48,7), `printwindow` 에서 (56,15) 였고, `click --name File` 이 창 기준 (48,7) 을 눌러 메뉴가 열렸다 — **맞는 쪽은 `screen` 이다.** 탭 라벨도 같은 8px 로 어긋났고 `printwindow` 는 오른쪽·아래 8px 가 잘린다. 픽스처의 "클릭 좌표 = 캡처 좌표" 테스트는 통과하므로 최대화 여부가 갈림길로 보이지만 **추정이고 확인 안 됐다.** **영향:** 이름 클릭은 괜찮고(오늘 확인) baseline 비교도 같은 모드끼리라 괜찮다. **`printwindow` PNG 에서 좌표를 읽어 `click` 하면 8px 틀린다** — 조용히 틀리는 종류다. 또 **`printwindow` 는 펼친 메뉴(별도 팝업 창)를 안 담는다** — 메뉴를 보려면 `--mode screen`
-- **`agent` 의 기본 hello 경로가 실앱 것이 아니다** — `launch-zweave.sh` 는 `runs/zwagent-hello.json` 에 쓰는데, `agent` 는 `--hello` 가 없으면 `%TEMP%/zwagent-hello.json`([src/cli.ts:659](src/cli.ts#L659))을 읽어 **픽스처가 남긴 낡은 파일**을 본다. 2026-09-15 에 `agent --find`·`--actions` 가 끝난 픽스처 pid 를 보고했다. CLI 가 "끝난 프로세스의 것" 이라고 경고하므로 조용히 틀리지는 않고, 시나리오 러너는 영향이 없었다. 지금은 `--hello runs/zwagent-hello.json` 을 붙인다
+- ~~**`agent` 의 기본 hello 경로가 실앱 것이 아니다**~~ — **닫혔다(2026-10-12): `runs/zwagent-hello.json` 이 있으면 그것을 먼저 본다.** 옛 내용: `launch-zweave.sh` 는 `runs/zwagent-hello.json` 에 쓰는데, `agent` 는 `--hello` 가 없으면 `%TEMP%/zwagent-hello.json`([src/cli.ts:659](src/cli.ts#L659))을 읽어 **픽스처가 남긴 낡은 파일**을 본다. 2026-09-15 에 `agent --find`·`--actions` 가 끝난 픽스처 pid 를 보고했다. CLI 가 "끝난 프로세스의 것" 이라고 경고하므로 조용히 틀리지는 않고, 시나리오 러너는 영향이 없었다. 지금은 `--hello runs/zwagent-hello.json` 을 붙인다
 - **시작 다이얼로그를 러너가 스스로 닫아야 하는가** — 앱을 새로 띄우면 `zwQtStartupSplashDialog` 가 떠서 시나리오가 거부된다(위 참조). **닫는 방법은 검증됐다** (`click 585 15 --title "Startup Splash"`, 2026-09-09·2026-09-15 실앱 — 두 번 다 602x531, 같은 좌표). 남은 것은 정책이다: 러너가 매번 자동으로 닫을 것인가, 아니면 사용자가 "Don't show it again" 을 켜서 항목을 없앨 것인가. 자동으로 닫게 하려면 **좌표가 고정이라는 전제**가 붙는데 창 크기가 배율에 흔들릴 수 있어 확인이 필요하다
 
 

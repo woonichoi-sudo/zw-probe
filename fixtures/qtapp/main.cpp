@@ -161,6 +161,19 @@ int main(int argc, char** argv)
 {
 	QApplication app(argc, argv);
 
+	// **활성·비활성 창을 같은 색으로 그린다.** 병렬로 도는 다른 테스트가 다른 창을 활성화하면 이 창이
+	// 비활성이 되고, macOS 팔레트는 비활성 버튼을 다른 색으로 그려 "아무것도 안 바꿨는데 다르다" 가
+	// 나왔다(2026-10-12, 3번 중 1번 672픽셀). 활성 상태의 그림은 그대로다.
+	{
+		QPalette pal = app.palette();
+		for (int r = 0; r < QPalette::NColorRoles; r++)
+		{
+			const auto role = static_cast<QPalette::ColorRole>(r);
+			pal.setColor(QPalette::Inactive, role, pal.color(QPalette::Active, role));
+		}
+		app.setPalette(pal);
+	}
+
 	bool wantModal = false;
 	bool wantModeless = false;
 	bool wantMousePad = false;
@@ -195,6 +208,10 @@ int main(int argc, char** argv)
 	// stretch 는 **자랄 수 있는 항목끼리** 남는 공간을 나누는 것이고, Fixed 항목이
 	// 유일한 행은 애초에 대상이 아니다. 정책을 바꿔야 사분면이 반씩 나뉜다.
 	target->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+	// **호버에 반응하지 않는다.** macOS 에서 실제 커서가 이 자리에 있으면 병렬 테스트의 다른 픽스처 창이
+	// 같은 자리에 뜨고 질 때마다 진입·이탈이 와서 버튼이 다르게 그려졌다(2026-10-12, 672픽셀) — 패널
+	// baseline 시험이 "안 바꿨는데 다르다" 로 흔들렸다.
+	target->setAttribute(Qt::WA_Hover, false);
 	grid->addWidget(target, 1, 1);
 
 	auto* black = colorCell("cellBottomRight", QColor(0, 0, 0), central);

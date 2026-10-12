@@ -116,7 +116,9 @@ test('zwmac — 모달이 뜨면 busy 이고 메인은 막혔다. Esc(keyWindow)
     assert.equal(dlg.owner, main.hwnd, '다이얼로그의 소유 창은 메인이다')
 
     const k = sendKey({ pid: fx.pid, title: 'zwqtfixture-modal', stroke: { vk: 0x1b, ctrl: false, alt: false, shift: false } })
-    assert.equal(k.activated, true)
+    // activated 는 단정하지 않는다 — 병렬로 도는 다른 테스트가 제 창을 활성화하려고 다투면 1.5초 안에
+    // 못 얻을 수 있다(2026-10-12, 전체 스위트에서 4번 중 2번). 확인할 것은 아래의 결과(모달이 닫힌다)다.
+    void k
     // --modal 픽스처는 exec() 가 끝나면 종료한다 — 창이 다 사라지는 것이 "닫혔다" 이다
     let gone = false
     for (let i = 0; i < 25 && !gone; i++) {

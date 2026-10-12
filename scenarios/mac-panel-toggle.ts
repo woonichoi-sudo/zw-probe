@@ -9,6 +9,9 @@ import type { Scenario } from '../src/scenario/steps.ts'
  * — 저장하지 않는다.
  *
  * baseline 은 플랫폼마다 따로다(글꼴·창 크기·HiDPI 가 다르다). 이름에 `mac-` 을 붙인다.
+ *
+ * **앱을 새로 띄워 연 직후여야 baseline 이 맞는다.** 같은 프로세스에서 최근 파일로 다시 열면 2D 봉제선
+ * 쌍의 색이 매번 달라져 0.5% 가량 어긋난다(2026-10-12 실측, WORKLOG). 다시 띄워서 돌린다.
  */
 const BASELINE = 'mac-샘플-아바타탭'
 

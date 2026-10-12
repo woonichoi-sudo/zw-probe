@@ -699,3 +699,31 @@ zweave-web(헤드리스 워커) 세션이 2D 편집(클릭 선택·끌기·키)�
 **"이 리포만 push 허용" 은 권한 규칙으로 안 된다.** deny 는 어느 스코프의 allow 로도 덮이지 않는다(deny → ask → allow 순). 그래서 사용자 스코프 deny `Bash(git push:*)` 를 빼고 사용자 스코프 PreToolUse 훅(`~/.claude/hooks/git-push-guard.mjs`)으로 바꿨다. 2026-09-08 훅의 교훈을 그대로 반영했다 — **문자열이 아니라 명령을 쪼개서** 실제로 실행되는 `git … push` 만 본다(heredoc 본문·커밋 메시지·파일 이름의 "push" 는 무시). 예전 훅은 문자열 매칭 때문에 자기 시험을 막았다. 판단이 안 서는 것(`sh -c`·`$( )`·`cd` 섞임·리포를 갈아끼우는 옵션)은 거부한다. 시험 36개를 먼저 쓰고 실패를 본 뒤 구현했다. 실세션에서 `bash -c "git push --dry-run …"` 가 훅 사유와 함께 거부되는 것을 확인했다.
 
 **막힌 것** — 프로젝트 `.claude/settings.json` 의 `Bash(git push:*)` 를 지우는 편집이 auto mode 분류기에 거부됐다(사용자 지시가 있었는데도). 사용자가 직접 지운다.
+
+---
+
+## 2026-10-12 — macOS 에서 실앱을 조작·관찰한다
+
+이 PC(macOS 15, arm64)에 대상 앱 Mac 디버그 빌드가 있었다 — **Qt 6.5.3**(Windows 는 5.15.6), 3D 는 "OpenGL 4.1 Metal". 목표는 같은 CLI·시나리오·MCP 를 Mac 실앱에 대고 그대로 돌리는 것이었다.
+
+**밖이 아니라 안에서.** 밖에서 다른 앱 창을 찍고 입력을 넣으려면 화면 기록·손쉬운 사용 권한(TCC)이 필요하다 — 실측 둘 다 꺼져 있었다(`AXIsProcessTrusted` false, `CGPreflightScreenCaptureAccess` false). 사람이 시스템 설정에서 줘야 하고 화면 기록은 터미널 재시작까지 요구한다. 그런데 zwagent 는 이미 프로세스 안에 있고, **자기 창을 찍고 자기에게 입력을 넣는 데는 권한이 필요 없다.** 그래서 zwwin.exe 가 하던 창 단위 일(목록·캡처·클릭·키)을 zwagent op 로 만들고(`windows.cpp`), `src/mac/zwmac.ts` 가 zwwin 과 같은 동사·플래그·JSON 으로 옮긴다. zwwin.ts 는 플랫폼만 보고 둘 중 하나를 부른다 — **판정 코드는 한 줄도 안 바뀌었다**(state·judgeClick·activePanel·readDocumentState 의 규칙 그대로). 첫 grab 한 장에 3D 아바타·원단 셰이딩이 잡혀 M1 전제가 Mac 에서 바로 섰다.
+
+**플러그인이 "로드 안 됨" 으로 보였던 이유 둘.** ① 대상 앱은 `QtCore.framework/.../QtCore_debug` 에 링크돼 있는데 qmake 는 프레임워크에 `_debug` 를 안 붙인다 — 그대로면 QtCore 가 두 벌 뜬다. 링크 뒤 `install_name_tool` 로 의존 이름을 바꾼다(서명은 링커 ad-hoc 이 유지된다). ② **디버그 Qt 는 파일 이름이 `_debug.dylib` 로 끝나지 않는 플러그인을 보지도 않는다.** `QT_DEBUG_PLUGINS=1` 에도 "checking directory" 만 찍히고 파일 이름이 안 나왔다 — Windows 의 "메타데이터 디버그 플래그" 함정과 같은 종류의 조용한 건너뜀이다.
+
+**단축키가 조용히 무시됐다.** keyWindow 로 Shift+P 를 넣었는데 화면이 안 바뀌었다. 두 겹이었다. ① macOS 의 창 활성화는 비동기라 부르고 바로 보면 아직 비활성 — 창 범위 단축키가 안 맞는다. 상한을 두고 기다리게 했다. ② 그래도 안 됐다 — **Qt 6 는 macOS 에서 단축키를 processKeyEvent 가 아니라 플랫폼 플러그인(QNSView::keyDown)이 키를 넘기기 전에 본다.** handleKeyEvent 만 부르면 단축키 맵을 안 거친다. QNSView 순서대로 handleShortcutEvent 를 먼저 부르자 15/15 가 됐다.
+
+**Retina.** grab 은 장치 픽셀(2배)로 나온다. 트리·클릭 좌표는 논리 픽셀이라 그대로 두면 PNG 에서 읽은 좌표가 2배로 틀린다 — Windows 의 "printwindow 8px" 과 같은 종류의 조용한 어긋남이다. grab·shot 을 논리 크기로 줄인다(Windows 는 dpr=1 이라 무변경).
+
+**파일 열기는 인자로 된다.** CLAUDE.md 에 "Windows 에는 파일 열기 인자가 없다" 고 적혀 있지만, 메인 창의 `InitLoadingFile` 이 `QApplication::arguments()[1]` 이 있는 파일이면 연다(`GetAudacesImportFileType`). `-style` 은 Qt 가 먼저 걷어내므로 `z-weave <파일> -style zwagent` 로 다이얼로그 없이 열리고 최근 목록에도 들어간다. Windows 에서 같은지는 확인 안 했다 — 그쪽 근거(zwAppZWeave.cpp)는 앱 객체 쪽이고 이건 메인 창 쪽이다.
+
+**대상 앱 버그로 보이는 것 하나 — shortcut.ini 가 macOS 에서 안 써진다.** `zwShortcutManager::WriteToDisk` 가 `AppDataLocation/<버전>/shortcut.ini` 를 폴더를 안 만들고 연다. Windows 는 그 폴더가 다른 이유로 이미 있어서 드러나지 않는다. 폴더를 만들어 두자 앱이 시작하며 기본값 1209 바이트를 썼다 — 진단이 맞았다. 사용자가 단축키를 바꿔도 Mac 에서는 저장이 안 될 것이다(확인 안 함). 앱은 고치지 않았고 `launch-zweave.sh` 가 폴더를 만든다.
+
+**다이얼로그.** 저장 확인 모달을 실앱에서 만들었다(dirty 문서에서 최근 파일 열기). state 는 메인 DISABLED + 소유 다이얼로그로 busy 를 냈다. 처음엔 click --name No 가 닿지 않았다 — 클릭을 메인 창에 넣었는데 메인은 모달에 막혀 Qt 가 버린다. **실제 클릭처럼 그 점의 맨 위 창에** 넣게 하자 눌렸고 로그에 두 번째 `Loading scene` 이 찍혔다. UIA 대체도 Windows 모양에 맞췄다 — 소유 다이얼로그를 소유 창 아래로, 단축 표시 `&` 를 걷어(`&No` → `No`). 판정은 Windows 와 같이 "의심" 이다(열린 항목 그대로).
+
+**녹화는 4 fps 다.** 프로세스 안 grab 이 프레임당 ~200ms(Retina 렌더 + GPU 읽기)라 10 fps 로 두면 절반 넘게 복제다. 인코더는 AVFoundation(Swift, `zwmac-encode`) — ffmpeg 도 화면 기록 권한도 없이 된다. Quick Look 썸네일로 내용을 확인했다.
+
+**실수 하나.** 녹화 시험으로 3D 뷰를 끌었는데 누른 자리가 바지 위라 카메라가 아니라 패턴이 선택됐다. History 에 이동 기록이 없어 형상은 안 바뀐 것을 확인하고 Esc 로 풀었다. **3D 뷰를 끌 때는 옷이 없는 배경에서 시작한다.**
+
+**baseline 이 "앱을 새로 띄워 연 직후" 에만 맞는다.** 같은 프로세스에서 최근 파일로 다시 열면 2D 의 봉제선 쌍 색이 매번 달라진다(파랑·분홍 → 분홍·노랑 → 분홍·주황·초록). 새로 띄워 연 두 번은 픽셀까지 같았다. 색을 쌍마다 무작위 또는 프로세스 안 순서로 매기는 것으로 보인다 — 의도인지는 사용자 판단으로 넘겼다. 다시 열 때만 로그에 `Reuse filed entry: avatar_custom/...`·`TakeSnapshot(), but nothing changed!` ERROR 가 나온다.
+
+**테스트 하나가 이미 낡아 있었다.** zwagent 통합 테스트가 오른쪽 버튼을 거부하라고 단정하는데 02fbe9e 가 오른쪽 버튼을 받게 바꿨다. Windows 에서도 실패했을 것이다 — 모르는 버튼 이름으로 바꿨다. 또 10-06·10-07 커밋(`class:`·문맥 메뉴)의 경과는 이 문서에 없다.
