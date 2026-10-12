@@ -181,8 +181,13 @@ export type DocumentState = {
  *
  * 형식은 `파일명` 또는 `파일명 *` 이다 — dirty 면 `" *"` 가 붙는다(같은 파일 47행).
  */
-export function readDocumentState(dump: UiaDump): DocumentState {
-  const header = dump.nodes.find((n) => n.automationId.endsWith('FramelessWindowHeader'))
+export function readDocumentState(dump: UiaDump, opts: { fromTitle?: boolean } = {}): DocumentState {
+  // **macOS 는 창 제목에 싣는다** — 같은 함수의 비 Windows 분기가 `QMainWindow::setWindowTitle(파일명 + " *")`
+  // 를 부른다(zwQtFramelessWindow.cpp:58-66). 형식이 같으므로 최상위 창 노드의 이름을 헤더 대신 읽는다.
+  // Windows 에서 켜면 안 된다 — 거기서는 OS 제목이 비거나 "z-weave" 라 파일명으로 잘못 읽힌다.
+  const header = opts.fromTitle === true
+    ? dump.nodes.find((n) => n.depth === 0 && n.controlType === 'Window')
+    : dump.nodes.find((n) => n.automationId.endsWith('FramelessWindowHeader'))
   if (header === undefined) {
     return {
       fileName: null,

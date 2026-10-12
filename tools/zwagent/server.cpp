@@ -281,6 +281,11 @@ QByteArray Server::handle(const QByteArray& line)
 		return handleKey(req, id, out);
 	}
 
+	if (op == QStringLiteral("windows")) return handleWindows(req, id, out);
+	if (op == QStringLiteral("shotWindow")) return handleShotWindow(req, id, out);
+	if (op == QStringLiteral("clickWindow")) return handleClickWindow(req, id, out);
+	if (op == QStringLiteral("keyWindow")) return handleKeyWindow(req, id, out);
+
 	return fail(id, QStringLiteral("모르는 op: \"%1\"").arg(op));
 }
 

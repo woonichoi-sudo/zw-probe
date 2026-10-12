@@ -455,7 +455,7 @@ function cmdUia(flags: Map<string, string>): number {
     console.log(`주의  노드 ${dump.maxNodes}개에서 잘렸다. 없는 것을 없다고 단정할 수 없다 — --max 를 올린다.`)
   }
 
-  const doc = readDocumentState(dump)
+  const doc = readDocumentState(dump, { fromTitle: process.platform === 'darwin' })
   if (doc.fileName !== null) {
     console.log(`문서  ${doc.fileName}${doc.dirty === true ? '  [저장 안 됨]' : ''}`)
   }
@@ -487,7 +487,7 @@ function cmdUia(flags: Map<string, string>): number {
  */
 function cmdDoc(flags: Map<string, string>): number {
   const dump = uiaTree({ ...targetFilter(flags), depth: 3 })
-  const doc = readDocumentState(dump)
+  const doc = readDocumentState(dump, { fromTitle: process.platform === 'darwin' })
 
   if (doc.fileName === null) {
     console.log(`문서  못 읽었다 — ${doc.reason}`)

@@ -11,13 +11,13 @@ const B = 'z-weave_5.0.34_2026.09.09_05.31.07.995.log'
 const C = 'z-weave_5.1.0_2026.09.09_04.07.41.630.log'
 
 test('logDir — LOCALAPPDATA 아래 log 디렉토리', () => {
-  const d = logDir({ LOCALAPPDATA: 'C:\\Users\\x\\AppData\\Local' })
+  const d = logDir({ LOCALAPPDATA: 'C:\\Users\\x\\AppData\\Local' }, 'win32')
   assert.match(d!, /z-emotion[\\/]z-weave[\\/]log$/)
 })
 
 test('logDir — LOCALAPPDATA 가 없으면 null', () => {
-  assert.equal(logDir({}), null)
-  assert.equal(logDir({ LOCALAPPDATA: '' }), null)
+  assert.equal(logDir({}, 'win32'), null)
+  assert.equal(logDir({ LOCALAPPDATA: '' }, 'win32'), null)
 })
 
 test('pickLogFile — 파일명 시각이 가장 늦은 것', () => {
@@ -122,4 +122,12 @@ test('tailFrom — 멀티바이트 문자에서 offset 이 어긋나지 않는�
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+test('logDir — macOS 는 Application Support 아래 (Qt AppDataLocation)', () => {
+  assert.equal(
+    logDir({ HOME: '/Users/x' }, 'darwin'),
+    '/Users/x/Library/Application Support/z-emotion/z-weave/log',
+  )
+  assert.equal(logDir({}, 'darwin'), null)
 })

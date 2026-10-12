@@ -7,6 +7,8 @@
 // 이유는 사람이 읽고 손으로 흉내낼 수 있어야 하기 때문이다 — 파이프가 안 될 때
 // 원인을 찾으려면 그게 필요하다.
 
+import { tmpdir } from 'node:os'
+
 import { parseAgentHello } from './hello.ts'
 import type { AgentWidget } from './hello.ts'
 import type { Modifiers, MouseEventSpec } from '../input/view2d.ts'
@@ -16,9 +18,17 @@ export function pipeNameFor(pid: number): string {
   return `zwagent-${pid}`
 }
 
-/** Windows 에서 named pipe 의 실제 경로. Node 의 `net.connect({path})` 가 이 형태를 받는다. */
-export function pipePathFor(pid: number): string {
-  return `\\\\.\\pipe\\${pipeNameFor(pid)}`
+/**
+ * 채널의 실제 경로. Node 의 `net.connect({path})` 가 두 형태를 다 받는다.
+ *
+ * - Windows: `QLocalServer` 가 named pipe 를 연다 → `\\.\pipe\<이름>`
+ * - 그 밖(macOS): Unix 도메인 소켓을 `QDir::tempPath()/<이름>` 에 만든다. 그 값이
+ *   `$TMPDIR` 이므로 Node 의 `os.tmpdir()` 와 같다 — 앱과 CLI 가 같은 환경에서 떠야 한다
+ *   (2026-10-12 실측: `$TMPDIR/zwagent-<pid>` 에 소켓 파일이 생겼다)
+ */
+export function pipePathFor(pid: number, platform: string = process.platform, tmp: string = tmpdir()): string {
+  if (platform === 'win32') return `\\\\.\\pipe\\${pipeNameFor(pid)}`
+  return `${tmp.replace(/\/+$/, '')}/${pipeNameFor(pid)}`
 }
 
 export type Request =

@@ -297,3 +297,19 @@ test('activePanel — 빈 트리', () => {
   assert.equal(p.dockId, null)
   assert.equal(p.tabName, null)
 })
+
+test('readDocumentState fromTitle — macOS 는 창 제목에서 파일명·dirty 를 읽는다', () => {
+  const win = (name: string): UiaNode => ({
+    depth: 0, controlType: 'Window', name, automationId: 'zwQtMainWindow', class: 'zwQtMainWindow',
+    enabled: true, offscreen: false, hasRect: true, screenX: 0, screenY: 0, width: 10, height: 10, wx: 0, wy: 0,
+  })
+  const dump = (name: string): UiaDump => ({ elapsedMs: 0, maxDepth: 3, maxNodes: 10, truncated: false, nodes: [win(name)] })
+  assert.deepEqual(
+    { ...readDocumentState(dump('Untitled.zls'), { fromTitle: true }), reason: '' },
+    { fileName: 'Untitled.zls', dirty: false, reason: '' },
+  )
+  assert.equal(readDocumentState(dump('a b.zls *'), { fromTitle: true }).dirty, true)
+  assert.equal(readDocumentState(dump('a b.zls *'), { fromTitle: true }).fileName, 'a b.zls')
+  // 끄면 예전 규칙 — 헤더가 없으므로 못 읽는다
+  assert.equal(readDocumentState(dump('Untitled.zls')).fileName, null)
+})

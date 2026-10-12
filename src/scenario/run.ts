@@ -261,7 +261,7 @@ async function waitForDocument(
   let last = '(못 읽음)'
   while (Date.now() < deadline) {
     try {
-      const s = readDocumentState(uiaTree({ ...filter, depth: 3 }))
+      const s = readDocumentState(uiaTree({ ...filter, depth: 3 }), { fromTitle: process.platform === 'darwin' })
       last = s.fileName
       if (s.fileName === fileName) {
         return { ok: true, reason: `"${fileName}" 이 열렸다 (${Math.round(timeoutMs)}ms 안에).` }
@@ -538,7 +538,7 @@ export async function runScenario(sc: Scenario, opts: RunOptions = {}): Promise<
           break
         }
         case 'expectDoc': {
-          const s = readDocumentState(uiaTree({ ...filter, depth: 3 }))
+          const s = readDocumentState(uiaTree({ ...filter, depth: 3 }), { fromTitle: process.platform === 'darwin' })
           const bad: string[] = []
           if (step.fileName !== undefined && s.fileName !== step.fileName) {
             bad.push(`파일명이 "${s.fileName}" 인데 "${step.fileName}" 를 기대했다`)

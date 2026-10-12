@@ -14,6 +14,21 @@ const HERE = dirname(fileURLToPath(import.meta.url))
 export const ZWWIN_EXE = resolve(HERE, '../../bin/zwwin.exe')
 
 /**
+ * **macOS 에서는 zwwin.exe 대신 `src/mac/zwmac.ts` 를 부른다** (2026-10-12). 같은 동사·플래그·JSON 을
+ * 내므로 이 파일의 나머지와 판정 코드는 그대로다. 안에서는 zwagent 명령 채널로 앱 프로세스에
+ * 묻는다 — 밖에서 창을 다루려면 화면 기록·손쉬운 사용 권한이 필요하기 때문이다(zwmac.ts 머리말).
+ */
+export const ZWMAC_TS = resolve(HERE, '../mac/zwmac.ts')
+const IS_MAC = process.platform === 'darwin'
+
+/** 플랫폼에 맞는 가장자리 실행 파일과 인자. */
+function edge(args: string[]): { cmd: string; argv: string[]; label: string } {
+  return IS_MAC
+    ? { cmd: process.execPath, argv: [ZWMAC_TS, ...args], label: 'zwmac' }
+    : { cmd: ZWWIN_EXE, argv: args, label: 'zwwin.exe' }
+}
+
+/**
  * 대상 앱의 프로세스 이름. 필터를 주지 않은 명령이 **실행 중인 앱 버전** 을 알아낼 때
  * 쓰는 기본값이다. 필터 없이 첫 창을 집으면 엉뚱한 프로세스의 버전을 읽어 다른 버전의
  * shortcut.ini 로 조용히 다른 명령을 보낸다 (2026-09-09 실측: 5.1.0 을 골랐고 앱은 5.0.34).
@@ -79,11 +94,12 @@ function filterArgs(f: WindowFilter): string[] {
 }
 
 function run(args: string[]): unknown {
-  const r = spawnSync(ZWWIN_EXE, args, { encoding: 'utf8', windowsHide: true })
+  const e = edge(args)
+  const r = spawnSync(e.cmd, e.argv, { encoding: 'utf8', windowsHide: true, maxBuffer: 256 * 1024 * 1024 })
 
   if (r.error) {
     throw new ZwwinError(
-      `zwwin.exe 를 실행하지 못했다 (${ZWWIN_EXE}): ${r.error.message}\n` +
+      `${e.label} 를 실행하지 못했다 (${IS_MAC ? ZWMAC_TS : ZWWIN_EXE}): ${r.error.message}\n` +
         `빌드하지 않았다면 'bash tools/zwwin/build.sh' 를 먼저 실행한다.`,
     )
   }
@@ -262,7 +278,8 @@ export function startRecord(opts: StartRecordOptions): number {
     ...filterArgs(opts),
   ]
   if (!opts.cursor) args.push('--no-cursor')
-  const child = spawn(ZWWIN_EXE, args, { detached: true, stdio: 'ignore', windowsHide: true })
+  const e = edge(args)
+  const child = spawn(e.cmd, e.argv, { detached: true, stdio: 'ignore', windowsHide: true })
   child.unref()
   if (child.pid === undefined) {
     throw new ZwwinError(`zwwin.exe record 를 띄우지 못했다 (${ZWWIN_EXE})`)

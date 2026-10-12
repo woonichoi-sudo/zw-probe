@@ -16,6 +16,22 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+# **macOS (2026-10-12).** 대상 앱 Mac 빌드는 Qt 6.5.3 이다. 산출물은
+# bin/plugins/styles/libzwagent_debug.dylib — 이름의 `_debug` 와 의존 이름 변경은 zwagent.pro 가 한다.
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  QT_MAC="$(bash "$ROOT/tools/zweave-root.sh")/external/Qt-6.5.3-LTS-LGPL-AppleClang_ARM64"
+  if [[ ! -x "$QT_MAC/bin/qmake" ]]; then echo "찾을 수 없다: $QT_MAC/bin/qmake" >&2; exit 1; fi
+  BUILD="$ROOT/build/zwagent-mac"
+  mkdir -p "$BUILD"
+  "$QT_MAC/bin/qmake" -o "$BUILD/Makefile" "$ROOT/tools/zwagent/zwagent.pro" CONFIG+=debug >/dev/null
+  make -s -C "$BUILD"
+  OUT="$ROOT/bin/plugins/styles/libzwagent_debug.dylib"
+  [[ -f "$OUT" ]] || { echo "빌드가 $OUT 을 만들지 못했다" >&2; exit 1; }
+  echo "빌드 완료: $OUT"
+  echo "  이미 떠 있는 앱은 옛 dylib 를 쥐고 있다 — 새 op 를 쓰려면 앱을 다시 띄운다(bash tools/launch-zweave.sh)."
+  exit 0
+fi
 QT="$(bash "$ROOT/tools/zweave-root.sh")/external/Qt-5.15.6-lts-lgpl-msvc2019_64"
 VCVARS="C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Auxiliary/Build/vcvars64.bat"
 

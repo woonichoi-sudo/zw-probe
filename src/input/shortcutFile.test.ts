@@ -53,11 +53,16 @@ test('pickNewestVersion — 버전 형태가 아닌 이름은 무시한다', () 
 })
 
 test('appDataRoot — APPDATA 아래 vendor/app 경로를 만든다', () => {
-  const root = appDataRoot({ APPDATA: 'C:\\Users\\x\\AppData\\Roaming' })
+  const root = appDataRoot({ APPDATA: 'C:\\Users\\x\\AppData\\Roaming' }, 'win32')
   assert.match(root!, /z-emotion[\\/]z-weave$/)
 })
 
 test('appDataRoot — APPDATA 가 없으면 null', () => {
-  assert.equal(appDataRoot({}), null)
-  assert.equal(appDataRoot({ APPDATA: '' }), null)
+  assert.equal(appDataRoot({}, 'win32'), null)
+  assert.equal(appDataRoot({ APPDATA: '' }, 'win32'), null)
+})
+
+test('appDataRoot — macOS 는 Application Support 아래, 로그와 루트가 같다', () => {
+  assert.equal(appDataRoot({ HOME: '/Users/x' }, 'darwin'), '/Users/x/Library/Application Support/z-emotion/z-weave')
+  assert.equal(appDataRoot({}, 'darwin'), null)
 })

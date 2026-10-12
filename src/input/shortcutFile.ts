@@ -81,7 +81,16 @@ export function pickNewestVersion(names: readonly string[]): string | null {
   return parsed[0]!.name
 }
 
-export function appDataRoot(env: NodeJS.ProcessEnv = process.env): string | null {
+/**
+ * 버전 폴더들의 루트. **macOS 는 `~/Library/Application Support/z-emotion/z-weave`** (Qt AppDataLocation).
+ * 앱이 버전 폴더를 안 만들고 shortcut.ini 를 써서 macOS 에서는 파일이 없을 수 있다 —
+ * `tools/launch-zweave.sh` 가 폴더를 먼저 만든다(2026-10-12, zwShortcutManager::WriteToDisk).
+ */
+export function appDataRoot(env: NodeJS.ProcessEnv = process.env, platform: string = process.platform): string | null {
+  if (platform === 'darwin') {
+    const home = env.HOME
+    return home === undefined || home === '' ? null : join(home, 'Library', 'Application Support', APP_VENDOR, APP_NAME)
+  }
   const appData = env.APPDATA
   if (appData === undefined || appData === '') return null
   return join(appData, APP_VENDOR, APP_NAME)

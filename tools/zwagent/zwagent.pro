@@ -20,8 +20,27 @@ OBJECTS_DIR = $$PWD/../../build/zwagent
 MOC_DIR = $$PWD/../../build/zwagent
 
 # 한국어 주석이 UTF-8 이다. 없으면 MSVC 가 코드 페이지 949 로 읽어 C4819 를 낸다.
-QMAKE_CXXFLAGS += /utf-8
+win32: QMAKE_CXXFLAGS += /utf-8
+
+# **macOS (Qt 6.5.3, 2026-10-12).** 대상 앱 디버그 빌드는 프레임워크의 `_debug` 변형
+# (`QtCore.framework/.../QtCore_debug`)에 링크돼 있다. qmake 는 프레임워크에 그 접미사를
+# 안 붙이므로 그냥 두면 릴리스 QtCore 를 함께 로드해 **QtCore 가 두 벌이 된다.** 링크 뒤에
+# 의존 이름을 `_debug` 로 바꾼다. 경로는 앱과 같은 `@rpath` 라 앱의 Qt 를 그대로 쓴다.
+#
+# **파일 이름도 `_debug` 로 끝나야 한다.** 디버그 Qt 의 플러그인 로더는 macOS 에서 이름이
+# `_debug.dylib` 가 아닌 플러그인을 **보지도 않고 건너뛴다** — `QT_DEBUG_PLUGINS=1` 에도
+# "checking directory" 만 찍히고 파일 이름이 안 나온다 (2026-10-12 실측).
+macx {
+	TARGET = zwagent_debug
+	OBJECTS_DIR = $$PWD/../../build/zwagent-mac/obj
+	MOC_DIR = $$PWD/../../build/zwagent-mac/obj
+	for(m, $$list(Core Gui Widgets Network)) {
+		QMAKE_POST_LINK += install_name_tool -change \
+			@rpath/Qt$${m}.framework/Versions/A/Qt$${m} \
+			@rpath/Qt$${m}.framework/Versions/A/Qt$${m}_debug $(DESTDIR)$(TARGET) ;
+	}
+}
 
 HEADERS += actions.h server.h tree.h
-SOURCES += zwagent.cpp actions.cpp server.cpp tree.cpp
+SOURCES += zwagent.cpp actions.cpp server.cpp tree.cpp windows.cpp
 DISTFILES += zwagent.json

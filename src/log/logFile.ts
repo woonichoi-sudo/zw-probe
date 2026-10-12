@@ -15,7 +15,15 @@ export const APP_VENDOR = 'z-emotion'
 export const APP_NAME = 'z-weave'
 export const LOG_SUBDIR = 'log'
 
-export function logDir(env: NodeJS.ProcessEnv = process.env): string | null {
+/**
+ * 로그 폴더. **macOS 는 `~/Library/Application Support/z-emotion/z-weave/log`** 다 (2026-10-12 실측) —
+ * Qt 의 AppDataLocation 이고 단축키(shortcutFile.ts)와 루트가 같다. 파일 이름 규칙은 같다.
+ */
+export function logDir(env: NodeJS.ProcessEnv = process.env, platform: string = process.platform): string | null {
+  if (platform === 'darwin') {
+    const home = env.HOME
+    return home === undefined || home === '' ? null : join(home, 'Library', 'Application Support', APP_VENDOR, APP_NAME, LOG_SUBDIR)
+  }
   const local = env.LOCALAPPDATA
   if (local === undefined || local === '') return null
   return join(local, APP_VENDOR, APP_NAME, LOG_SUBDIR)

@@ -26,7 +26,12 @@ test('pipeNameFor — 이름에 pid 가 들어간다', () => {
 })
 
 test('pipePathFor — Windows named pipe 경로 형태', () => {
-  assert.equal(pipePathFor(1234), '\\\\.\\pipe\\zwagent-1234')
+  assert.equal(pipePathFor(1234, 'win32'), '\\\\.\\pipe\\zwagent-1234')
+})
+
+test('pipePathFor — macOS 는 임시 폴더의 Unix 소켓. 끝 슬래시가 겹치지 않는다', () => {
+  assert.equal(pipePathFor(1234, 'darwin', '/var/folders/x/T/'), '/var/folders/x/T/zwagent-1234')
+  assert.equal(pipePathFor(1234, 'darwin', '/tmp'), '/tmp/zwagent-1234')
 })
 
 test('encodeRequest — 줄바꿈으로 끝난다. 서버가 줄로 끊어 읽는다', () => {

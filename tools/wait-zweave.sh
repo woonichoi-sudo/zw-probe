@@ -15,7 +15,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 HELLO="$ROOT/runs/zwagent-hello.json"
 # **Windows 형식이어야 한다.** Node 는 MSYS 경로(`/d/...`)를 못 연다 — 이걸 안 바꾸면
 # hello 가 멀쩡히 있어도 "정착하지 않았다" 가 나온다 (2026-09-10 에 실제로 겪었다).
-HELLO_WIN="$(cygpath -w "$HELLO")"
+if command -v cygpath >/dev/null; then HELLO_WIN="$(cygpath -w "$HELLO")"; else HELLO_WIN="$HELLO"; fi
 LIMIT="${1:-180}"
 
 started=$(date +%s)

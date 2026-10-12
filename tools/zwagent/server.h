@@ -58,6 +58,11 @@ private:
 	QByteArray handleMouse(const QJsonObject& req, const QJsonValue& id, QJsonObject& out);
 	/// 위젯 하나에 키 누름·뗌을 보낸다. 근거는 server.cpp 의 주석.
 	QByteArray handleKey(const QJsonObject& req, const QJsonValue& id, QJsonObject& out);
+	/// 창 단위 op — windows.cpp. macOS 의 zwmac 이 zwwin.exe 대신 쓴다.
+	QByteArray handleWindows(const QJsonObject& req, const QJsonValue& id, QJsonObject& out);
+	QByteArray handleShotWindow(const QJsonObject& req, const QJsonValue& id, QJsonObject& out);
+	QByteArray handleClickWindow(const QJsonObject& req, const QJsonValue& id, QJsonObject& out);
+	QByteArray handleKeyWindow(const QJsonObject& req, const QJsonValue& id, QJsonObject& out);
 
 	QLocalServer* m_server = nullptr;
 	QString m_name;

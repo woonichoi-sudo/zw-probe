@@ -19,6 +19,44 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+
+# **macOS (2026-10-12).** 대상 앱 Mac 디버그 빌드(Qt 6.5.3)를 백그라운드로 띄운다. cmd 함정이 없다.
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  EXE="$(bash "$ROOT/tools/zweave-root.sh")/cmake_build/bin/Debug/z-weave"
+  DYLIB="$ROOT/bin/plugins/styles/libzwagent_debug.dylib"
+  HELLO="$ROOT/runs/zwagent-hello.json"
+  [[ -x "$EXE" ]] || { echo "대상 앱을 찾을 수 없다: $EXE" >&2; exit 1; }
+  [[ -f "$DYLIB" ]] || { echo "zwagent 가 없다: $DYLIB — bash tools/zwagent/build.sh 를 먼저 실행한다." >&2; exit 1; }
+  DEBUG=0
+  for a in "$@"; do
+    case "$a" in
+      --debug-plugins) DEBUG=1 ;;
+      --print) echo "QT_PLUGIN_PATH=$ROOT/bin/plugins ZWAGENT_HELLO=$HELLO $EXE -style zwagent"; exit 0 ;;
+      *) echo "모르는 인자: $a" >&2; exit 1 ;;
+    esac
+  done
+  if pgrep -f "$EXE" >/dev/null; then
+    echo "z-weave 가 이미 실행 중이다 (pid $(pgrep -f "$EXE" | tr "\\n" " ")). 플러그인을 얹으려면 먼저 닫는다." >&2
+    exit 1
+  fi
+  # **단축키 파일의 버전 폴더를 만들어 둔다.** 앱은 시작할 때 shortcut.ini 기본값을 쓰는데 폴더를
+  # 안 만들고 열어서(zwShortcutManager::WriteToDisk) macOS 에서는 조용히 실패한다. 버전은 가장
+  # 최근 로그 파일 이름(z-weave_<버전>_<시각>.log)에서 읽는다.
+  SUPPORT="$HOME/Library/Application Support/z-emotion/z-weave"
+  LAST_LOG="$(ls -t "$SUPPORT/log"/z-weave_*.log 2>/dev/null | head -1 || true)"
+  if [[ -n "$LAST_LOG" ]]; then
+    VER="$(basename "$LAST_LOG" | sed -E "s/^z-weave_([^_]+)_.*/\\1/")"
+    mkdir -p "$SUPPORT/$VER"
+  fi
+  mkdir -p "$ROOT/runs"
+  rm -f "$HELLO"
+  if [[ $DEBUG -eq 1 ]]; then export QT_DEBUG_PLUGINS=1; fi
+  QT_PLUGIN_PATH="$ROOT/bin/plugins" ZWAGENT_HELLO="$HELLO" \
+    nohup "$EXE" -style zwagent >"$ROOT/runs/zweave-stdout.log" 2>&1 &
+  echo "띄웠다 (pid $!). 위젯 트리 정착까지 기다린다: bash tools/wait-zweave.sh"
+  echo "  앱의 stdout·stderr: runs/zweave-stdout.log"
+  exit 0
+fi
 EXE="$(bash "$ROOT/tools/zweave-root.sh")/cmake_build/bin/Debug/z-weave.exe"
 DLL="$ROOT/bin/plugins/styles/zwagent.dll"
 HELLO="$ROOT/runs/zwagent-hello.json"
