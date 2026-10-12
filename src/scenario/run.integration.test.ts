@@ -13,7 +13,7 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { QTAPP_EXE, ZWAGENT_DLL, qtEnv, qtFilter, qtFixtureMissing } from '../win/qtFixture.ts'
+import { QTAPP_EXE, ZWAGENT_DLL, qtEnv, qtFilter, qtFixtureMissing, windowsOnly } from '../win/qtFixture.ts'
 import { listWindows } from '../win/zwwin.ts'
 import { parseAgentHello } from '../agent/hello.ts'
 import { runScenario } from './run.ts'
@@ -179,7 +179,7 @@ test('명령 이름 오타를 앱을 건드리기 전에 거부한다', { skip }
   }
 })
 
-test('파이프가 없으면 시작 전에 거부하고 이유를 말한다', { skip }, async () => {
+test('파이프가 없으면 시작 전에 거부하고 이유를 말한다', { skip: skip || windowsOnly('플러그인 없이 띄운 창은 macOS 에서 관찰할 수 없다') }, async () => {
   // 플러그인 없이 띄운 픽스처. 절차 중간에서 알면 앱은 이미 반쯤 조작된 상태다.
   const fx = await startFixture(false)
   const out = mkdtempSync(join(tmpdir(), 'zwprobe-out-'))

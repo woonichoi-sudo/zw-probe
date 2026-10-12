@@ -31,7 +31,9 @@ const FIXTURE_EXE = resolve(HERE, '../../bin/zwfixture.exe')
 const FIXTURE_TITLE = 'zwprobe-fixture'
 
 const built = existsSync(ZWWIN_EXE) && existsSync(FIXTURE_EXE)
-const skip = built
+const skip = process.platform === 'darwin'
+  ? 'Windows 전용 — WinForms 픽스처와 zwwin.exe 를 시험한다 (macOS 는 src/mac/zwmac.integration.test.ts)'
+  : built
   ? false
   : 'bin/ 이 비어 있다. bash tools/zwwin/build.sh && bash fixtures/winapp/build.sh 를 먼저 실행한다.'
 

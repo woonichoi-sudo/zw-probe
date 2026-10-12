@@ -12,7 +12,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { QTAPP_EXE, QTAPP_TITLE, qtEnv, qtFilter, qtFixtureMissing } from './qtFixture.ts'
+import { QTAPP_EXE, QTAPP_TITLE, qtEnv, qtFilter, qtFixtureMissing, windowsOnly } from './qtFixture.ts'
 import { listWindows, shot } from './zwwin.ts'
 import { judgeActivity } from './windowState.ts'
 import { analyze, judgeBlank, pixelAt } from '../image/stats.ts'
@@ -21,7 +21,8 @@ import { uiaTree } from './zwwin.ts'
 import type { Bgra, Rgb } from '../image/stats.ts'
 import type { WindowInfo } from './zwwin.ts'
 
-const skip = qtFixtureMissing()
+// 플러그인 없이 띄운 Qt 창의 Win32·UIA 사실(창 클래스·WS_DISABLED·AutomationId)을 본다 — macOS 에는 없는 것들이다
+const skip = windowsOnly('Win32 창·UIA 를 시험한다') || qtFixtureMissing()
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 

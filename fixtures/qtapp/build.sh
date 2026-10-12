@@ -20,6 +20,19 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+# **macOS (2026-10-12).** 대상 앱 Mac 빌드와 같은 Qt 6.5.3 으로 빌드한다 → bin/zwqtfixture
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  QT_MAC="$(bash "$ROOT/tools/zweave-root.sh")/external/Qt-6.5.3-LTS-LGPL-AppleClang_ARM64"
+  [[ -x "$QT_MAC/bin/qmake" ]] || { echo "찾을 수 없다: $QT_MAC/bin/qmake" >&2; exit 1; }
+  BUILD="$ROOT/build/qtapp-mac"
+  mkdir -p "$BUILD"
+  "$QT_MAC/bin/qmake" -o "$BUILD/Makefile" "$ROOT/fixtures/qtapp/qtapp.pro" CONFIG+=debug >/dev/null
+  make -s -C "$BUILD"
+  [[ -x "$ROOT/bin/zwqtfixture" ]] || { echo "빌드가 bin/zwqtfixture 를 만들지 못했다" >&2; exit 1; }
+  echo "빌드 완료: $ROOT/bin/zwqtfixture"
+  exit 0
+fi
 QT="$(bash "$ROOT/tools/zweave-root.sh")/external/Qt-5.15.6-lts-lgpl-msvc2019_64"
 VCVARS="C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Auxiliary/Build/vcvars64.bat"
 

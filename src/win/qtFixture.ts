@@ -19,15 +19,24 @@ import { zweaveRoot } from './zweaveRoot.ts'
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(HERE, '../..')
 
-/** 대상 앱이 쓰는 Qt. 여기에 맞춰 빌드하고 여기서 실행한다. */
-export const QT_DIR = resolve(zweaveRoot(), 'external/Qt-5.15.6-lts-lgpl-msvc2019_64')
+/**
+ * **macOS (2026-10-12)** 는 대상 앱 Mac 빌드의 Qt 6.5.3 이다. 실행 파일·플러그인 이름이 다르고(확장자 없음,
+ * `libzwagent_debug.dylib`), Qt 를 찾는 길은 PATH 가 아니라 실행 파일에 박힌 rpath 다.
+ */
+export const IS_MAC = process.platform === 'darwin'
 
-export const QTAPP_EXE = resolve(ROOT, 'bin/zwqtfixture.exe')
+/** 대상 앱이 쓰는 Qt. 여기에 맞춰 빌드하고 여기서 실행한다. */
+export const QT_DIR = resolve(
+  zweaveRoot(),
+  IS_MAC ? 'external/Qt-6.5.3-LTS-LGPL-AppleClang_ARM64' : 'external/Qt-5.15.6-lts-lgpl-msvc2019_64',
+)
+
+export const QTAPP_EXE = resolve(ROOT, IS_MAC ? 'bin/zwqtfixture' : 'bin/zwqtfixture.exe')
 export const QTAPP_TITLE = 'zwqtfixture'
 
 /** 플러그인을 놓는 곳. Qt 는 `<이 경로>/styles/` 에서 스타일 플러그인을 찾는다. */
 export const PLUGIN_DIR = resolve(ROOT, 'bin/plugins')
-export const ZWAGENT_DLL = resolve(PLUGIN_DIR, 'styles/zwagent.dll')
+export const ZWAGENT_DLL = resolve(PLUGIN_DIR, IS_MAC ? 'styles/libzwagent_debug.dylib' : 'styles/zwagent.dll')
 
 /** Qt 픽스처를 띄울 환경변수. 현재 환경에 덧붙인 새 객체를 돌려준다. */
 export function qtEnv(extra: Record<string, string> = {}): Record<string, string> {
@@ -62,8 +71,21 @@ export function qtFixtureMissing(): string | false {
   if (!existsSync(QTAPP_EXE)) {
     return `${QTAPP_EXE} 가 없다. bash fixtures/qtapp/build.sh 를 먼저 실행한다.`
   }
+  if (IS_MAC) {
+    const core = resolve(QT_DIR, 'lib/QtCore.framework/Versions/A/QtCore_debug')
+    return existsSync(core) ? false : `Qt 디버그 프레임워크를 찾을 수 없다: ${core}`
+  }
   if (!existsSync(resolve(QT_DIR, 'bin/Qt5Cored.dll'))) {
     return `Qt 디버그 DLL 을 찾을 수 없다: ${QT_DIR}/bin/Qt5Cored.dll`
   }
   return false
+}
+
+/**
+ * Windows 에서만 성립하는 시험의 skip 사유. **macOS 의 창 관찰은 zwagent 를 거친다**(src/mac/zwmac.ts) —
+ * 플러그인 없이 띄운 앱은 창이 안 보이고, Win32 창 클래스·스타일 비트·UIA 같은 사실은 macOS 에 없다.
+ * 이런 시험은 조용히 실패시키지 않고 이유를 달아 건너뛴다.
+ */
+export function windowsOnly(what: string): string | false {
+  return IS_MAC ? `Windows 전용 — ${what}` : false
 }

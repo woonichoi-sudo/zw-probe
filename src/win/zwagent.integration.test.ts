@@ -13,7 +13,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { QTAPP_EXE, ZWAGENT_DLL, qtEnv, qtFilter, qtFixtureMissing } from './qtFixture.ts'
+import { IS_MAC, QTAPP_EXE, ZWAGENT_DLL, qtEnv, qtFilter, qtFixtureMissing, windowsOnly } from './qtFixture.ts'
 import { listWindows, shot, uiaTree } from './zwwin.ts'
 import { diff, judgeSame } from '../image/diff.ts'
 import { findWidgets, flattenWidgets, judgeAbi, parseAgentHello } from '../agent/hello.ts'
@@ -91,10 +91,11 @@ test('zwagent.dll 이 Qt 픽스처 앱에 로드되고 위젯 트리를 본다',
     // ② ABI 가 맞는다 — 다르면 지금 동작해도 나중에 조용히 깨진다
     const abi = judgeAbi(h)
     assert.equal(abi.match, true, abi.reason)
-    assert.match(h.qtRuntime, /^5\.15\./, `Qt 5.15.x 여야 한다 — 실제 ${h.qtRuntime}`)
+    // 대상 앱과 같은 Qt — Windows 5.15.x, macOS 6.5.x
+    assert.match(h.qtRuntime, IS_MAC ? /^6\.5\./ : /^5\.15\./, `대상 앱과 같은 Qt 여야 한다 — 실제 ${h.qtRuntime}`)
 
     // ③ 우리가 겨냥한 프로세스 안에 있다
-    assert.match(h.appFilePath, /zwqtfixture\.exe$/i)
+    assert.match(h.appFilePath, /zwqtfixture(\.exe)?$/i)
     assert.ok(h.pid > 0)
 
     // ④ **살아 있는 위젯 트리를 본다. 이것이 M5 의 핵심 능력이다.**
@@ -144,7 +145,7 @@ test('zwagent.dll 이 Qt 픽스처 앱에 로드되고 위젯 트리를 본다',
   }
 })
 
-test('zwagent 를 얹어도 위젯 화면이 바뀌지 않는다', { skip }, async () => {
+test('zwagent 를 얹어도 위젯 화면이 바뀌지 않는다', { skip: skip || windowsOnly('플러그인 없이 띄운 창은 macOS 에서 관찰할 수 없다') }, async () => {
   // **이것이 지켜져야 픽셀 baseline 이 살아남는다.** 프로브가 대상 앱의 외관을
   // 바꾸면 에이전트를 얹은 순간 모든 baseline 이 무효가 되고, 그러면 M3 이
   // 만들어 놓은 것을 M5 가 깨뜨린다. QProxyStyle 로 감싸기만 하는 이유다.
@@ -237,7 +238,7 @@ test('명령 채널이 열리고 온디맨드로 지금의 트리를 준다', { 
     assert.equal(ping.ok, true, ping.ok ? '' : ping.error)
     if (!ping.ok) return
     assert.equal(ping.body.pid, pid, '우리가 겨냥한 프로세스가 답해야 한다')
-    assert.match(String(ping.body.appFilePath), /zwqtfixture\.exe$/i)
+    assert.match(String(ping.body.appFilePath), /zwqtfixture(\.exe)?$/i)
 
     // ③ tree — hello 와 같은 모양이어야 한다. 두 벌이면 밖에서 어느 쪽을 읽었는지에
     //    따라 답이 달라진다.
@@ -517,7 +518,8 @@ test('mouse — 위젯 좌표로 누름·move·뗌을 Qt 의 실제 입력 경�
     const bad: Array<[string, Record<string, unknown>, RegExp]> = [
       ['없는 위젯', { objectName: '없는위젯', events: [{ type: 'press', x: 1, y: 1, button: 'left' }] }, /없다/],
       ['위젯 밖', { objectName: 'mousePad', events: [{ type: 'press', x: 1, y: 1, button: 'left' }, { type: 'move', x: -5, y: 1, button: 'left' }] }, /밖/],
-      ['오른쪽 버튼', { objectName: 'mousePad', events: [{ type: 'press', x: 1, y: 1, button: 'right' }] }, /button/],
+      // 오른쪽 버튼은 02fbe9e 부터 받는다(문맥 메뉴) — 모르는 버튼 이름으로 거부를 본다
+      ['모르는 버튼', { objectName: 'mousePad', events: [{ type: 'press', x: 1, y: 1, button: 'back' }] }, /button/],
       ['모르는 type', { objectName: 'mousePad', events: [{ type: 'wheel', x: 1, y: 1, button: 'left' }] }, /type/],
       ['빈 events', { objectName: 'mousePad', events: [] }, /events/],
     ]

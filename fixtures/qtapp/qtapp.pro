@@ -16,6 +16,18 @@ UI_DIR = $$PWD/../../build/qtapp
 
 # 한국어 주석이 UTF-8 이므로 명시한다. 없으면 MSVC 가 코드 페이지 949 로 읽어
 # C4819 경고를 낸다 (2026-09-09 실측).
-QMAKE_CXXFLAGS += /utf-8
+win32: QMAKE_CXXFLAGS += /utf-8
+
+# **macOS (Qt 6.5.3, 2026-10-12).** zwagent 와 같은 디버그 Qt(`_debug` 프레임워크)를 써야 한 프로세스에
+# QtCore 가 두 벌 안 뜬다. 링크 뒤 의존 이름을 `_debug` 로 바꾼다(tools/zwagent/zwagent.pro 와 같은 이유).
+macx {
+	OBJECTS_DIR = $$PWD/../../build/qtapp-mac
+	MOC_DIR = $$PWD/../../build/qtapp-mac
+	for(m, $$list(Core Gui Widgets)) {
+		QMAKE_POST_LINK += install_name_tool -change \
+			@rpath/Qt$${m}.framework/Versions/A/Qt$${m} \
+			@rpath/Qt$${m}.framework/Versions/A/Qt$${m}_debug $(TARGET) ;
+	}
+}
 
 SOURCES += main.cpp
