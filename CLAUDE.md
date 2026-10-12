@@ -13,7 +13,7 @@ Z-Weave(C++/Qt5 데스크톱 의상 CAD)를 **외부에서 조작·관찰·판�
 
 1. **Z-Weave 소스는 0줄도 수정하지 않는다.** 이 프로젝트의 존재 이유가 완전 분리다. 앱 수정이 필요해 보이면 먼저 사용자에게 근거를 제시하고 승인을 받는다.
 2. **Z-Weave 리포에 파일을 추가하지 않는다.** 산출물은 전부 이 폴더에 둔다. 예외는 빌드 산출물 폴더(`cmake_build/bin/*/styles/`)에 DLL을 배치하는 것 — 이건 리포와 무관하다.
-3. **이 리포에서는 Claude가 커밋을 알아서 한다.** 규칙은 아래 "커밋과 기록" 절. **push 는 Claude 가 직접 하지 않고 hook 이 한다** — `git push` 는 사용자 스코프 deny 로 막혀 있고, `main` 에 커밋하면 [tools/git-hooks/post-commit](tools/git-hooks/post-commit) 이 `origin`(`git@github.com:woonichoi-sudo/zw-probe.git`, 2026-10-12)으로 올린다. PR 은 하지 않는다. 대상 앱 리포(`d:/z-emotion/Z-Weave`)에는 어떤 git 명령도 실행하지 않는다.
+3. **이 리포에서는 Claude가 커밋을 알아서 한다.** 규칙은 아래 "커밋과 기록" 절. **push 는 hook 이 한다** — `main` 에 커밋하면 [tools/git-hooks/post-commit](tools/git-hooks/post-commit) 이 `origin`(`git@github.com:woonichoi-sudo/zw-probe.git`, 2026-10-12)으로 올린다. PR 은 하지 않는다. 직접 `git push` 도 이 리포 안에서는 된다(아래 "커밋과 기록" 의 push 훅). 대상 앱 리포(`d:/z-emotion/Z-Weave`)에는 어떤 git 명령도 실행하지 않는다.
 4. **불확실한 것은 싸게 먼저 검증한다.** 큰 걸 만들고 나서 전제가 틀린 걸 발견하는 순서를 피한다.
 5. **판단은 전부 `zwprobe`(TS)에, I/O는 가장자리에.** `zwwin.exe`와 `zwagent.dll`은 아무것도 판단하지 않는다 — 찾고, 캡처하고, JSON을 뱉을 뿐이다. 판정·비교·해석은 순수 함수로 TS에 둔다. 이 경계가 무너지면 테스트 불가능한 덩어리가 생긴다. 설계문서 §11.1.
 
@@ -94,12 +94,14 @@ Claude가 이 리포에 자동으로 커밋한다. 사용자 확인을 매번 �
 
 **메시지 형식** — 첫 줄은 `[M1] 창 캡처 구현` 처럼 마일스톤 태그 + 한국어 요약. 커밋 로그가 계획에 그대로 대응되게 한다. 왜 그렇게 했는지 설명이 필요하면 본문에 쓴다. 끝에 `Co-Authored-By` 트레일러를 붙인다.
 
-**대상 앱 리포 보호 — deny 규칙 6줄만 쓴다.** `PreToolUse` 훅을 만들어 썼다가 걷어냈다(경과는 WORKLOG). 지금은 [.claude/settings.json](.claude/settings.json)이 전부다.
+**대상 앱 리포 보호 — deny 규칙 5줄.** `PreToolUse` 훅을 만들어 썼다가 걷어냈다(경과는 WORKLOG). 프로젝트 쪽은 [.claude/settings.json](.claude/settings.json)이 전부다.
 
 ```
 Bash(cd:*)  Bash(pushd:*)  Bash(popd:*)
-Bash(git --git-dir=*)  Bash(git --work-tree=*)  Bash(git push:*)
+Bash(git --git-dir=*)  Bash(git --work-tree=*)
 ```
+
+**push 는 사용자 스코프 훅이 가른다** (2026-10-12). `Bash(git push:*)` deny 를 사용자·프로젝트 양쪽에서 빼고 `~/.claude/hooks/git-push-guard.mjs`(PreToolUse, 시험 36개 같은 폴더)로 바꿨다 — deny 는 어느 스코프의 allow 로도 덮이지 않아서 "이 리포만 연다" 가 규칙으로는 안 된다. 훅은 **`D:/z-emotion/zw-probe` 아래(작업 트리 포함)에서만** `git push` 를 통과시키고, 그 안에서도 `cd`·`-C`·`--git-dir`·`--work-tree`·`-c`·`GIT_DIR=`·`sh -c`·`$( )` 가 섞이면 거부한다. 판단이 안 서면 거부한다. 대상 앱 리포는 루트 밖이라 그대로 막힌다. 훅은 사용자 스코프 파일이라 이 리포에 커밋되지 않는다.
 
 목표는 **대상 앱 리포에 commit·push 하지 못하게** 하는 것이다. git이 그 리포에 도달하는 경로는 `cd`·`-C`·`--git-dir`/`--work-tree` 셋뿐이고, 셋이 다 끊기면 commit도 push도 성립하지 않는다. `-C`와 **공백 형태** `--git-dir`은 사용자 스코프에서 이미 막혀 있다.
 
@@ -112,7 +114,7 @@ Bash(git --git-dir=*)  Bash(git --work-tree=*)  Bash(git push:*)
 - **`Write(...)`는 인식되지 않는 규칙 이름이다.** 조용히 무시된다. 파일 경로 규칙은 `Edit(...)`로 쓰고, 그 하나가 `Write`·`Edit`·`NotebookEdit`를 함께 덮는다
 - 경로는 `//` 접두사 없이 **맨 절대경로**로 쓴다 — `Edit(D:/z-emotion/Z-Weave/**)`. 작업 디렉토리 안팎 모두에서 작동하고 대소문자·역슬래시는 정규화된다. `//D:/...` 형태는 아무것도 막지 못한다
 
-**지금 막히지 않는 것 — 파일 수정.** 위 6줄은 commit·push 경로만 끊는다. `Write`·`Edit` 도구나 `sed -i`·`cp`·`rm`으로 대상 앱 파일을 고치는 것은 막는 것이 없다. **커밋하지 않아도 파일은 바뀐다.** 필요해지면 `Edit(D:/z-emotion/Z-Weave/**)` 한 줄을 넣으면 되고, 그 문법은 실측으로 확인돼 있다.
+**지금 막히지 않는 것 — 파일 수정.** 위 5줄은 commit·push 경로만 끊는다. `Write`·`Edit` 도구나 `sed -i`·`cp`·`rm`으로 대상 앱 파일을 고치는 것은 막는 것이 없다. **커밋하지 않아도 파일은 바뀐다.** 필요해지면 `Edit(D:/z-emotion/Z-Weave/**)` 한 줄을 넣으면 되고, 그 문법은 실측으로 확인돼 있다.
 
 **그래서 규칙 1·2가 먼저다.** 도구 수준 보호는 얇다. 대상 앱을 건드리지 않는 것은 절대 규칙 1·2를 지켜서 달성한다. 막히면 우회하지 않고 근거를 제시해 허용을 받는다.
 
