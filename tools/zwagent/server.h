@@ -22,11 +22,16 @@
 #include <QObject>
 #include <QString>
 
+#include <QPoint>
+
 class QLocalServer;
 class QLocalSocket;
 
 namespace zwagent
 {
+/// 마지막으로 넣은 마우스 위치(화면 좌표)를 남긴다 — windows.cpp 의 녹화 커서용.
+void notePointer(QPoint global);
+
 /// 이 프로세스의 파이프 이름. 밖에서는 `\\.\pipe\<이 값>` 으로 연다.
 QString pipeNameFor(qint64 pid);
 

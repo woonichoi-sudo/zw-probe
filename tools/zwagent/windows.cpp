@@ -16,7 +16,9 @@
 #include "server.h"
 
 #include <QApplication>
+#include <QDateTime>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QImage>
@@ -52,8 +54,6 @@ QByteArray failJson(const QJsonValue& id, const QString& why)
 	return replyJson(o);
 }
 
-/// 마지막으로 넣은 마우스 위치(화면 좌표). 캡처에 커서를 그려 넣는 데 쓴다 — 프로세스 안 입력은
-/// 실제 커서를 안 움직이므로, 녹화에서 어디를 눌렀는지 보이려면 이것뿐이다.
 QPoint g_lastPointer(-1, -1);
 
 /// 창의 id. **native 창 핸들(winId)이다** — macOS 에서는 NSView 주소. JSON 숫자(double)로
@@ -145,12 +145,13 @@ int layerOf(QWidget* w)
 	return 0;
 }
 
-QImage grabLogical(QWidget* w, bool logical)
+QImage grabLogical(QWidget* w, bool logical, bool fast = false)
 {
 	QImage img = w->grab().toImage();
 	if (logical && (img.width() != w->width() || img.height() != w->height()))
 	{
-		img = img.scaled(w->size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+		// fast 는 녹화용 — 부드러운 축소가 프레임당 시간을 먹어 fps 를 못 따라간다(2026-10-12: 복제 64%)
+		img = img.scaled(w->size(), Qt::IgnoreAspectRatio, fast ? Qt::FastTransformation : Qt::SmoothTransformation);
 	}
 	img.setDevicePixelRatio(1.0);
 	return img.convertToFormat(QImage::Format_ARGB32);
@@ -226,6 +227,13 @@ QJsonObject idName(QWidget* w)
 }
 } // namespace
 
+/// 마지막으로 넣은 마우스 위치(화면 좌표). 캡처에 커서를 그려 넣는 데 쓴다 — 프로세스 안 입력은
+/// 실제 커서를 안 움직이므로, 녹화에서 어디를 눌렀는지 보이려면 이것뿐이다. mouse op(server.cpp)도 남긴다.
+void notePointer(QPoint global)
+{
+	g_lastPointer = global;
+}
+
 QByteArray Server::handleWindows(const QJsonObject&, const QJsonValue&, QJsonObject& out)
 {
 	QJsonArray arr;
@@ -258,8 +266,9 @@ QByteArray Server::handleShotWindow(const QJsonObject& req, const QJsonValue& id
 	const bool composite = req.value(QStringLiteral("composite")).toBool(true);
 	const bool logical = req.value(QStringLiteral("logical")).toBool(true);
 	const bool cursor = req.value(QStringLiteral("cursor")).toBool(false);
+	const bool fast = req.value(QStringLiteral("fast")).toBool(false);
 
-	QImage img = grabLogical(w, logical);
+	QImage img = grabLogical(w, logical, fast);
 	if (img.isNull()) return failJson(id, QStringLiteral("창을 그리지 못했다."));
 	const double scale = logical ? 1.0 : w->devicePixelRatioF();
 	const QPoint origin = w->mapToGlobal(QPoint(0, 0));
@@ -279,7 +288,7 @@ QByteArray Server::handleShotWindow(const QJsonObject& req, const QJsonValue& id
 		QPainter p(&img);
 		for (QWidget* o : others)
 		{
-			const QImage oi = grabLogical(o, logical);
+			const QImage oi = grabLogical(o, logical, fast);
 			const QPoint d = o->mapToGlobal(QPoint(0, 0)) - origin;
 			p.drawImage(QPointF(d.x() * scale, d.y() * scale), oi);
 			layered.append(describeWindow(o));
@@ -400,11 +409,15 @@ QByteArray Server::handleKeyWindow(const QJsonObject& req, const QJsonValue& id,
 	// **창을 활성으로 만든다.** 창 범위 단축키(Qt::WindowShortcut)는 활성 창에서만 맞는다 —
 	// 사람이 다른 앱을 쓰고 있으면 앱 전체가 비활성이라 단축키가 조용히 버려진다. Windows 의
 	// zwwin key 가 창을 포그라운드로 올리는 것과 같다.
+	// macOS 의 활성화는 창 서버를 거쳐 **비동기로** 온다 — 부르고 바로 보면 아직 비활성이다(2026-10-12 실측:
+	// 키는 들어갔는데 "포그라운드 실패" 로 보고됐다). 상한을 두고 기다린다.
 	if (activate && !w->isActiveWindow())
 	{
 		w->raise();
 		w->activateWindow();
-		QCoreApplication::processEvents();
+		QElapsedTimer t;
+		t.start();
+		while (!w->isActiveWindow() && t.elapsed() < 1500) QCoreApplication::processEvents(QEventLoop::AllEvents, 50);
 	}
 
 	QObject* focus = QGuiApplication::focusObject();
@@ -418,7 +431,15 @@ QByteArray Server::handleKeyWindow(const QJsonObject& req, const QJsonValue& id,
 	QPointer<QWindow> pw(w->windowHandle());
 	QTimer::singleShot(0, [pw, key, mods, text, holdMs]() {
 		if (!pw) return;
-		QWindowSystemInterface::handleKeyEvent<QWindowSystemInterface::SynchronousDelivery>(pw, QEvent::KeyPress, key, mods, text);
+		bool shortcut = false;
+#if defined(Q_OS_MACOS)
+		// **macOS 에서는 단축키를 플랫폼 플러그인이 먼저 본다.** Qt 6 의 processKeyEvent 는 macOS 에서
+		// 단축키 맵을 건너뛰고, QNSView::keyDown 이 키를 넘기기 전에 handleShortcutEvent 를 부른다.
+		// 그 순서를 그대로 따른다 — 안 그러면 메뉴 단축키(Shift+P 등)가 조용히 무시된다(2026-10-12 실측).
+		const ulong ts = static_cast<ulong>(QDateTime::currentMSecsSinceEpoch());
+		shortcut = QWindowSystemInterface::handleShortcutEvent(pw, ts, key, mods, 0, 0, 0, text);
+#endif
+		if (!shortcut) QWindowSystemInterface::handleKeyEvent<QWindowSystemInterface::SynchronousDelivery>(pw, QEvent::KeyPress, key, mods, text);
 		const auto up = [pw, key, mods, text]() {
 			if (pw) QWindowSystemInterface::handleKeyEvent<QWindowSystemInterface::SynchronousDelivery>(pw, QEvent::KeyRelease, key, mods, text);
 		};

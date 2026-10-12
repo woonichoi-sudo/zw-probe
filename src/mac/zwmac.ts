@@ -337,7 +337,7 @@ async function cmdRecord(a: Map<string, string>): Promise<Raw> {
     const due = Math.floor(elapsed / interval) + 1
     let buf: Buffer | null = null
     try {
-      await ask(pid, { op: 'shotWindow', window: first.info.hwnd, rawPath: framePath, composite: mode === 'screen', logical: true, cursor }, 5000)
+      await ask(pid, { op: 'shotWindow', window: first.info.hwnd, rawPath: framePath, composite: mode === 'screen', logical: true, cursor, fast: true }, 5000)
       const b = readFileSync(framePath)
       if (b.length === frameBytes) buf = b
       else captureFailures++ // 창 크기가 바뀌었다 — 직전 화면으로 둔다

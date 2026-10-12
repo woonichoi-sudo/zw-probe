@@ -28,10 +28,15 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
   [[ -x "$EXE" ]] || { echo "대상 앱을 찾을 수 없다: $EXE" >&2; exit 1; }
   [[ -f "$DYLIB" ]] || { echo "zwagent 가 없다: $DYLIB — bash tools/zwagent/build.sh 를 먼저 실행한다." >&2; exit 1; }
   DEBUG=0
-  for a in "$@"; do
+  OPEN=""
+  while [[ $# -gt 0 ]]; do
+    a="$1"; shift
     case "$a" in
+      # **파일을 열며 띄운다.** 메인 창이 첫 인자가 있는 파일이면 연다(zwQtMainWindow::InitLoadingFile)
+      # — 파일 다이얼로그를 안 거치고, 최근 파일 목록에도 들어가 그 뒤로는 openRecent 가 닿는다.
+      --open) [[ -f "${1:-}" ]] || { echo "열 파일이 없다: ${1:-}" >&2; exit 1; }; OPEN="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"; shift ;;
       --debug-plugins) DEBUG=1 ;;
-      --print) echo "QT_PLUGIN_PATH=$ROOT/bin/plugins ZWAGENT_HELLO=$HELLO $EXE -style zwagent"; exit 0 ;;
+      --print) echo "QT_PLUGIN_PATH=$ROOT/bin/plugins ZWAGENT_HELLO=$HELLO $EXE ${OPEN:+\"$OPEN\" }-style zwagent"; exit 0 ;;
       *) echo "모르는 인자: $a" >&2; exit 1 ;;
     esac
   done
@@ -52,7 +57,7 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
   rm -f "$HELLO"
   if [[ $DEBUG -eq 1 ]]; then export QT_DEBUG_PLUGINS=1; fi
   QT_PLUGIN_PATH="$ROOT/bin/plugins" ZWAGENT_HELLO="$HELLO" \
-    nohup "$EXE" -style zwagent >"$ROOT/runs/zweave-stdout.log" 2>&1 &
+    nohup "$EXE" ${OPEN:+"$OPEN"} -style zwagent >"$ROOT/runs/zweave-stdout.log" 2>&1 &
   echo "띄웠다 (pid $!). 위젯 트리 정착까지 기다린다: bash tools/wait-zweave.sh"
   echo "  앱의 stdout·stderr: runs/zweave-stdout.log"
   exit 0

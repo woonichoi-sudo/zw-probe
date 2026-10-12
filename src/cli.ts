@@ -668,8 +668,18 @@ function cmdDiff(rest: string[], flags: Map<string, string>): number {
 }
 
 /** hello 파일에서 대상 앱 pid. 못 읽으면 이유를 찍고 null */
+/**
+ * hello 기본 경로. **`launch-zweave.sh` 가 쓰는 `runs/zwagent-hello.json` 을 먼저 본다** — `%TEMP%` 에는
+ * 픽스처가 남긴 낡은 파일이 있어 끝난 pid 를 보고했다(2026-09-15 열린 항목). 없을 때만 `%TEMP%` 로 간다
+ * (픽스처를 손으로 띄운 경우). MCP 서버의 DEFAULT_HELLO 와 같은 값이다.
+ */
+function defaultHelloPath(): string {
+  const fromRuns = resolve('runs/zwagent-hello.json')
+  return existsSync(fromRuns) ? fromRuns : join(tmpdir(), 'zwagent-hello.json')
+}
+
 function helloPid(flags: Map<string, string>): number | null {
-  const path = flags.get('hello') || join(tmpdir(), 'zwagent-hello.json')
+  const path = flags.get('hello') || defaultHelloPath()
   try {
     const parsed = parseAgentHello(JSON.parse(readFileSync(path, 'utf8')))
     if (parsed.ok) return parsed.hello.pid
@@ -711,7 +721,7 @@ async function keyInProcess(entry: ShortcutEntry, flags: Map<string, string>): P
  * 한다. 여기는 둘을 잇고, 월드 좌표면 그 사이에 위젯 크기를 받아 온다.
  */
 async function cmdMouse(flags: Map<string, string>): Promise<number> {
-  const path = flags.get('hello') || join(tmpdir(), 'zwagent-hello.json')
+  const path = flags.get('hello') || defaultHelloPath()
   let pid: number
   try {
     const parsed = parseAgentHello(JSON.parse(readFileSync(path, 'utf8')))
@@ -778,7 +788,7 @@ async function cmdMouse(flags: Map<string, string>): Promise<number> {
  * 만들어졌다" 일 수 있고, 그 둘은 원인이 다르다.
  */
 async function cmdAgent(flags: Map<string, string>): Promise<number> {
-  const path = flags.get('hello') || join(tmpdir(), 'zwagent-hello.json')
+  const path = flags.get('hello') || defaultHelloPath()
 
   let raw: unknown
   try {

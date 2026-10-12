@@ -405,7 +405,16 @@ QByteArray Server::handleGrab(const QJsonObject& req, const QJsonValue& id, QJso
 		                    .arg(w->height()));
 	}
 
-	const QImage img = w->grab().toImage().convertToFormat(QImage::Format_ARGB32);
+	// **논리 크기로 찍는다.** HiDPI(macOS Retina, dpr=2)에서 grab 은 장치 픽셀(2배)로 나오는데,
+	// shot·트리 좌표는 논리 픽셀이다 — 맞추지 않으면 PNG 에서 읽은 좌표가 2배로 틀린다.
+	// dpr=1(이 프로젝트의 Windows)에서는 아무것도 바뀌지 않는다.
+	QImage img = w->grab().toImage();
+	if (img.width() != w->width() || img.height() != w->height())
+	{
+		img = img.scaled(w->size(), Qt::IgnoreAspectRatio, Qt::SmoothTransformation);
+	}
+	img.setDevicePixelRatio(1.0);
+	img = img.convertToFormat(QImage::Format_ARGB32);
 	if (img.isNull()) return fail(id, QStringLiteral("\"%1\" 을 그리지 못했다.").arg(name));
 
 	if (!pngPath.isEmpty())
@@ -564,6 +573,7 @@ QByteArray Server::handleMouse(const QJsonObject& req, const QJsonValue& id, QJs
 		else if (st.type == QEvent::MouseButtonRelease) state &= ~Qt::MouseButtons(st.button);
 		const QPoint local = host == w ? st.pos : w->mapTo(host, st.pos);
 		const QPoint global = w->mapToGlobal(st.pos);
+		notePointer(global);
 		QWindowSystemInterface::handleMouseEvent<QWindowSystemInterface::SynchronousDelivery>(
 		    win, QPointF(local), QPointF(global), state,
 		    st.type == QEvent::MouseMove ? Qt::NoButton : st.button, st.type, st.mods);
