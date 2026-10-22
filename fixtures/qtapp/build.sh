@@ -20,7 +20,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-QT="/d/z-emotion/Z-Weave/external/Qt-5.15.6-lts-lgpl-msvc2019_64"
+QT="$(bash "$ROOT/tools/zweave-root.sh")/external/Qt-5.15.6-lts-lgpl-msvc2019_64"
 VCVARS="C:/Program Files/Microsoft Visual Studio/2022/Community/VC/Auxiliary/Build/vcvars64.bat"
 
 for p in "$QT/bin/qmake.exe" "$VCVARS"; do

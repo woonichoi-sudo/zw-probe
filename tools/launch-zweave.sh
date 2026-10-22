@@ -19,7 +19,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-EXE="D:/z-emotion/Z-Weave/cmake_build/bin/Debug/z-weave.exe"
+EXE="$(bash "$ROOT/tools/zweave-root.sh")/cmake_build/bin/Debug/z-weave.exe"
 DLL="$ROOT/bin/plugins/styles/zwagent.dll"
 HELLO="$ROOT/runs/zwagent-hello.json"
 

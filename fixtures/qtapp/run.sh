@@ -16,9 +16,13 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-QT="/d/z-emotion/Z-Weave/external/Qt-5.15.6-lts-lgpl-msvc2019_64"
+QT="$(bash "$ROOT/tools/zweave-root.sh")/external/Qt-5.15.6-lts-lgpl-msvc2019_64"
 EXE="$ROOT/bin/zwqtfixture.exe"
 
+if [[ ! -d "$QT/bin" ]]; then
+  echo "Qt 를 찾을 수 없다: $QT" >&2
+  exit 1
+fi
 if [[ ! -f "$EXE" ]]; then
   echo "$EXE 가 없다. bash fixtures/qtapp/build.sh 를 먼저 실행한다." >&2
   exit 1

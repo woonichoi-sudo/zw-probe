@@ -4,7 +4,7 @@ Z-Weave(C++/Qt5 데스크톱 의상 CAD)를 **외부에서 조작·관찰·판�
 
 **이 문서가 정본이다.** 운영 규칙, 확정 결정, 현재 상태, 다음 작업, 열린 항목이 모두 여기 있다. 설계 근거와 조사 결과는 [docs/DESIGN-zw-probe.md](docs/DESIGN-zw-probe.md).
 
-- 대상 앱 리포: `d:/z-emotion/Z-Weave` (별도 리포. **이 프로젝트에서 수정하지 않는다**)
+- 대상 앱 리포: 환경변수 `ZWEAVE_ROOT`, 없으면 이 리포 옆의 `../Z-Weave` (별도 리포. **이 프로젝트에서 수정하지 않는다**). 규칙은 [src/win/zweaveRoot.ts](src/win/zweaveRoot.ts)·[tools/zweave-root.sh](tools/zweave-root.sh) 한 곳에 있다. 지금 이 PC 는 `d:/Developer/agent-workbench/_clones/Z-Weave` (2026-10-22, 그 전은 `d:/z-emotion/Z-Weave`)
 - 시작: 2026-09-08
 
 ---
@@ -13,7 +13,7 @@ Z-Weave(C++/Qt5 데스크톱 의상 CAD)를 **외부에서 조작·관찰·판�
 
 1. **Z-Weave 소스는 0줄도 수정하지 않는다.** 이 프로젝트의 존재 이유가 완전 분리다. 앱 수정이 필요해 보이면 먼저 사용자에게 근거를 제시하고 승인을 받는다.
 2. **Z-Weave 리포에 파일을 추가하지 않는다.** 산출물은 전부 이 폴더에 둔다. 예외는 빌드 산출물 폴더(`cmake_build/bin/*/styles/`)에 DLL을 배치하는 것 — 이건 리포와 무관하다.
-3. **이 리포에서는 Claude가 커밋을 알아서 한다.** 규칙은 아래 "커밋과 기록" 절. **push 는 hook 이 한다** — `main` 에 커밋하면 [tools/git-hooks/post-commit](tools/git-hooks/post-commit) 이 `origin`(`git@github.com:woonichoi-sudo/zw-probe.git`, 2026-10-12)으로 올린다. PR 은 하지 않는다. 직접 `git push` 도 이 리포 안에서는 된다(아래 "커밋과 기록" 의 push 훅). 대상 앱 리포(`d:/z-emotion/Z-Weave`)에는 어떤 git 명령도 실행하지 않는다.
+3. **이 리포에서는 Claude가 커밋을 알아서 한다.** 규칙은 아래 "커밋과 기록" 절. **push 는 hook 이 한다** — `main` 에 커밋하면 [tools/git-hooks/post-commit](tools/git-hooks/post-commit) 이 `origin`(`git@github.com:woonichoi-sudo/zw-probe.git`, 2026-10-12)으로 올린다. PR 은 하지 않는다. 직접 `git push` 도 이 리포 안에서는 된다(아래 "커밋과 기록" 의 push 훅). 대상 앱 리포(위의 Z-Weave)에는 어떤 git 명령도 실행하지 않는다.
 4. **불확실한 것은 싸게 먼저 검증한다.** 큰 걸 만들고 나서 전제가 틀린 걸 발견하는 순서를 피한다.
 5. **판단은 전부 `zwprobe`(TS)에, I/O는 가장자리에.** `zwwin.exe`와 `zwagent.dll`은 아무것도 판단하지 않는다 — 찾고, 캡처하고, JSON을 뱉을 뿐이다. 판정·비교·해석은 순수 함수로 TS에 둔다. 이 경계가 무너지면 테스트 불가능한 덩어리가 생긴다. 설계문서 §11.1.
 
@@ -101,7 +101,7 @@ Bash(cd:*)  Bash(pushd:*)  Bash(popd:*)
 Bash(git --git-dir=*)  Bash(git --work-tree=*)
 ```
 
-**push 는 사용자 스코프 훅이 가른다** (2026-10-12). `Bash(git push:*)` deny 를 사용자·프로젝트 양쪽에서 빼고 `~/.claude/hooks/git-push-guard.mjs`(PreToolUse, 시험 36개 같은 폴더)로 바꿨다 — deny 는 어느 스코프의 allow 로도 덮이지 않아서 "이 리포만 연다" 가 규칙으로는 안 된다. 훅은 **`D:/z-emotion/zw-probe` 아래(작업 트리 포함)에서만** `git push` 를 통과시키고, 그 안에서도 `cd`·`-C`·`--git-dir`·`--work-tree`·`-c`·`GIT_DIR=`·`sh -c`·`$( )` 가 섞이면 거부한다. 판단이 안 서면 거부한다. 대상 앱 리포는 루트 밖이라 그대로 막힌다. 훅은 사용자 스코프 파일이라 이 리포에 커밋되지 않는다.
+**push 는 사용자 스코프 훅이 가른다** (2026-10-12). `Bash(git push:*)` deny 를 사용자·프로젝트 양쪽에서 빼고 `~/.claude/hooks/git-push-guard.mjs`(PreToolUse, 시험 36개 같은 폴더)로 바꿨다 — deny 는 어느 스코프의 allow 로도 덮이지 않아서 "이 리포만 연다" 가 규칙으로는 안 된다. 훅은 **이 리포 아래(작업 트리 포함, 지금은 `D:/Developer/agent-workbench/_clones/zw-probe` — 2026-10-22 전에는 `D:/z-emotion/zw-probe`)에서만** `git push` 를 통과시키고, 그 안에서도 `cd`·`-C`·`--git-dir`·`--work-tree`·`-c`·`GIT_DIR=`·`sh -c`·`$( )` 가 섞이면 거부한다. 판단이 안 서면 거부한다. 대상 앱 리포는 루트 밖이라 그대로 막힌다. 훅은 사용자 스코프 파일이라 이 리포에 커밋되지 않는다.
 
 목표는 **대상 앱 리포에 commit·push 하지 못하게** 하는 것이다. git이 그 리포에 도달하는 경로는 `cd`·`-C`·`--git-dir`/`--work-tree` 셋뿐이고, 셋이 다 끊기면 commit도 push도 성립하지 않는다. `-C`와 **공백 형태** `--git-dir`은 사용자 스코프에서 이미 막혀 있다.
 
@@ -213,7 +213,7 @@ Bash(git --git-dir=*)  Bash(git --work-tree=*)
 `src/mcp/server.ts` 가 CLI 를 MCP 도구로 내보낸다. **다른 프로젝트의 Claude Code 세션이 절대경로나 셸 명령 없이 Z-Weave 를 조작·관찰할 수 있다.** 2026-09-17 에 만들었고 user 스코프에 등록돼 있다.
 
 ```
-claude mcp add --scope user zwprobe -- node D:/z-emotion/zw-probe/src/mcp/server.ts
+claude mcp add --scope user zwprobe -- node D:/Developer/agent-workbench/_clones/zw-probe/src/mcp/server.ts
 claude mcp list          # ✔ Connected 확인
 ```
 
@@ -409,8 +409,8 @@ Qt 모달 동작은 더 부탁할 필요가 없다 — **Qt 픽스처가 답했�
 
 전체 조사 결과는 설계문서 §3. 작업 중 자주 필요한 것만:
 
-- **Qt 5.15.6 msvc2019_64**, `d:/z-emotion/Z-Weave/external/Qt-5.15.6-lts-lgpl-msvc2019_64`
-- 디버그 실행 파일: `d:/z-emotion/Z-Weave/cmake_build/bin/Debug/z-weave.exe`. 디버그 앱은 `Qt5Cored.dll`을 쓰므로 **플러그인도 디버그 구성으로 빌드해야 한다**
+- **Qt 5.15.6 msvc2019_64**, `<Z-Weave>/external/Qt-5.15.6-lts-lgpl-msvc2019_64` (`<Z-Weave>` 는 맨 위 "대상 앱 리포")
+- 디버그 실행 파일: `<Z-Weave>/cmake_build/bin/Debug/z-weave.exe`. 디버그 앱은 `Qt5Cored.dll`을 쓰므로 **플러그인도 디버그 구성으로 빌드해야 한다**
 - 배포 폴더에 `styles/` 디렉토리가 이미 있다 → `zwagent.dll` 배치 위치
 - **창 제목에는 파일명도 dirty 플래그도 없다. Windows 에서는 읽을 수 없다** (2026-09-09 실측). 제목은 `"z-weave"` 고정이다. `zwQtMainWindow.cpp:2005`는 2인자 오버로드 호출이고 실제 조립부는 `zwQtFramelessWindow.cpp:46` — `ZS_OS_WINDOWS` 분기가 파일명과 `" *"`를 **커스텀 헤더 위젯**에 넣고 `QMainWindow::setWindowTitle("")`로 OS 제목을 비운다. 제목에 싣는 것은 비 Windows 분기뿐이다. **이 정보의 유일한 외부 경로는 UIA(헤더 위젯 텍스트)이고, 안 되면 `zwagent.dll`(M5)이다**
 - **창 구조로 "지금 조작할 수 있는가"를 판정한다** — `zwprobe state`. 근거는 **소유 관계**다: 다이얼로그는 자신을 띄운 창을 소유자로 갖고 메인 창은 갖지 않는다. 제목·클래스명·크기·프레임 비트는 다 못 쓴다 (아래 "판정에 쓸 수 없는 것")

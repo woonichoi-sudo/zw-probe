@@ -14,11 +14,13 @@ import { existsSync } from 'node:fs'
 import { delimiter, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { zweaveRoot } from './zweaveRoot.ts'
+
 const HERE = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(HERE, '../..')
 
 /** 대상 앱이 쓰는 Qt. 여기에 맞춰 빌드하고 여기서 실행한다. */
-export const QT_DIR = 'D:/z-emotion/Z-Weave/external/Qt-5.15.6-lts-lgpl-msvc2019_64'
+export const QT_DIR = resolve(zweaveRoot(), 'external/Qt-5.15.6-lts-lgpl-msvc2019_64')
 
 export const QTAPP_EXE = resolve(ROOT, 'bin/zwqtfixture.exe')
 export const QTAPP_TITLE = 'zwqtfixture'
