@@ -46,19 +46,35 @@ if [[ "$(uname -s)" == "Darwin" ]]; then
   fi
   # **단축키 파일의 버전 폴더를 만들어 둔다.** 앱은 시작할 때 shortcut.ini 기본값을 쓰는데 폴더를
   # 안 만들고 열어서(zwShortcutManager::WriteToDisk) macOS 에서는 조용히 실패한다. 버전은 가장
-  # 최근 로그 파일 이름(z-weave_<버전>_<시각>.log)에서 읽는다.
+  # 로그 파일 이름(z-weave_<버전>_<시각>.log)에서 읽는다.
   SUPPORT="$HOME/Library/Application Support/z-emotion/z-weave"
+  log_version() { basename "$1" | sed -E "s/^z-weave_([^_]+)_.*/\\1/"; }
   LAST_LOG="$(ls -t "$SUPPORT/log"/z-weave_*.log 2>/dev/null | head -1 || true)"
   if [[ -n "$LAST_LOG" ]]; then
-    VER="$(basename "$LAST_LOG" | sed -E "s/^z-weave_([^_]+)_.*/\\1/")"
-    mkdir -p "$SUPPORT/$VER"
+    mkdir -p "$SUPPORT/$(log_version "$LAST_LOG")"
   fi
   mkdir -p "$ROOT/runs"
   rm -f "$HELLO"
   if [[ $DEBUG -eq 1 ]]; then export QT_DEBUG_PLUGINS=1; fi
   QT_PLUGIN_PATH="$ROOT/bin/plugins" ZWAGENT_HELLO="$HELLO" \
     nohup "$EXE" ${OPEN:+"$OPEN"} -style zwagent >"$ROOT/runs/zweave-stdout.log" 2>&1 &
-  echo "띄웠다 (pid $!). 위젯 트리 정착까지 기다린다: bash tools/wait-zweave.sh"
+  PID=$!
+  # **띄운 앱의 버전이 다를 수 있다** — Z-Weave 를 새 버전으로 빌드한 뒤 처음 띄우면 위의 최근 로그는
+  # 옛 버전이다(2026-10-23, 5.1.93 폴더만 만들고 5.1.101 앱이 shortcut.ini 를 못 썼다). 이번 실행의
+  # 로그가 생기면 그 버전 폴더도 만든다. 실측 로그 생성 → shortcut.ini 쓰기가 8초라 그 안에 닿는다.
+  for _ in $(seq 1 75); do
+    NEW_LOG="$(ls -t "$SUPPORT/log"/z-weave_*.log 2>/dev/null | head -1 || true)"
+    if [[ -n "$NEW_LOG" && "$NEW_LOG" != "$LAST_LOG" ]]; then
+      VER="$(log_version "$NEW_LOG")"
+      if [[ ! -d "$SUPPORT/$VER" ]]; then
+        mkdir -p "$SUPPORT/$VER"
+        echo "  새 버전 $VER 의 단축키 폴더를 만들었다. key 가 shortcut.ini 를 못 찾으면 앱을 다시 띄운다."
+      fi
+      break
+    fi
+    sleep 0.2
+  done
+  echo "띄웠다 (pid $PID). 위젯 트리 정착까지 기다린다: bash tools/wait-zweave.sh"
   echo "  앱의 stdout·stderr: runs/zweave-stdout.log"
   exit 0
 fi

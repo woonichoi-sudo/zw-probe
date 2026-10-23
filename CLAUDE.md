@@ -153,7 +153,9 @@ Bash(git --git-dir=*)  Bash(git --work-tree=*)
 
 2026-10-12: **macOS 에서 같은 CLI·시나리오·MCP 가 실앱에 돈다.** Mac 실앱 시나리오 15/15(`scenarios/mac-panel-toggle.ts`)·28/28(`scenarios/mac-documents.ts`, MCP `zw_run` 으로도). CLI 동사·`click`/`key` 옵션·녹화(커서·`--no-cursor`·printwindow, 시간축 한 프레임 안)·`--popup-trigger`·MCP 16개 도구를 실앱에서 다 불렀다. Mac 의 `node --test` 381개 중 361 통과, 실패 0, 건너뜀 20(전부 "Windows 전용" 사유). 아래 "macOS" 절, 경과는 WORKLOG. **Windows 스위트는 이번에 돌려보지 않았다** — Windows 쪽 코드는 경로 분기만 더했지만 다음 Windows 세션에서 `skipped 0` 을 확인한다.
 
-**macOS 의 앱은 떠 있다** (2026-10-12 세션 끝 확인). `runs/zls/sample-copy.zls`(샘플 복사본, 커밋 안 됨)를 `--open` 으로 띄웠고 문서 시나리오를 거쳐 다시 `sample-copy.zls` 가 열려 dirty(`*`)다. 앱 내부 클립보드에 패턴 하나가 복사돼 있다(`--popup-trigger Copy` 시험) — 열면서 앱이 스스로 바꾼 것(History: Avatar UI changed·Apply draping item)이고 **저장하지 않는다.** Avatar 탭이 앞이다.
+2026-10-23: **agent-workbench 의 `_clones/` 로 옮겼다.** 대상 앱은 옆의 `_clones/Z-Weave`(5.1.101). Mac 실앱 시나리오 15/15·28/28 — 창 크기가 1512x831 에서 1210x786 으로 바뀌어 `mac-샘플-*` baseline 둘을 새로 띄운 앱에서 다시 떴다. Mac 의 `node --test` 394개 중 373 통과, 실패 0, 건너뜀 21(전부 Windows 전용).
+
+**macOS 의 앱은 꺼져 있다** (2026-10-23 세션 끝 확인). 문서 시나리오 뒤 `sample-copy.zls` 가 dirty 인 채로 저장하지 않고 닫았다.
 
 **Windows 의 앱은 꺼져 있다** (2026-09-17 확인, `state` 종료 코드 1). 아래 2026-09-15 문단은 **그때의 상태이고 지금은 아니다** — 그 데님 바지는 저장하지 않았으므로 없어졌다. 다시 띄우면 `Untitled.zls` 가 깨끗하게 열린다.
 
@@ -234,7 +236,7 @@ node src/cli.ts key ClearSelection --title "Startup Splash"   시작 다이얼�
 - **플러그인 이름이 `_debug.dylib` 로 끝나야 한다.** 디버그 Qt 가 아니면 보지도 않고 건너뛴다. 의존도 `_debug` 프레임워크로 바꾼다(`zwagent.pro` 의 `install_name_tool`) — 안 그러면 QtCore 가 두 벌이다
 - **단축키는 handleShortcutEvent 를 먼저 거친다** — Qt 6 의 macOS 는 플랫폼 플러그인이 단축키를 본다. 이걸 빼면 메뉴 단축키(Shift+P)가 조용히 무시된다
 - **녹화는 `--fps 4` 로 한다.** 프로세스 안 grab 이 프레임당 ~200ms 다. 10 이면 절반 넘게 복제
-- **로그·shortcut.ini 는 `~/Library/Application Support/z-emotion/z-weave/`** (같은 루트). shortcut.ini 는 앱이 버전 폴더를 안 만들어 Mac 에서 안 써진다 — `launch-zweave.sh` 가 폴더를 먼저 만든다(열린 항목)
+- **로그·shortcut.ini 는 `~/Library/Application Support/z-emotion/z-weave/`** (같은 루트). shortcut.ini 는 앱이 버전 폴더를 안 만들어 Mac 에서 안 써진다 — `launch-zweave.sh` 가 폴더를 만든다(열린 항목). 띄우기 전에 최근 로그의 버전으로, 띄운 뒤에 이번 실행 로그의 버전으로 한 번 더 — 새 버전 앱을 처음 띄우면 최근 로그가 옛 버전이라서다(2026-10-23)
 - **파일은 인자로 열린다** — 메인 창이 `arguments()[1]` 이 있는 파일이면 연다(`zwQtMainWindow::InitLoadingFile`). Mac 에는 최근 파일이 처음에 비어 있으므로 이게 첫 길이다. 기본 파일 열기 창은 NSOpenPanel 이라 아직 못 다룬다
 - **3D 뷰를 끌 때는 옷이 없는 배경에서 시작한다** — 옷 위를 누르면 카메라가 아니라 패턴 선택이다(2026-10-12 실수, 형상은 안 바뀌었다)
 - **baseline 은 앱을 새로 띄워 연 직후에 뜨고 비교한다** — 같은 프로세스에서 다시 열면 2D 봉제선 쌍 색이 매번 달라진다(열린 항목)
@@ -481,6 +483,7 @@ Qt 모달 동작은 더 부탁할 필요가 없다 — **Qt 픽스처가 답했�
 ## 열린 항목
 
 - **팀 공유 여부** — 미정. GitHub 원격(`origin`)에 `main` 을 올리지만 작업은 로컬 `main` 에서 직접 한다
+- **Mac 픽스처 시험 하나가 아직 흔들린다** (2026-10-23) — `run.integration.test.ts` 의 "checkBaseline 이 창 대신 패널만 비교한다" 가 전체 스위트 4번 중 2번 실패했다. 픽스처 패널 안 194x144 영역(위젯 하나 크기)이 0.56% 다르고 최대 채널 차이 77 — 10-12 에 활성·호버 색을 고정한 것과 같은 종류로 보이지만 원인은 확인 안 했다. 대상 앱 시나리오에는 영향이 없다
 - **`ActivateSelected`와 `DeactivateSelected`가 둘 다 `Shift+D`** — `shortcut.ini` 실측. 토글로 의도된 것인지 확인 필요 (M2에서 실제로 눌러보면 드러난다)
 - **앱이 정상 동작 중에도 내는 오류 — 사용자 판단 필요.** `zwprobe log`로 확인한 것: `zw3DEnvironmentManager: Environment does not exist!`(시작 시 1회), `zsRenderTarget: clearDepth=true, but no depth buffer bound to fbo!`(반복), `zwStateIdle: GetTool(): Tool object 'zwToolSelectionRect' is not attached!`. 이것들이 의도된 소음인지 실제 결함인지는 도메인 지식이 필요하다. **판정 기준을 세우기 전에 답이 필요하다** — 정상 상태에서도 ERROR가 나오면 "로그에 ERROR가 있으면 실패"라는 규칙을 쓸 수 없다
 
