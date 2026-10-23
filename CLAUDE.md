@@ -483,7 +483,7 @@ Qt 모달 동작은 더 부탁할 필요가 없다 — **Qt 픽스처가 답했�
 ## 열린 항목
 
 - **팀 공유 여부** — 미정. GitHub 원격(`origin`)에 `main` 을 올리지만 작업은 로컬 `main` 에서 직접 한다
-- **Mac 픽스처 시험 하나가 아직 흔들린다** (2026-10-23) — `run.integration.test.ts` 의 "checkBaseline 이 창 대신 패널만 비교한다" 가 전체 스위트 4번 중 2번 실패했다. 픽스처 패널 안 194x144 영역(위젯 하나 크기)이 0.56% 다르고 최대 채널 차이 77 — 10-12 에 활성·호버 색을 고정한 것과 같은 종류로 보이지만 원인은 확인 안 했다. 대상 앱 시나리오에는 영향이 없다
+- ~~**Mac 픽스처 시험 하나가 흔들린다**~~ — **닫혔다 (2026-10-23): 픽스처 버튼의 포커스 테두리였다.** macOS 스타일이 창이 활성일 때만 그리므로 다른 창을 띄우는 것만으로 같은 672픽셀이 재현됐다. 버튼을 `NoFocus` 로 두자 전체 스위트 6번 연속 실패 0
 - **`ActivateSelected`와 `DeactivateSelected`가 둘 다 `Shift+D`** — `shortcut.ini` 실측. 토글로 의도된 것인지 확인 필요 (M2에서 실제로 눌러보면 드러난다)
 - **앱이 정상 동작 중에도 내는 오류 — 사용자 판단 필요.** `zwprobe log`로 확인한 것: `zw3DEnvironmentManager: Environment does not exist!`(시작 시 1회), `zsRenderTarget: clearDepth=true, but no depth buffer bound to fbo!`(반복), `zwStateIdle: GetTool(): Tool object 'zwToolSelectionRect' is not attached!`. 이것들이 의도된 소음인지 실제 결함인지는 도메인 지식이 필요하다. **판정 기준을 세우기 전에 답이 필요하다** — 정상 상태에서도 ERROR가 나오면 "로그에 ERROR가 있으면 실패"라는 규칙을 쓸 수 없다
 

@@ -212,6 +212,11 @@ int main(int argc, char** argv)
 	// 같은 자리에 뜨고 질 때마다 진입·이탈이 와서 버튼이 다르게 그려졌다(2026-10-12, 672픽셀) — 패널
 	// baseline 시험이 "안 바꿨는데 다르다" 로 흔들렸다.
 	target->setAttribute(Qt::WA_Hover, false);
+	// **포커스도 받지 않는다.** 이 버튼이 창에서 포커스를 받는 유일한 위젯이라, macOS 스타일이 창이 활성일
+	// 때만 둘레에 포커스 테두리를 그렸다. 병렬 테스트의 다른 픽스처 창이 활성이 되면 테두리가 사라져 패널
+	// baseline 시험이 같은 672픽셀로 흔들렸다(2026-10-23, 다른 창을 띄우는 것만으로 재현) — 팔레트·호버를
+	// 고정해도 남던 것이 이것이다. 클릭(clicked)은 포커스와 무관하다.
+	target->setFocusPolicy(Qt::NoFocus);
 	grid->addWidget(target, 1, 1);
 
 	auto* black = colorCell("cellBottomRight", QColor(0, 0, 0), central);
