@@ -10,7 +10,8 @@
 set -euo pipefail
 
 if [[ -n "${ZWEAVE_ROOT:-}" ]]; then
-  cygpath -u "$ZWEAVE_ROOT"
+  # macOS 에는 cygpath 가 없고 경로도 이미 /... 형태다
+  if command -v cygpath >/dev/null; then cygpath -u "$ZWEAVE_ROOT"; else echo "$ZWEAVE_ROOT"; fi
 else
   ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
   echo "$(cd "$ROOT/.." && pwd)/Z-Weave"

@@ -10,14 +10,15 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { zweaveRoot } from './zweaveRoot.ts'
-import { QT_DIR } from './qtFixture.ts'
+import { IS_MAC, QT_DIR } from './qtFixture.ts'
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '../..')
 const SIBLING = resolve(REPO, '..', 'Z-Weave')
 const MISSING = resolve(REPO, 'runs', 'no-such-zweave-root')
 
-/** Windows 경로를 bash 가 쓰는 /d/... 형태로. 구현과 별개로 cygpath 가 정답을 준다. */
+/** Windows 경로를 bash 가 쓰는 /d/... 형태로. 구현과 별개로 cygpath 가 정답을 준다. macOS 는 그대로다. */
 function posix(p: string): string {
+  if (IS_MAC) return p
   const r = spawnSync('cygpath', ['-u', p], { encoding: 'utf8' })
   assert.equal(r.status, 0, r.stderr)
   return r.stdout.trim()
@@ -44,7 +45,14 @@ test('zweaveRoot: 빈 문자열은 없는 것으로 본다', () => {
 })
 
 test('QT_DIR 은 대상 앱 리포의 동봉 Qt 다', () => {
-  assert.equal(resolve(QT_DIR), resolve(zweaveRoot(), 'external', 'Qt-5.15.6-lts-lgpl-msvc2019_64'))
+  const qt = IS_MAC ? 'Qt-6.5.3-LTS-LGPL-AppleClang_ARM64' : 'Qt-5.15.6-lts-lgpl-msvc2019_64'
+  assert.equal(resolve(QT_DIR), resolve(zweaveRoot(), 'external', qt))
+})
+
+test('zweave-root.sh: macOS 는 ZWEAVE_ROOT 를 그대로 쓴다', { skip: !IS_MAC && 'macOS 전용' }, () => {
+  const r = bash('tools/zweave-root.sh', { ZWEAVE_ROOT: '/x/Z-Weave' })
+  assert.equal(r.status, 0, r.stderr)
+  assert.equal(r.stdout.trim(), '/x/Z-Weave')
 })
 
 test('zweave-root.sh: 없으면 이 리포 옆의 Z-Weave 를 /d/... 형태로', () => {
@@ -53,7 +61,7 @@ test('zweave-root.sh: 없으면 이 리포 옆의 Z-Weave 를 /d/... 형태로',
   assert.equal(r.stdout.trim(), posix(SIBLING))
 })
 
-test('zweave-root.sh: ZWEAVE_ROOT 를 /d/... 형태로 바꿔 쓴다', () => {
+test('zweave-root.sh: ZWEAVE_ROOT 를 /d/... 형태로 바꿔 쓴다', { skip: IS_MAC && 'Windows 경로 변환 — macOS 는 그대로 쓴다' }, () => {
   const r = bash('tools/zweave-root.sh', { ZWEAVE_ROOT: 'D:\\x\\Z-Weave' })
   assert.equal(r.status, 0, r.stderr)
   assert.equal(r.stdout.trim(), '/d/x/Z-Weave')

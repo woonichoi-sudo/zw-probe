@@ -4,7 +4,7 @@ Z-Weave(C++/Qt5 데스크톱 의상 CAD)를 **외부에서 조작·관찰·판�
 
 **이 문서가 정본이다.** 운영 규칙, 확정 결정, 현재 상태, 다음 작업, 열린 항목이 모두 여기 있다. 설계 근거와 조사 결과는 [docs/DESIGN-zw-probe.md](docs/DESIGN-zw-probe.md).
 
-- 대상 앱 리포: 환경변수 `ZWEAVE_ROOT`, 없으면 이 리포 옆의 `../Z-Weave` (별도 리포. **이 프로젝트에서 수정하지 않는다**). 규칙은 [src/win/zweaveRoot.ts](src/win/zweaveRoot.ts)·[tools/zweave-root.sh](tools/zweave-root.sh) 한 곳에 있다. 지금 이 PC 는 `d:/Developer/agent-workbench/_clones/Z-Weave` (2026-10-22, 그 전은 `d:/z-emotion/Z-Weave`)
+- 대상 앱 리포: 환경변수 `ZWEAVE_ROOT`, 없으면 이 리포 옆의 `../Z-Weave` (별도 리포. **이 프로젝트에서 수정하지 않는다**). 규칙은 [src/win/zweaveRoot.ts](src/win/zweaveRoot.ts)·[tools/zweave-root.sh](tools/zweave-root.sh) 한 곳에 있다. 지금 이 PC 는 `d:/Developer/agent-workbench/_clones/Z-Weave` (2026-10-22, 그 전은 `d:/z-emotion/Z-Weave`). Mac 은 `~/Developer/agent-workbench/_clones/Z-Weave` (2026-10-23, 그 전은 `~/Developer/Z-Weave`)
 - 시작: 2026-09-08
 
 ---
@@ -215,7 +215,7 @@ Bash(git --git-dir=*)  Bash(git --work-tree=*)
 
 ### macOS (2026-10-12)
 
-**같은 CLI·시나리오·MCP 가 macOS 실앱(Qt 6.5.3 디버그 빌드, `~/Developer/Z-Weave/cmake_build/bin/Debug/z-weave`)에 돈다.** 빌드와 실행:
+**같은 CLI·시나리오·MCP 가 macOS 실앱(Qt 6.5.3 디버그 빌드, `<Z-Weave>/cmake_build/bin/Debug/z-weave`, `<Z-Weave>` 는 맨 위 "대상 앱 리포")에 돈다.** 빌드와 실행:
 
 ```
 bash tools/zwagent/build.sh     → bin/plugins/styles/libzwagent_debug.dylib
