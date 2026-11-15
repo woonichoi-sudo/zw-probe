@@ -339,6 +339,20 @@ test('Qt — vtype 은 글자를 순서대로 넣는다', { skip: qtSkip }, asyn
   }
 })
 
+test('Qt — vtype 은 키보드로 못 치는 글자(한글)도 그대로 넣는다', { skip: qtSkip }, async () => {
+  // 2026-11-15 실앱(Z-Weave 파일 열기 창)에서 "가상커서_확인" 이 "?좆按_Ux" 로 깨졌다 — 그 회귀 시험
+  const q = await launchQt()
+  try {
+    const n = (await q.log()).length
+    virtualInput({ op: 'type', text: 'a가나_확인', ...q.filter })
+    const lines = await newLines(q.log, n)
+    const typed = lines.filter((l) => l.startsWith('keypress')).map((l) => l.replace(/^.* t=/, ''))
+    assert.deepEqual(typed, ['a', '가', '나', '_', '확', '인'], `글자가 다르다: ${lines.join(' | ')}`)
+  } finally {
+    q.cleanup()
+  }
+})
+
 // ---- CLI 끝까지 ----------------------------------------------------------------
 
 const CLI_TS = resolve(HERE, '../cli.ts')

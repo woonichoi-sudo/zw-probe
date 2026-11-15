@@ -38,7 +38,9 @@ internal static class V
     [DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr ctx);
     [DllImport("user32.dll")] public static extern IntPtr ChildWindowFromPointEx(IntPtr parent, N.POINT pt, uint flags);
     [DllImport("user32.dll")] public static extern bool ScreenToClient(IntPtr hwnd, ref N.POINT pt);
-    [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam);
+    // **W 판이어야 한다.** 기본(A 판)이면 WM_CHAR 의 유니코드 글자를 ANSI 로 보고 바꿔서 한글이 깨진다
+    // (2026-11-15 실앱: "가상커서_확인" → "?좆按_Ux").
+    [DllImport("user32.dll", EntryPoint = "PostMessageW")] public static extern bool PostMessage(IntPtr hwnd, uint msg, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll")] public static extern uint MapVirtualKey(uint code, uint mapType);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern short VkKeyScan(char ch);
     [DllImport("user32.dll")] public static extern bool GetKeyboardState(byte[] state);
