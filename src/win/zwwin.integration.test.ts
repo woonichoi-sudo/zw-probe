@@ -23,6 +23,7 @@ import { click, listWindows, shot, uiaTree, ZWWIN_EXE } from './zwwin.ts'
 import { analyze, judgeBlank, pixelAt } from '../image/stats.ts'
 import { isInteractive, judgeActivity, styleNames } from './windowState.ts'
 import { judgeClick } from '../input/click.ts'
+import { withRealInput } from './realInputLock.ts'
 import { clickPoint, findOne, isClickable } from '../uia/tree.ts'
 import type { Bgra, Rgb } from '../image/stats.ts'
 
@@ -205,7 +206,7 @@ test('클릭 좌표가 캡처 좌표계와 같다 — 누른 사분면이 검게
     ]
 
     for (const [name, cx, cy] of cases) {
-      const r = click({ title: FIXTURE_TITLE, x: cx, y: cy })
+      const r = await withRealInput(() => click({ title: FIXTURE_TITLE, x: cx, y: cy }))
       assert.equal(judgeClick(r).onTarget, true, `${name} 클릭이 대상에 닿지 않았다`)
       assert.equal(r.x, cx)
       assert.equal(r.y, cy)
@@ -261,8 +262,12 @@ test('--slow 는 같은 자리를 누르고 커서를 돌려놓는다 — 느려
     const cx = Math.floor(w.width / 4)
     const cy = Math.floor(w.height / 4)
 
-    const t0 = Date.now()
-    const r = click({ pid, x: cx, y: cy, slow: true })
+    // 잠금 대기는 재지 않는다 — 잡은 뒤부터 잰다
+    let t0 = 0
+    const r = await withRealInput(() => {
+      t0 = Date.now()
+      return click({ pid, x: cx, y: cy, slow: true })
+    })
     const took = Date.now() - t0
 
     assert.equal(judgeClick(r).onTarget, true, '클릭이 대상에 닿지 않았다')
@@ -300,7 +305,7 @@ test('--stay 는 같은 자리를 누르고 커서를 돌려놓지 않는다', {
 
     const cx = w.width - Math.floor(w.width / 4)
     const cy = Math.floor(w.height / 4)
-    const r = click({ pid, x: cx, y: cy, stay: true })
+    const r = await withRealInput(() => click({ pid, x: cx, y: cy, stay: true }))
 
     assert.equal(judgeClick(r).onTarget, true, '클릭이 대상에 닿지 않았다')
     assert.equal(r.screenX, w.x + cx)
@@ -376,7 +381,7 @@ test('이름으로 찾아 누르는 전 경로가 돈다', { skip }, async () =>
     if (hit.found !== true) return
 
     const p = clickPoint(hit.node)
-    const r = click({ title: FIXTURE_TITLE, x: p.x, y: p.y })
+    const r = await withRealInput(() => click({ title: FIXTURE_TITLE, x: p.x, y: p.y }))
     assert.equal(judgeClick(r).onTarget, true, judgeClick(r).reason)
 
     await sleep(200)

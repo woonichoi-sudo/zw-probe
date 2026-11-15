@@ -30,6 +30,7 @@
 #include <QProgressBar>
 #include <QPushButton>
 #include <QVBoxLayout>
+#include <QWheelEvent>
 #include <QWidget>
 
 namespace
@@ -114,6 +115,8 @@ public:
 	{
 		setObjectName("mousePad");
 		setMouseTracking(true);
+		// 창 메시지로 넣은 키(가상 커서 vkey·vtype)는 그 창의 포커스 위젯이 받는다 — 판이 받아야 적힌다
+		setFocusPolicy(Qt::StrongFocus);
 		m_log = new QLabel(this);
 		m_log->setObjectName("mouseLog");
 		m_log->setAttribute(Qt::WA_TransparentForMouseEvents);
@@ -124,6 +127,16 @@ protected:
 	void mousePressEvent(QMouseEvent* e) override { note("press", e); }
 	void mouseMoveEvent(QMouseEvent* e) override { note("move", e); }
 	void mouseReleaseEvent(QMouseEvent* e) override { note("release", e); }
+	// 휠도 적는다 — 가상 커서 vwheel 검증용. 좌표는 판 기준, d 는 세로 각도(120 단위)
+	void wheelEvent(QWheelEvent* e) override
+	{
+		m_lines << QStringLiteral("wheel %1,%2 d=%3 m=%4")
+		               .arg(e->position().toPoint().x())
+		               .arg(e->position().toPoint().y())
+		               .arg(e->angleDelta().y())
+		               .arg(modifierLetters(e->modifiers()));
+		m_log->setText(m_lines.join('\n'));
+	}
 	// 키도 적는다 — zwagent `key` op 검증용. 키 값은 16진, 글자는 그대로
 	void keyPressEvent(QKeyEvent* e) override { noteKey("keypress", e); }
 	void keyReleaseEvent(QKeyEvent* e) override { noteKey("keyrelease", e); }
@@ -273,7 +286,9 @@ int main(int argc, char** argv)
 	{
 		// 사분면 대신 마우스 받는 판 하나. 사분면 시험(캡처·grab)과 섞지 않으려고 따로 둔다.
 		central->hide();
-		window.setCentralWidget(new MousePad(&window));
+		auto* pad = new MousePad(&window);
+		window.setCentralWidget(pad);
+		pad->setFocus();
 	}
 	else
 	{

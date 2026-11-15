@@ -111,9 +111,18 @@ internal sealed class FixtureDialog : Form
 
 internal static class Program
 {
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool SetProcessDpiAwarenessContext(IntPtr ctx);
+
+    // --dpi-aware: 모니터별 DPI 인식으로 뜬다. 기본(인식 없음)은 배율 모니터에서 Windows 가 늘려 보여주고,
+    //   PrintWindow 는 늘리기 전 그림을 준다 — 캡처 픽셀과 화면 픽셀이 달라진다(2026-11-15, 200% 모니터 실측).
+    //   가상 커서 시험은 둘 다 쓴다: 인식 있는 창으로 좌표계 일치를, 인식 없는 창으로 배율 환산을 본다.
+    // --topmost: 맨 위에 뜬다. 화면 캡처(--mode screen)에 다른 창이 끼지 않게 하는 시험용이다.
     [STAThread]
     private static void Main(string[] args)
     {
+        if (Array.IndexOf(args, "--dpi-aware") >= 0) SetProcessDpiAwarenessContext(new IntPtr(-4));
+        bool topmost = Array.IndexOf(args, "--topmost") >= 0;
         bool withDialog = Array.IndexOf(args, "--dialog") >= 0;
         string title = "zwprobe-fixture";
         var at = new Point(80, 80);
@@ -127,6 +136,6 @@ internal static class Program
             }
         }
         Application.EnableVisualStyles();
-        Application.Run(new FixtureForm(withDialog, title, at));
+        Application.Run(new FixtureForm(withDialog, title, at) { TopMost = topmost });
     }
 }

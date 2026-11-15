@@ -52,6 +52,27 @@ const QUERY: Param[] = [
   { name: 'type', type: 'string', desc: '컨트롤 타입 (예: Button, ComboBox)', arg: { kind: 'flag', flag: 'type' } },
 ]
 
+/** 가상 커서 입력의 수식키와 프레임 끄기. click·drag·wheel 이 같이 쓴다. */
+const MODS: Param[] = [
+  { name: 'ctrl', type: 'boolean', desc: 'Ctrl 을 누른 채로', arg: { kind: 'switch', flag: 'ctrl' } },
+  { name: 'shift', type: 'boolean', desc: 'Shift 를 누른 채로', arg: { kind: 'switch', flag: 'shift' } },
+  { name: 'alt', type: 'boolean', desc: 'Alt 를 누른 채로', arg: { kind: 'switch', flag: 'alt' } },
+]
+const NO_FRAME: Param = {
+  name: 'no_frame',
+  type: 'boolean',
+  desc: '가상 커서 프레임을 자동으로 띄우지 않는다 (입력은 그대로 된다)',
+  arg: { kind: 'switch', flag: 'no-frame' },
+}
+
+/** 가상 커서 설명 — 부르는 쪽은 CLAUDE.md 를 안 읽었다 */
+const VIRTUAL_NOTE =
+  '**가상 커서** — 실제 커서·포그라운드를 건드리지 않는다. 사람이 마우스·키보드를 그대로 쓰는 동안에도 된다. ' +
+  '대상 창의 그 자리에 창 메시지로 넣고, 대상 창 위에 주황 테두리와 주황 화살표(가상 커서)를 띄워 사람에게 보여준다' +
+  '(캡처·녹화에는 안 찍힌다, 대상 창이 닫히면 같이 닫힌다). 좌표는 zw_shot 캡처 픽셀 그대로 — 배율을 나누지 않는다. ' +
+  '소스를 모르는 다른 프로그램(CLO 등)도 process·title 로 고르면 된다. ' +
+  '한계: 마우스를 올려야 열리는 메뉴, 실제 커서 위치를 직접 읽는 앱, 원시 입력(게임류)은 안 될 수 있다 — 결과를 zw_shot 으로 확인한다.'
+
 /**
  * `agent` 계열의 hello 경로 기본값.
  *
@@ -191,12 +212,16 @@ export const TOOLS: Tool[] = [
       '**단축키는 포커스가 있는 뷰로 간다** — 2D 를 누른 뒤 3D 단축키를 보내면 무시된다.\n' +
       '**object 를 주면 프로세스 안에서 그 위젯에 바로 보낸다**(zwagent, 앱을 `-style zwagent` 로 띄웠어야 한다) — ' +
       '포그라운드를 뺏지 않고 사람이 다른 창을 써도 키가 새지 않는다. 2D 뷰는 object=2dview. **가능하면 이쪽을 쓴다** — ' +
-      '포그라운드를 못 잡으면 전역 키가 사람이 쓰던 창으로 간다.',
+      '포그라운드를 못 잡으면 전역 키가 사람이 쓰던 창으로 간다.\n' +
+      '**virtual=true** 면 zwagent 없이도 포그라운드를 안 뺏는다 — 대상 창의 포커스 위젯에 키 메시지로 넣는다(수식키 포함). ' +
+      VIRTUAL_NOTE,
     mutates: true,
     params: [
       { name: 'feature', type: 'string', required: true, desc: '기능 이름 (예: SimulationStart, MainUndo, CameraFit)', arg: { kind: 'positional', at: 0 } },
       { name: 'object', type: 'string', desc: '받을 위젯 objectName (2D 뷰 = 2dview). 주면 프로세스 안으로 보낸다', arg: { kind: 'flag', flag: 'object' } },
       { name: 'hello', type: 'string', desc: `object 와 함께: hello 파일 경로. 기본 ${DEFAULT_HELLO}`, arg: { kind: 'flag', flag: 'hello' } },
+      { name: 'virtual', type: 'boolean', desc: '가상 커서로 보낸다 — 포그라운드를 안 뺏는다', arg: { kind: 'switch', flag: 'virtual' } },
+      NO_FRAME,
       ...FILTERS,
     ],
     exits: { 0: '보냈다', 2: '포그라운드를 확보하지 못했다 — 키가 다른 창으로 갔을 수 있다', 1: '기능 이름을 찾지 못했다' },
@@ -210,7 +235,8 @@ export const TOOLS: Tool[] = [
       'zw_shot(mode=screen)의 PNG 좌표, zw_uia 의 wx·wy, zw_agent --find 의 "창 기준 한가운데" 와 같은 계다.\n' +
       '**임의 좌표 클릭은 되돌리기 어렵다** — CAD 캔버스 위 클릭은 형상을 만들 수 있다. 다이얼로그 버튼처럼 ' +
       '형상을 만들 수 없는 곳이 아니면 먼저 사람에게 확인받는다.\n' +
-      '하위 메뉴를 열 때는 stay 로 커서를 두고 온다. 사람이 지켜보는 중이면 slow.',
+      '하위 메뉴를 열 때는 stay 로 커서를 두고 온다. 사람이 지켜보는 중이면 slow.\n' +
+      '**virtual=true 면 실제 커서를 쓰지 않는다 — 사람이 마우스를 쓰는 중이면 이쪽을 쓴다.** ' + VIRTUAL_NOTE,
     mutates: true,
     params: [
       { name: 'x', type: 'number', desc: '창 기준 x. name 과 함께 줄 수 없다', arg: { kind: 'positional', at: 0 } },
@@ -218,9 +244,12 @@ export const TOOLS: Tool[] = [
       ...QUERY,
       { name: 'button', type: 'string', choices: ['left', 'right', 'middle'], desc: '기본 left', arg: { kind: 'flag', flag: 'button' } },
       { name: 'double', type: 'boolean', desc: '더블클릭', arg: { kind: 'switch', flag: 'double' } },
-      { name: 'slow', type: 'boolean', desc: '사람이 보게 커서를 천천히 옮기고 전후로 멈춘다 (1.6초)', arg: { kind: 'switch', flag: 'slow' } },
-      { name: 'stay', type: 'boolean', desc: '커서를 원래 자리로 돌리지 않는다. 하위 메뉴(›)를 열 때 필요하다', arg: { kind: 'switch', flag: 'stay' } },
+      { name: 'slow', type: 'boolean', desc: '사람이 보게 커서를 천천히 옮기고 전후로 멈춘다 (1.6초). virtual 과 함께 못 쓴다', arg: { kind: 'switch', flag: 'slow' } },
+      { name: 'stay', type: 'boolean', desc: '커서를 원래 자리로 돌리지 않는다. 하위 메뉴(›)를 열 때 필요하다. virtual 과 함께 못 쓴다', arg: { kind: 'switch', flag: 'stay' } },
       { name: 'hold', type: 'number', desc: '누르고 있을 시간(ms)', arg: { kind: 'flag', flag: 'hold' } },
+      { name: 'virtual', type: 'boolean', desc: '가상 커서로 누른다 — 실제 커서·포그라운드를 안 건드린다', arg: { kind: 'switch', flag: 'virtual' } },
+      ...MODS,
+      NO_FRAME,
       ...FILTERS,
     ],
     together: [['x', 'y']],
@@ -360,6 +389,73 @@ export const TOOLS: Tool[] = [
       2: 'stop: 저장했지만 쓸 수 없다 (프레임이 없거나 캡처가 대부분 실패, 이유가 출력에 있다)',
       1: 'start: 시작하지 못했다(이미 녹화 중·창 없음·인코더 실패) · stop: 진행 중인 녹화가 없거나 마무리 실패 · status: 녹화 중이 아니다',
     },
+  },
+  {
+    name: 'zw_drag',
+    verb: 'drag',
+    title: '끌기 (가상 커서)',
+    desc:
+      '(x,y) 에서 눌러 (to_x,to_y) 까지 끌고 뗀다. 3D 뷰 회전·패턴 옮기기·스크롤바 끌기에 쓴다. ' + VIRTUAL_NOTE,
+    mutates: true,
+    params: [
+      { name: 'x', type: 'number', required: true, desc: '시작 x (창 기준 캡처 픽셀)', arg: { kind: 'positional', at: 0 } },
+      { name: 'y', type: 'number', required: true, desc: '시작 y', arg: { kind: 'positional', at: 1 } },
+      { name: 'to_x', type: 'number', required: true, desc: '끝 x', arg: { kind: 'positional', at: 2 } },
+      { name: 'to_y', type: 'number', required: true, desc: '끝 y', arg: { kind: 'positional', at: 3 } },
+      { name: 'steps', type: 'number', desc: '중간 이동 횟수 (기본 10)', arg: { kind: 'flag', flag: 'steps' } },
+      { name: 'button', type: 'string', choices: ['left', 'right', 'middle'], desc: '기본 left. 3D 뷰 회전은 앱마다 다르다', arg: { kind: 'flag', flag: 'button' } },
+      ...MODS,
+      NO_FRAME,
+      ...FILTERS,
+    ],
+    exits: { 0: '넣었다 — 받은 창이 대상이다', 2: '의심 — 받은 창이 대상과 다르다(출력에 이유)', 1: '넣지 못했다' },
+  },
+  {
+    name: 'zw_wheel',
+    verb: 'wheel',
+    title: '휠 (가상 커서)',
+    desc: '(x,y) 에서 휠을 굴린다. delta 120 = 한 칸 위(확대·위로 스크롤), -120 = 한 칸 아래. ' + VIRTUAL_NOTE,
+    mutates: true,
+    params: [
+      { name: 'x', type: 'number', required: true, desc: '창 기준 x (캡처 픽셀)', arg: { kind: 'positional', at: 0 } },
+      { name: 'y', type: 'number', required: true, desc: '창 기준 y', arg: { kind: 'positional', at: 1 } },
+      { name: 'delta', type: 'number', required: true, desc: '120 단위. 양수 위, 음수 아래', arg: { kind: 'positional', at: 2 } },
+      ...MODS,
+      NO_FRAME,
+      ...FILTERS,
+    ],
+    exits: { 0: '넣었다 — 받은 창이 대상이다', 2: '의심 — 받은 창이 대상과 다르다(출력에 이유)', 1: '넣지 못했다' },
+  },
+  {
+    name: 'zw_type',
+    verb: 'type',
+    title: '글자 입력 (가상 커서)',
+    desc:
+      '대상 창의 포커스 입력칸에 글자를 넣는다 — 파일 열기 창의 경로, 이름 칸 등. 먼저 zw_click(virtual) 으로 입력칸을 누른다. ' +
+      '한글처럼 키보드 배치로 못 치는 글자는 글자 메시지로 넣는다. "--" 로 시작하는 글자는 넣을 수 없다(CLI 가 플래그로 읽는다). ' +
+      VIRTUAL_NOTE,
+    mutates: true,
+    params: [
+      { name: 'text', type: 'string', required: true, desc: '넣을 글자', arg: { kind: 'positional', at: 0 } },
+      NO_FRAME,
+      ...FILTERS,
+    ],
+    exits: { 0: '넣었다', 2: '의심 — 받은 창이 대상과 다르다(출력에 이유)', 1: '넣지 못했다' },
+  },
+  {
+    name: 'zw_frame',
+    verb: 'frame',
+    title: '가상 커서 프레임',
+    desc:
+      '대상 창 위에 주황 테두리와 가상 커서를 띄운다(start)·닫는다(stop)·떠 있는 것을 본다(status). ' +
+      'virtual 입력(zw_click virtual·zw_drag·zw_wheel·zw_type·zw_key virtual)은 프레임이 없으면 알아서 띄우므로 보통 부를 일이 없다. ' +
+      '클릭이 통과하고 활성화되지 않으며 캡처·녹화에 안 찍힌다. 대상 창이 닫히면 같이 닫힌다.',
+    mutates: false,
+    params: [
+      { name: 'action', type: 'string', required: true, choices: ['start', 'stop', 'status'], desc: 'start · stop · status', arg: { kind: 'positional', at: 0 } },
+      ...FILTERS,
+    ],
+    exits: { 0: 'start: 띄웠다(이미 떠 있었다) · stop: 닫았다 · status: 떠 있다', 1: 'start: 대상 창 없음 · stop·status: 떠 있는 프레임이 없다' },
   },
 ]
 

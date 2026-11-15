@@ -31,7 +31,8 @@ test('모든 도구가 종료 코드의 뜻을 갖는다', () => {
 
 test('앱을 바꾸는 도구만 mutates 다', () => {
   const mutating = TOOLS.filter((t) => t.mutates).map((t) => t.name).sort()
-  assert.deepEqual(mutating, ['zw_agent_trigger', 'zw_click', 'zw_key', 'zw_mouse', 'zw_run'])
+  // 가상 커서 입력(zw_drag·zw_type·zw_wheel)은 앱을 바꾼다. 프레임(zw_frame)은 위에 그릴 뿐이라 바꾸지 않는다.
+  assert.deepEqual(mutating, ['zw_agent_trigger', 'zw_click', 'zw_drag', 'zw_key', 'zw_mouse', 'zw_run', 'zw_type', 'zw_wheel'])
 })
 
 test('inputSchema — 필수 인자가 required 에 들어간다', () => {
@@ -184,4 +185,43 @@ test('buildArgv — zw_key 에 object 를 주면 프로세스 안으로 (hello �
   const b = build('zw_key', { feature: 'Delete' })
   assert.ok(b.ok)
   if (b.ok) assert.deepEqual(b.argv, ['key', 'Delete'])
+})
+
+// ---- 가상 커서 (2026-11-15) ----
+
+test('buildArgv — zw_click·zw_key 에 virtual 을 주면 --virtual, 수식키는 스위치로', () => {
+  const c = build('zw_click', { x: 1, y: 2, virtual: true, ctrl: true })
+  assert.ok(c.ok, c.ok ? '' : c.reason)
+  if (c.ok) assert.deepEqual(c.argv, ['click', '1', '2', '--virtual', '--ctrl'])
+  const k = build('zw_key', { feature: 'MainUndo', virtual: true })
+  assert.ok(k.ok, k.ok ? '' : k.reason)
+  if (k.ok) assert.deepEqual(k.argv, ['key', 'MainUndo', '--virtual'])
+})
+
+test('buildArgv — zw_drag 는 네 좌표가 다 필요하고 위치 인자로 나간다', () => {
+  const r = build('zw_drag', { x: 1, y: 2, to_x: 3, to_y: 4, steps: 5, button: 'middle', shift: true, pid: 9 })
+  assert.ok(r.ok, r.ok ? '' : r.reason)
+  if (r.ok) assert.deepEqual(r.argv, ['drag', '1', '2', '3', '4', '--steps', '5', '--button', 'middle', '--shift', '--pid', '9'])
+  assert.equal(build('zw_drag', { x: 1, y: 2, to_x: 3 }).ok, false)
+})
+
+test('buildArgv — zw_wheel 은 음수 델타를 값으로 넘긴다', () => {
+  const r = build('zw_wheel', { x: 1, y: 2, delta: -240, ctrl: true })
+  assert.ok(r.ok, r.ok ? '' : r.reason)
+  if (r.ok) assert.deepEqual(r.argv, ['wheel', '1', '2', '-240', '--ctrl'])
+  assert.equal(build('zw_wheel', { x: 1, y: 2 }).ok, false)
+})
+
+test('buildArgv — zw_type 은 글자가 필요하다', () => {
+  const r = build('zw_type', { text: 'D:/a b.zls', no_frame: true })
+  assert.ok(r.ok, r.ok ? '' : r.reason)
+  if (r.ok) assert.deepEqual(r.argv, ['type', 'D:/a b.zls', '--no-frame'])
+  assert.equal(build('zw_type', {}).ok, false)
+})
+
+test('buildArgv — zw_frame 은 start·stop·status 만', () => {
+  const r = build('zw_frame', { action: 'start', title: 'CLO' })
+  assert.ok(r.ok, r.ok ? '' : r.reason)
+  if (r.ok) assert.deepEqual(r.argv, ['frame', 'start', '--title', 'CLO'])
+  assert.equal(build('zw_frame', { action: 'show' }).ok, false)
 })

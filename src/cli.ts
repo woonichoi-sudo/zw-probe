@@ -39,6 +39,7 @@ import {
 import type { Request } from './agent/protocol.ts'
 import { findPopupItem, parsePopup, popupLines } from './agent/popup.ts'
 import { judgeClick } from './input/click.ts'
+import { cmdDrag, cmdFrame, cmdType, cmdWheel, virtualClick, virtualKey } from './virtualCmd.ts'
 import { needsWidgetSize, planMouse } from './input/mouseArgs.ts'
 import { toQtKey } from './input/qtKey.ts'
 import type { ShortcutEntry } from './input/shortcut.ts'
@@ -252,6 +253,9 @@ function cmdKey(rest: string[], flags: Map<string, string>): number | Promise<nu
   // `--object` 면 프로세스 안에서 그 위젯에 보낸다 — 포그라운드를 안 뺏으니 남의 창으로 새지 않는다.
   if (flags.has('object')) return keyInProcess(entry, flags)
 
+  // `--virtual` 이면 대상 창의 포커스 위젯에 키 메시지로 넣는다 — zwagent 없이도 포그라운드를 안 뺏는다.
+  if (flags.has('virtual')) return virtualKey(entry.stroke, targetFilter(flags), flags)
+
   // 필터가 없으면 대상 앱으로 좁힌다. **안 좁히면 화면의 첫 창에 키가 간다** —
   // 2026-09-15 에 ESC 가 z-weave 가 아니라 "Program Manager"(바탕화면)로 갔다.
   // 틀린 창에 간 키는 거기서 다른 명령이다.
@@ -323,7 +327,7 @@ function cmdState(flags: Map<string, string>): number {
  * 되돌릴 수 없는 조작이므로 좌표를 한 번 더 찍어서 보여준다. 창 밖이면 zwwin.exe 가
  * 거부한다.
  */
-function cmdClick(rest: string[], flags: Map<string, string>): number {
+function cmdClick(rest: string[], flags: Map<string, string>): number | Promise<number> {
   const f = filterFrom(flags)
   if (f.process === undefined && f.pid === undefined && f.title === undefined) {
     f.process = TARGET_PROCESS
@@ -375,6 +379,9 @@ function cmdClick(rest: string[], flags: Map<string, string>): number {
       return 1
     }
   }
+
+  // 가상 커서 — 실제 커서·포그라운드를 건드리지 않는다 (src/virtualCmd.ts)
+  if (flags.has('virtual')) return virtualClick(x, y, f, flags)
 
   const buttonArg = flags.get('button') || 'left'
   if (buttonArg !== 'left' && buttonArg !== 'right' && buttonArg !== 'middle') {
@@ -1306,6 +1313,17 @@ async function main(): Promise<number> {
       return await cmdMouse(flags)
     case 'record':
       return await cmdRecord(rest, flags)
+    case 'drag':
+      return await cmdDrag(rest, targetFilter(flags), flags)
+    case 'wheel':
+      return await cmdWheel(rest, targetFilter(flags), flags)
+    case 'type':
+      return await cmdType(rest, targetFilter(flags), flags)
+    case 'frame': {
+      const f = filterFrom(flags)
+      const given = f.process !== undefined || f.pid !== undefined || f.title !== undefined
+      return await cmdFrame(rest, given ? f : targetFilter(flags), given)
+    }
     default:
       console.error(
         '사용법:\n' +
@@ -1321,6 +1339,14 @@ async function main(): Promise<number> {
           '    zwprobe shortcuts [--filter 조각]\n' +
           '    zwprobe click <x> <y> [--button right] [--double] [--slow] [--stay]   좌표는 shot 의 PNG 기준. --slow 는 눈으로 보이게, --stay 는 커서를 두고 온다(하위 메뉴)\n' +
           '    zwprobe click --name "Simulation"   UIA 로 찾아 한가운데를 누른다\n' +
+          '  가상 커서 — 실제 커서·포그라운드를 안 건드린다. 대상 창 위에 주황 커서가 보인다 (캡처엔 안 찍힘)\n' +
+          '    zwprobe click <x> <y> --virtual [--button right] [--double] [--hold ms] [--ctrl] [--shift] [--alt]\n' +
+          '    zwprobe key <기능이름> --virtual\n' +
+          '    zwprobe drag <x> <y> <끝x> <끝y> [--steps 10] [--button left] [--ctrl] [--shift] [--alt]\n' +
+          '    zwprobe wheel <x> <y> <delta>      120 = 한 칸 위, -120 = 한 칸 아래\n' +
+          '    zwprobe type "<글자>"               포커스 입력칸에 넣는다\n' +
+          '    zwprobe frame start|stop|status    프레임은 가상 입력 때 알아서 뜬다. --no-frame 으로 끈다\n' +
+          '    (다른 프로그램은 --process·--title 로 고른다. 기본은 z-weave)\n' +
           '  시나리오\n' +
           '    zwprobe run <파일.ts> [--out 폴더] [--keep-going]   (0=통과 2=실패 1=거부)\n' +
           '    zwprobe baseline [<이름>] [--force] [--dir 폴더]    이름 없으면 목록\n' +

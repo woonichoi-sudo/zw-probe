@@ -1,0 +1,203 @@
+// 가상 커서 CLI 동사 — click --virtual · key --virtual · drag · wheel · type · frame (2026-11-15).
+//
+// 실제 커서·포그라운드를 건드리지 않고 입력한다(src/input/virtual.ts 머리말). 입력하기 전에 대상 창에
+// 가상 커서 프레임이 없으면 띄운다 — 사람이 "프로그램 안의 두 번째 커서" 를 보게 하려는 것이다(--no-frame 으로 끈다).
+// 판정은 judgeVirtual, I/O 는 zwwin.ts. 이 파일은 그 둘을 잇고 사람이 읽을 줄을 찍는다.
+
+import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { spawnSync } from 'node:child_process'
+
+import { frameTitle, listWindows, startFrame, virtualInput } from './win/zwwin.ts'
+import { judgeVirtual } from './input/virtual.ts'
+import type { Mods, VirtualRequest, VirtualResult } from './input/virtual.ts'
+import type { WindowFilter, WindowInfo } from './win/zwwin.ts'
+
+/** 부르는 위치와 상관없이 이 리포의 runs/frames — 다른 폴더에서 CLI 를 부르면 그 폴더에 파일이 생기던 함정을 피한다 */
+const FRAMES_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '../runs/frames')
+const FRAME_PREFIX = 'zwprobe-vcursor:'
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
+
+export function modsFrom(flags: Map<string, string>): Mods {
+  return { ctrl: flags.has('ctrl'), shift: flags.has('shift'), alt: flags.has('alt') }
+}
+
+/** 떠 있는 프레임들. 제목 조각 필터는 "…:12" 가 "…:123" 에도 맞으므로 대상 hwnd 를 정확히 비교한다 */
+function frames(): Array<{ frame: WindowInfo; target: number }> {
+  return listWindows({ title: FRAME_PREFIX })
+    .filter((w) => w.title.startsWith(FRAME_PREFIX))
+    .map((w) => ({ frame: w, target: Number(w.title.slice(FRAME_PREFIX.length)) }))
+}
+
+/** 대상 창 — zwwin.exe 와 같은 선택 규칙(조건에 맞는 것 중 가장 큰 창, listWindows 가 그 순서로 준다) */
+function targetOf(filter: WindowFilter): WindowInfo | undefined {
+  return listWindows(filter)[0]
+}
+
+/** 대상 창에 프레임이 없으면 띄우고 뜰 때까지 기다린다. 띄운 것이 있으면 true */
+export async function ensureFrame(filter: WindowFilter): Promise<{ target?: WindowInfo; started: boolean }> {
+  const target = targetOf(filter)
+  if (target === undefined) return { started: false }
+  if (frames().some((f) => f.target === target.hwnd)) return { target, started: false }
+  mkdirSync(FRAMES_DIR, { recursive: true })
+  const stop = join(FRAMES_DIR, `${target.hwnd}.stop`)
+  rmSync(stop, { force: true })
+  startFrame({ pid: target.pid, title: target.title, stop, result: join(FRAMES_DIR, `${target.hwnd}.json`) })
+  const deadline = Date.now() + 5000
+  while (Date.now() < deadline) {
+    if (frames().some((f) => f.target === target.hwnd)) return { target, started: true }
+    await sleep(100)
+  }
+  console.error('주의  가상 커서 프레임이 5초 안에 뜨지 않았다. 입력은 그대로 한다.')
+  return { target, started: false }
+}
+
+/** 입력하고 결과를 찍는다. 0=대상이 받았다 2=의심 */
+async function runVirtual(req: VirtualRequest, filter: WindowFilter, flags: Map<string, string>): Promise<number> {
+  if (!flags.has('no-frame')) {
+    const f = await ensureFrame(filter)
+    if (f.started) console.log(`프레임  대상 창 위에 가상 커서를 띄웠다 (끄기: zwprobe frame stop)`)
+  }
+  // 누르기 전의 창 목록 — 소유 다이얼로그가 받은 것을 맞다고 판정하려면 필요하다(judgeVirtual)
+  const before = listWindows(filter.pid !== undefined ? { pid: filter.pid } : filter)
+  const r: VirtualResult = virtualInput({ ...req, ...filter })
+  printVirtual(r)
+  const v = judgeVirtual(r, before.filter((w) => w.pid === r.window.pid))
+  console.log(`판정  ${v.onTarget ? '정상' : '의심'} — ${v.reason}`)
+  return v.onTarget ? 0 : 2
+}
+
+function printVirtual(r: VirtualResult): void {
+  const at = r.x !== undefined ? ` 창 기준 (${r.x},${r.y})` : ''
+  console.log(`가상  ${r.op}${at} → 받은 창 hwnd=${r.target.hwnd} (${r.target.clientX},${r.target.clientY})`)
+  console.log(`대상  ${r.window.width}x${r.window.height} hwnd=${r.window.hwnd} pid=${r.window.pid} "${r.window.title}"`)
+  const same =
+    r.cursorBefore.x === r.cursorAfter.x && r.cursorBefore.y === r.cursorAfter.y && r.foregroundBefore === r.foregroundAfter
+  // 사실만 — 그사이 사람이 움직였을 수 있으므로 판정에 넣지 않는다
+  console.log(same ? '커서  실제 커서·포그라운드 그대로' : '커서  실제 커서나 포그라운드가 바뀌었다 (사람이 움직였을 수 있다)')
+}
+
+function ints(names: string[], values: Array<string | undefined>): number[] | string {
+  const out: number[] = []
+  for (let i = 0; i < names.length; i++) {
+    const v = values[i]
+    if (v === undefined) return `${names.join(' ')} 가 필요하다`
+    const n = Number(v)
+    if (!Number.isInteger(n)) return `${names[i]} 는 정수여야 한다: "${v}"`
+    out.push(n)
+  }
+  return out
+}
+
+function buttonFrom(flags: Map<string, string>): 'left' | 'right' | 'middle' | string {
+  return flags.get('button') || 'left'
+}
+
+export async function virtualClick(x: number, y: number, filter: WindowFilter, flags: Map<string, string>): Promise<number> {
+  if (flags.has('slow') || flags.has('stay')) {
+    console.error('--slow·--stay 는 실제 커서를 쓰는 click 의 것이다. --virtual 과 함께 쓸 수 없다.')
+    return 1
+  }
+  const button = buttonFrom(flags)
+  if (button !== 'left' && button !== 'right' && button !== 'middle') {
+    console.error(`--button 은 left, right, middle 중 하나여야 한다: ${button}`)
+    return 1
+  }
+  return runVirtual(
+    {
+      op: 'click', x, y, button, double: flags.has('double'), mods: modsFrom(flags),
+      ...(flags.has('hold') ? { holdMs: Number(flags.get('hold')) } : {}),
+    },
+    filter,
+    flags,
+  )
+}
+
+export async function virtualKey(stroke: { vk: number; ctrl: boolean; shift: boolean; alt: boolean }, filter: WindowFilter, flags: Map<string, string>): Promise<number> {
+  return runVirtual({ op: 'key', vk: stroke.vk, mods: { ctrl: stroke.ctrl, shift: stroke.shift, alt: stroke.alt } }, filter, flags)
+}
+
+export async function cmdDrag(rest: string[], filter: WindowFilter, flags: Map<string, string>): Promise<number> {
+  const p = ints(['x', 'y', 'to-x', 'to-y'], rest)
+  if (typeof p === 'string') {
+    console.error(`${p}\n  zwprobe drag <x> <y> <끝x> <끝y> [--steps 10] [--button left] [--ctrl] [--shift] [--alt]`)
+    return 1
+  }
+  const button = buttonFrom(flags)
+  if (button !== 'left' && button !== 'right' && button !== 'middle') {
+    console.error(`--button 은 left, right, middle 중 하나여야 한다: ${button}`)
+    return 1
+  }
+  return runVirtual(
+    {
+      op: 'drag', x: p[0]!, y: p[1]!, toX: p[2]!, toY: p[3]!, button, mods: modsFrom(flags),
+      ...(flags.has('steps') ? { steps: Number(flags.get('steps')) } : {}),
+    },
+    filter,
+    flags,
+  )
+}
+
+export async function cmdWheel(rest: string[], filter: WindowFilter, flags: Map<string, string>): Promise<number> {
+  const p = ints(['x', 'y', 'delta'], rest)
+  if (typeof p === 'string') {
+    console.error(`${p}\n  zwprobe wheel <x> <y> <delta>   delta 120 = 한 칸 위, -120 = 한 칸 아래`)
+    return 1
+  }
+  return runVirtual({ op: 'wheel', x: p[0]!, y: p[1]!, delta: p[2]!, mods: modsFrom(flags) }, filter, flags)
+}
+
+export async function cmdType(rest: string[], filter: WindowFilter, flags: Map<string, string>): Promise<number> {
+  if (rest.length !== 1 || rest[0] === '') {
+    console.error('넣을 글자 하나가 필요하다. 띄어쓰기가 있으면 따옴표로 묶는다:\n  zwprobe type "D:/a b.zls"')
+    return 1
+  }
+  return runVirtual({ op: 'type', text: rest[0]! }, filter, flags)
+}
+
+export async function cmdFrame(rest: string[], filter: WindowFilter, hasFilter: boolean): Promise<number> {
+  const action = rest[0] ?? 'status'
+  if (action === 'start') {
+    const f = await ensureFrame(filter)
+    if (f.target === undefined) {
+      console.error('대상 창을 찾지 못했다.')
+      return 1
+    }
+    console.log(`프레임  ${f.started ? '띄웠다' : '이미 떠 있다'} — 대상 hwnd=${f.target.hwnd} "${f.target.title}"`)
+    return 0
+  }
+  // 필터를 줬으면 그 창들의 프레임만, 안 줬으면 전부
+  const targets = hasFilter ? new Set(listWindows(filter).map((w) => w.hwnd)) : undefined
+  const mine = frames().filter((f) => targets === undefined || targets.has(f.target))
+  if (action === 'status') {
+    if (mine.length === 0) {
+      console.log('프레임  떠 있는 것이 없다')
+      return 1
+    }
+    for (const f of mine) console.log(`프레임  pid=${f.frame.pid} 대상 hwnd=${f.target}`)
+    return 0
+  }
+  if (action === 'stop') {
+    if (mine.length === 0) {
+      console.log('프레임  떠 있는 것이 없다')
+      return 1
+    }
+    mkdirSync(FRAMES_DIR, { recursive: true })
+    for (const f of mine) writeFileSync(join(FRAMES_DIR, `${f.target}.stop`), '')
+    const deadline = Date.now() + 3000
+    while (Date.now() < deadline && frames().some((f) => mine.some((m) => m.frame.hwnd === f.frame.hwnd))) await sleep(100)
+    for (const f of frames().filter((f) => mine.some((m) => m.frame.hwnd === f.frame.hwnd))) {
+      spawnSync('taskkill', ['/F', '/PID', String(f.frame.pid)], { stdio: 'ignore' })
+    }
+    for (const f of mine) {
+      const stop = join(FRAMES_DIR, `${f.target}.stop`)
+      if (existsSync(stop)) rmSync(stop, { force: true })
+    }
+    console.log(`프레임  ${mine.length}개 닫았다`)
+    return 0
+  }
+  console.error(`frame 뒤에는 start · stop · status 중 하나를 쓴다: '${action}'`)
+  return 1
+}

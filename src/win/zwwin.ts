@@ -7,6 +7,8 @@ import { spawn, spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 
+import { virtualArgs } from '../input/virtual.ts'
+import type { VirtualRequest, VirtualResult } from '../input/virtual.ts'
 import type { KeyStroke } from '../input/shortcut.ts'
 import type { UiaDump } from '../uia/tree.ts'
 
@@ -284,5 +286,44 @@ export function startRecord(opts: StartRecordOptions): number {
   if (child.pid === undefined) {
     throw new ZwwinError(`zwwin.exe record 를 띄우지 못했다 (${ZWWIN_EXE})`)
   }
+  return child.pid
+}
+
+/**
+ * 가상 커서로 입력한다 — **실제 커서·포그라운드를 건드리지 않는다.** 대상 창의 그 점에 있는 자식 창에
+ * 창 메시지로 넣는다. 수식키는 대상 스레드의 키 상태를 잠깐 바꿔 싣는다(AttachThreadInput +
+ * SetKeyboardState, 대상이 처리한 뒤 되돌린다). 좌표는 `shot` 캡처 픽셀 그대로다.
+ * 인자 조립·검사는 virtual.ts, 판정은 judgeVirtual.
+ */
+export function virtualInput(opts: VirtualRequest & WindowFilter): VirtualResult {
+  return run([...virtualArgs(opts), ...filterArgs(opts)]) as VirtualResult
+}
+
+/** 가상 커서 프레임 창의 제목. v* 동사가 이 제목으로 프레임을 찾아 커서 위치를 알린다 */
+export function frameTitle(targetHwnd: number): string {
+  return `zwprobe-vcursor:${targetHwnd}`
+}
+
+export type StartFrameOptions = WindowFilter & {
+  /** 이 파일이 생기면 프레임을 닫는다 */
+  stop: string
+  /** 프레임이 끝날 때 결과 JSON 을 쓸 곳 */
+  result: string
+  /** 캡처·녹화에서 빼는가. 기본 true — 끄는 것은 시험의 대조용이다 */
+  excludeFromCapture?: boolean
+}
+
+/**
+ * 대상 창을 따라다니며 테두리와 가상 커서를 그리는 프레임을 **분리된 프로세스로** 띄우고 pid 를 돌려준다.
+ * 클릭이 통과하고(WS_EX_TRANSPARENT), 활성화되지 않고(WS_EX_NOACTIVATE), 캡처에 안 찍힌다
+ * (WDA_EXCLUDEFROMCAPTURE). 대상 창이 사라지거나 stop 파일이 생기면 끝난다.
+ */
+export function startFrame(opts: StartFrameOptions): number {
+  const args = ['frame', '--stop', opts.stop, '--result', opts.result, ...filterArgs(opts)]
+  if (opts.excludeFromCapture === false) args.push('--no-exclude')
+  const e = edge(args)
+  const child = spawn(e.cmd, e.argv, { detached: true, stdio: 'ignore', windowsHide: true })
+  child.unref()
+  if (child.pid === undefined) throw new ZwwinError(`zwwin.exe frame 을 띄우지 못했다 (${ZWWIN_EXE})`)
   return child.pid
 }

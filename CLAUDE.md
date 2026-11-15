@@ -21,11 +21,11 @@ Z-Weave(C++/Qt5 데스크톱 의상 CAD)를 **외부에서 조작·관찰·판�
 
 | 이름 | 언어 | 역할 | 상태 |
 |---|---|---|---|
-| `zwprobe` | TypeScript / Node 24 | CLI, 시나리오 실행, OBJ 파싱, 픽셀 diff, 판정 | **동작** — 관찰 `shot`·`windows`·`state`·`uia`·`doc`·`log` / 조작 `key`·`click`·`shortcuts` / 시나리오 `run`·`baseline`·`diff` / 에이전트 `agent` |
-| `zwwin.exe` | C# (Windows 내장 `csc.exe`로 빌드) | 창 찾기, `PrintWindow` 캡처, `keybd_event`·`mouse_event` 입력(실제 커서를 옮긴다), UIAutomation | **동작** — `windows`·`shot`·`key`·`click`·`uia` |
+| `zwprobe` | TypeScript / Node 24 | CLI, 시나리오 실행, OBJ 파싱, 픽셀 diff, 판정 | **동작** — 관찰 `shot`·`windows`·`state`·`uia`·`doc`·`log` / 조작 `key`·`click`·`shortcuts` / 가상 커서 `click --virtual`·`key --virtual`·`drag`·`wheel`·`type`·`frame` / 시나리오 `run`·`baseline`·`diff` / 에이전트 `agent` |
+| `zwwin.exe` | C# (Windows 내장 `csc.exe`로 빌드) | 창 찾기, `PrintWindow` 캡처, `keybd_event`·`mouse_event` 입력(실제 커서를 옮긴다), UIAutomation. **가상 커서**(창 메시지 입력 + 프레임 창, `tools/zwwin/Virtual.cs`) | **동작** — `windows`·`shot`·`key`·`click`·`uia` / `vclick`·`vdrag`·`vwheel`·`vkey`·`vtype`·`frame` (2026-11-15, 픽스처만) |
 | `zwmac` | TypeScript (`src/mac/zwmac.ts`) + Swift 인코더 | **macOS 에서 zwwin.exe 자리.** 같은 동사·플래그·JSON 을 zwagent 창 단위 op 로 낸다 — 권한(TCC) 불필요 | **동작** — 2026-10-12, 아래 "macOS" 절 |
 | `zwagent.dll` | C++ / Qt 스타일 플러그인 | 앱 프로세스 안에서 위젯 트리·`QAction::trigger()`·`QWidget::grab()`, named pipe 명령 채널 | **동작** — 실앱에서 위젯 5199개 조회, 명령 120개 호출, 패널 단위 캡처. 읽기와 쓰기가 다 된다 |
-| MCP 서버 | TypeScript | **다른 프로젝트의 세션**이 CLI 를 도구로 부르게 한다. JSON-RPC over stdio | **동작** — user 스코프 등록(Windows), 16개 도구 (2026-09-17, `zw_record` 2026-09-30, `zw_mouse` 2026-10-05). macOS 에서도 돈다 — 이 Mac 에는 미등록 |
+| MCP 서버 | TypeScript | **다른 프로젝트의 세션**이 CLI 를 도구로 부르게 한다. JSON-RPC over stdio | **동작** — user 스코프 등록(Windows), 20개 도구 (2026-09-17, `zw_record` 2026-09-30, `zw_mouse` 2026-10-05, `zw_drag`·`zw_wheel`·`zw_type`·`zw_frame` 2026-11-15). macOS 에서도 돈다 — 이 Mac 에는 미등록 |
 
 세 개가 각각 독립 실행된다. 자세한 구조는 설계문서 §4.
 
@@ -155,6 +155,8 @@ Bash(git --git-dir=*)  Bash(git --work-tree=*)
 
 2026-10-23: **agent-workbench 의 `_clones/` 로 옮겼다.** 대상 앱은 옆의 `_clones/Z-Weave`(5.1.101). Mac 실앱 시나리오 15/15·28/28 — 창 크기가 1512x831 에서 1210x786 으로 바뀌어 `mac-샘플-*` baseline 둘을 새로 띄운 앱에서 다시 떴다. Mac 의 `node --test` 394개 중 373 통과, 실패 0, 건너뜀 21(전부 Windows 전용).
 
+2026-11-15: **가상 커서 — 사람이 마우스·키보드를 쓰는 동안에도 조작한다.** 실제 커서·포그라운드를 건드리지 않고 대상 창에 창 메시지로 입력하고, 대상 창 위에 주황 테두리와 두 번째 커서를 띄운다(캡처·녹화엔 안 찍힌다). 소스를 모르는 다른 프로그램에도 쓴다. 아래 "가상 커서" 절. **픽스처에서만 확인했다** — Qt 픽스처가 클릭·오른쪽·더블·Ctrl 클릭·끌기·휠·키·Ctrl 조합키·글자를 다 받았고, 바깥 관찰자로 실제 커서·포그라운드가 그대로인 것을 확인했다. **Z-Weave·CLO 실앱 확인이 남았다.** Windows `node --test` 421개 중 408 통과, 실패 8, 건너뜀 5 — **실패 8개는 전부 이번 변경 전 코드에서도 똑같이 실패한다**(변경 전 체크아웃으로 같은 시험 파일을 돌려 확인): WinForms 6개는 주 모니터 200% + DPI 를 모르는 픽스처(원인을 이번에 찾았다 — 열린 항목), macOS 경로 시험 2개는 Windows 의 `path.join` 으로 macOS 경로를 비교해서다.
+
 **macOS 의 앱은 꺼져 있다** (2026-10-23 세션 끝 확인). 문서 시나리오 뒤 `sample-copy.zls` 가 dirty 인 채로 저장하지 않고 닫았다.
 
 **Windows 의 앱은 꺼져 있다** (2026-09-17 확인, `state` 종료 코드 1). 아래 2026-09-15 문단은 **그때의 상태이고 지금은 아니다** — 그 데님 바지는 저장하지 않았으므로 없어졌다. 다시 띄우면 `Untitled.zls` 가 깨끗하게 열린다.
@@ -241,6 +243,30 @@ node src/cli.ts key ClearSelection --title "Startup Splash"   시작 다이얼�
 - **3D 뷰를 끌 때는 옷이 없는 배경에서 시작한다** — 옷 위를 누르면 카메라가 아니라 패턴 선택이다(2026-10-12 실수, 형상은 안 바뀌었다)
 - **baseline 은 앱을 새로 띄워 연 직후에 뜨고 비교한다** — 같은 프로세스에서 다시 열면 2D 봉제선 쌍 색이 매번 달라진다(열린 항목)
 - 2D 뷰는 `objectName` `2dview`(`zwQtGLBaseWidget`), 3D 뷰는 `class:zwQt3DView` — Windows 와 같다
+
+### 가상 커서 (2026-11-15)
+
+**왜.** `click`·`key` 는 실제 커서를 옮기고 시스템 전역 입력을 보낸다 — 도는 동안 사람이 마우스를 못 쓴다. 업무 폴더들이 이것 때문에 ctypes 로 휠·끌기·글자를 따로 만들었다. 가상 커서는 **대상 창 안에만 있는 두 번째 커서**다.
+
+```
+zwprobe click <x> <y> --virtual [--button right] [--double] [--hold ms] [--ctrl] [--shift] [--alt]
+zwprobe key <기능이름> --virtual
+zwprobe drag <x> <y> <끝x> <끝y> [--steps 10] [--button ...]
+zwprobe wheel <x> <y> <delta>          120 = 한 칸 위
+zwprobe type "<글자>"                   포커스 입력칸에
+zwprobe frame start|stop|status        (가상 입력이 알아서 띄운다. --no-frame 으로 끈다)
+다른 프로그램: --process CLO_Standalone_OnlineAuth_x64 · --title "CLO" 등. 기본은 z-weave
+MCP: zw_click·zw_key 의 virtual, zw_drag·zw_wheel·zw_type·zw_frame
+```
+
+- **넣는 법** — 그 점에 있는 대상 프로세스의 맨 위 창(소유 다이얼로그 포함) 안의 가장 깊은 자식 창에 `WM_MOUSEMOVE`·`WM_xBUTTONDOWN/UP`·`WM_MOUSEWHEEL`·`WM_KEYDOWN/UP` 을 `PostMessage` 한다. 키는 대상 GUI 스레드의 포커스 창으로
+- **수식키** — 앱은 Ctrl·Shift 를 메시지가 아니라 `GetKeyState` 로 읽는다. 대상 스레드에 입력 큐를 붙이고(`AttachThreadInput`) 키 상태 표를 바꾼 뒤(`SetKeyboardState`) 넣고, 대상이 다 처리할 때까지(`WaitForInputIdle`) 기다렸다가 되돌린다. AutoHotkey `ControlSend` 와 같은 방법. **DLL 주입이 필요 없었다** — Qt 픽스처가 `m=C` 를 봤다
+- **좌표는 `shot` 캡처 픽셀 그대로.** v* 와 frame 만 모니터별 DPI 인식(PMv2)으로 돈다 — 기존 동사는 업무 스크립트의 좌표표가 걸려 있어 시스템 DPI 인식 그대로 뒀다. **DPI 를 모르는 앱도 환산하지 않는다** — Windows 가 그 창에 가는 마우스 메시지 좌표를 바꿔 준다. 직접 환산하면 두 번 줄어든다(실측, WORKLOG)
+- **프레임** — `zwwin.exe frame` 이 백그라운드로 돈다. 클릭 통과(`WS_EX_TRANSPARENT`)·비활성(`WS_EX_NOACTIVATE`)·맨 위·**캡처 제외**(`WDA_EXCLUDEFROMCAPTURE`, 사람 눈에만 보인다). 대상 창을 50ms 마다 따라가고, 대상이 닫히거나 `runs/frames/<hwnd>.stop` 이 생기면 끝난다. 제목 `zwprobe-vcursor:<대상 hwnd>` 로 v* 동사가 찾아 커서 위치를 알린다
+- **판정** — `judgeVirtual`: 받은 창이 대상이거나 대상이 소유한 창이면 정상. 전후 실제 커서·포그라운드는 사실로만 싣는다(사람이 그사이 움직일 수 있다)
+- **한계(확인 안 됨)** — 마우스를 올려야 열리는 메뉴, 실제 커서 위치를 직접 읽는 앱(`GetCursorPos`), 원시 입력(`WM_INPUT`·DirectInput), 창 밖으로 끌어 놓기(OLE). 끌기 중 사람이 그 창 위로 실제 마우스를 움직이면 섞일 수 있다(누른 창이 캡처를 잡으므로). 막히면 그 프로세스에 DLL 을 넣어 `GetCursorPos` 등을 가로채는 것이 다음 단계다 — 아직 필요가 확인되지 않았다
+
+**시험** — `src/input/virtual.test.ts`(인자·판정), `src/win/virtual.integration.test.ts`(픽스처). 정답은 픽스처 자신(WinForms 사분면 색, Qt `mouseLog`)과 **바깥 관찰자**(PowerShell 이 동작 내내 `GetCursorPos`·`GetForegroundWindow` 를 읽는다) — 관찰자가 기존 `click` 의 커서 이동을 잡는 것을 대조 시험으로 먼저 증명한다. 화면 캡처 시험은 픽스처를 **맨 위로** 띄운다(`--topmost`) — 안 그러면 다른 창이 찍혀 헛돈다. 실제 입력을 쓰는 시험과 관찰 시험은 `src/win/realInputLock.ts` 잠금을 같이 잡는다(전체 스위트는 파일을 동시에 돌린다).
 
 ### 다른 프로젝트에서 쓰기 (MCP 서버)
 
@@ -482,6 +508,9 @@ Qt 모달 동작은 더 부탁할 필요가 없다 — **Qt 픽스처가 답했�
 
 ## 열린 항목
 
+- **가상 커서를 실앱(Z-Weave·CLO)에서 확인한다** (2026-11-15 만듦, 픽스처만 확인). 볼 것: 메뉴 클릭·하위 메뉴, 3D 뷰 끌기 회전, 휠 확대, 파일 열기 창에 `type` 으로 경로, 보조 모니터(175%·250%)에서 캡처 픽셀 = 클릭 좌표인지, 단축키 `--virtual`. **사람이 앱을 쓰는 중이면 먼저 묻는다**
+- **WinForms 시험 6개가 이 PC 에서 실패한다 — 원인을 찾았다** (2026-11-15). 주 모니터가 200% 이고 WinForms 픽스처가 DPI 를 모르는 앱이라 ① `PrintWindow` 가 늘리기 전 그림(400x300)을 800x600 의 왼쪽 위에만 준다 ② 시스템 DPI 인식 `zwwin.exe` 의 좌표와 픽스처 좌표가 어긋난다. 2026-10-05 의 "원인 미확인 3개" 가 배율이 바뀌며 6개가 된 것으로 보인다. 고치는 길: 기존 시험도 픽스처를 `--dpi-aware` 로 띄운다(가상 커서 시험이 그렇게 한다). 기존 시험의 기대를 바꾸는 일이라 사용자 확인 뒤에
+- **DPI 를 모르는 앱의 휠** — 다른 마우스 메시지처럼 Windows 가 좌표를 바꿔 줄 것으로 보고 물리 픽셀을 그대로 보낸다. 시험 안 했다
 - **팀 공유 여부** — 미정. GitHub 원격(`origin`)에 `main` 을 올리지만 작업은 로컬 `main` 에서 직접 한다
 - ~~**Mac 픽스처 시험 하나가 흔들린다**~~ — **닫혔다 (2026-10-23): 픽스처 버튼의 포커스 테두리였다.** macOS 스타일이 창이 활성일 때만 그리므로 다른 창을 띄우는 것만으로 같은 672픽셀이 재현됐다. 버튼을 `NoFocus` 로 두자 전체 스위트 6번 연속 실패 0
 - **`ActivateSelected`와 `DeactivateSelected`가 둘 다 `Shift+D`** — `shortcut.ini` 실측. 토글로 의도된 것인지 확인 필요 (M2에서 실제로 눌러보면 드러난다)
