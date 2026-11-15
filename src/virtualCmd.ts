@@ -149,6 +149,29 @@ export async function cmdWheel(rest: string[], filter: WindowFilter, flags: Map<
   return runVirtual({ op: 'wheel', x: p[0]!, y: p[1]!, delta: p[2]!, mods: modsFrom(flags) }, filter, flags)
 }
 
+/** 버튼 없이 옮긴다. --from x,y 를 주면 거기서부터 --steps 번에 걸쳐 지난다(마우스를 올려야 열리는 메뉴) */
+export async function cmdMove(rest: string[], filter: WindowFilter, flags: Map<string, string>): Promise<number> {
+  const p = ints(['x', 'y'], rest)
+  if (typeof p === 'string') {
+    console.error(`${p}\n  zwprobe move <x> <y> [--from x,y] [--steps 10]`)
+    return 1
+  }
+  let from: { fromX: number; fromY: number } | {} = {}
+  if (flags.has('from')) {
+    const f = ints(['from-x', 'from-y'], (flags.get('from') ?? '').split(','))
+    if (typeof f === 'string') {
+      console.error(`--from 은 x,y 다: "${flags.get('from')}"`)
+      return 1
+    }
+    from = { fromX: f[0]!, fromY: f[1]! }
+  }
+  return runVirtual(
+    { op: 'move', x: p[0]!, y: p[1]!, ...from, ...(flags.has('steps') ? { steps: Number(flags.get('steps')) } : {}) },
+    filter,
+    flags,
+  )
+}
+
 export async function cmdType(rest: string[], filter: WindowFilter, flags: Map<string, string>): Promise<number> {
   if (rest.length !== 1 || rest[0] === '') {
     console.error('넣을 글자 하나가 필요하다. 띄어쓰기가 있으면 따옴표로 묶는다:\n  zwprobe type "D:/a b.zls"')

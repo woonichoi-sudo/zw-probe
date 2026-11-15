@@ -70,6 +70,10 @@ internal static class V
     public const uint WM_SYSKEYDOWN = 0x104, WM_SYSKEYUP = 0x105;
     public const uint WM_APP_VCURSOR = 0x8000 + 0x5A1; // 프레임에 커서 위치를 알린다 (wParam=x, lParam=y, 화면 물리 픽셀)
     public const int MK_LBUTTON = 0x1, MK_RBUTTON = 0x2, MK_SHIFT = 0x4, MK_CONTROL = 0x8, MK_MBUTTON = 0x10;
+    // 버튼 없는 WM_MOUSEMOVE 에 싣는 정의되지 않은 비트. Qt 는 wParam==0 인 이동을 "마우스가 창 위에 없으면" 버린다
+    // (qwindowsmousehandler — 실제 커서가 딴 데 있으니 늘 버려진다, 2026-11-15 Qt 픽스처 실측). 0 이 아니게만 만들고
+    // 버튼·수식키 비트는 건드리지 않는다 — Qt 는 정의된 비트만 버튼으로 읽는다.
+    public const int MK_VIRTUAL_HOVER = 0x80;
     public const int GCL_STYLE = -26, CS_DBLCLKS = 0x8;
     public const uint WDA_NONE = 0, WDA_EXCLUDEFROMCAPTURE = 0x11;
     public static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
@@ -81,7 +85,7 @@ internal static partial class Program
     /// v* 와 frame 은 PMv2 로 돈다 — 프로세스 DPI 인식은 한 번만 정할 수 있으므로 Main 이 동사를 보고 고른다.
     internal static bool UsesPerMonitorDpi(string verb)
     {
-        return verb == "vclick" || verb == "vdrag" || verb == "vwheel" || verb == "vkey" || verb == "vtype" || verb == "frame";
+        return verb == "vclick" || verb == "vdrag" || verb == "vwheel" || verb == "vkey" || verb == "vtype" || verb == "vmove" || verb == "frame";
     }
 
     /// 캡처와 같은 사각형(DWM 경계) — 프레임이 대상 창을 따라갈 때 쓴다
@@ -335,7 +339,7 @@ internal static partial class Program
         using (var ks = new KeyState(c.W, c.Ctrl, c.Shift, c.Alt, false))
         {
             applied = ks.Applied;
-            PostMouse(h, V.WM_MOUSEMOVE, mods);
+            PostMouse(h, V.WM_MOUSEMOVE, mods | V.MK_VIRTUAL_HOVER);
             PostMouse(h, down, mk | mods);
             if (hold > 0) { ks.Drain(); System.Threading.Thread.Sleep(hold); }
             PostMouse(h, up, mods);
@@ -377,7 +381,7 @@ internal static partial class Program
         {
             applied = ks.Applied;
             c.Frame = NotifyFrame(c.W, sx, sy);
-            PostMouse(h, V.WM_MOUSEMOVE, mods);
+            PostMouse(h, V.WM_MOUSEMOVE, mods | V.MK_VIRTUAL_HOVER);
             PostMouse(h, down, mk | mods);
             ks.Drain();
             Hit last = h;
@@ -416,12 +420,49 @@ internal static partial class Program
         using (var ks = new KeyState(c.W, c.Ctrl, c.Shift, c.Alt, false))
         {
             applied = ks.Applied;
-            PostMouse(h, V.WM_MOUSEMOVE, mods);
+            PostMouse(h, V.WM_MOUSEMOVE, mods | V.MK_VIRTUAL_HOVER);
             // WM_MOUSEWHEEL 의 lParam 은 화면 좌표다 (다른 마우스 메시지와 다르다)
             V.PostMessage(h.Hwnd, V.WM_MOUSEWHEEL, new IntPtr((int)((uint)(ushort)(short)delta << 16) | mods), WheelScreenLParam(h.Hwnd, sx, sy));
             ks.Drain();
         }
         return VReply(c, "wheel", x, y, sx, sy, h, applied);
+    }
+
+    /// 버튼 없이 옮긴다. 점마다 그 자리의 맨 위 창을 다시 고른다 — 마우스를 올려 연 팝업 메뉴 위로 넘어가면
+    /// 그 팝업이 받아야 한다(실제 커서와 같다).
+    private static int CmdVMove(Dictionary<string, string> a)
+    {
+        VCtx c;
+        string err = VInit(a, out c);
+        if (err != null) return Fail(err);
+        int x, y;
+        err = Point(a, "x", "y", c.W, out x, out y);
+        if (err != null) return Fail(err);
+        int fx = x, fy = y;
+        bool hasFrom = Get(a, "from-x") != null || Get(a, "from-y") != null;
+        if (hasFrom)
+        {
+            err = Point(a, "from-x", "from-y", c.W, out fx, out fy);
+            if (err != null) return Fail(err);
+        }
+        int steps = hasFrom ? 10 : 1;
+        int.TryParse(Get(a, "steps") ?? steps.ToString(), out steps);
+        if (steps < 1) return Fail("--steps 는 1 이상이어야 한다.");
+
+        Hit h = null;
+        int sx = 0, sy = 0;
+        for (int i = hasFrom ? 0 : steps; i <= steps; i++)
+        {
+            int px = fx + (int)Math.Round((double)(x - fx) * i / steps);
+            int py = fy + (int)Math.Round((double)(y - fy) * i / steps);
+            sx = c.W.Rect.Left + px; sy = c.W.Rect.Top + py;
+            h = HitAt(c.W, sx, sy);
+            c.Frame = NotifyFrame(c.W, sx, sy);
+            PostMouse(h, V.WM_MOUSEMOVE, V.MK_VIRTUAL_HOVER);
+            System.Threading.Thread.Sleep(15);
+        }
+        try { Process.GetProcessById((int)c.W.Pid).WaitForInputIdle(1000); } catch { }
+        return VReply(c, "move", x, y, sx, sy, h, false);
     }
 
     /// 키를 받을 창 — 대상 GUI 스레드의 포커스 창(그 창이 대상의 자손일 때). 없으면 대상 최상위 창.

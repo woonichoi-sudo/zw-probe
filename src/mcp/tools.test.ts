@@ -32,7 +32,8 @@ test('모든 도구가 종료 코드의 뜻을 갖는다', () => {
 test('앱을 바꾸는 도구만 mutates 다', () => {
   const mutating = TOOLS.filter((t) => t.mutates).map((t) => t.name).sort()
   // 가상 커서 입력(zw_drag·zw_type·zw_wheel)은 앱을 바꾼다. 프레임(zw_frame)은 위에 그릴 뿐이라 바꾸지 않는다.
-  assert.deepEqual(mutating, ['zw_agent_trigger', 'zw_click', 'zw_drag', 'zw_key', 'zw_mouse', 'zw_run', 'zw_type', 'zw_wheel'])
+  // zw_move 도 앱을 바꿀 수 있다 — 마우스를 올리면 열리는 메뉴가 열린다
+  assert.deepEqual(mutating, ['zw_agent_trigger', 'zw_click', 'zw_drag', 'zw_key', 'zw_mouse', 'zw_move', 'zw_run', 'zw_type', 'zw_wheel'])
 })
 
 test('inputSchema — 필수 인자가 required 에 들어간다', () => {
@@ -217,6 +218,13 @@ test('buildArgv — zw_type 은 글자가 필요하다', () => {
   assert.ok(r.ok, r.ok ? '' : r.reason)
   if (r.ok) assert.deepEqual(r.argv, ['type', 'D:/a b.zls', '--no-frame'])
   assert.equal(build('zw_type', {}).ok, false)
+})
+
+test('buildArgv — zw_move 는 좌표 둘, 출발점은 from 으로', () => {
+  const r = build('zw_move', { x: 5, y: 6, from: '1,2', steps: 3 })
+  assert.ok(r.ok, r.ok ? '' : r.reason)
+  if (r.ok) assert.deepEqual(r.argv, ['move', '5', '6', '--from', '1,2', '--steps', '3'])
+  assert.equal(build('zw_move', { x: 5 }).ok, false)
 })
 
 test('buildArgv — zw_frame 은 start·stop·status 만', () => {

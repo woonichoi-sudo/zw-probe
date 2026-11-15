@@ -443,6 +443,24 @@ export const TOOLS: Tool[] = [
     exits: { 0: '넣었다', 2: '의심 — 받은 창이 대상과 다르다(출력에 이유)', 1: '넣지 못했다' },
   },
   {
+    name: 'zw_move',
+    verb: 'move',
+    title: '옮기기 (가상 커서)',
+    desc:
+      '버튼 없이 가상 커서를 (x,y) 로 옮긴다. 마우스를 올려야 열리는 메뉴를 열거나, 커서가 떠나면 닫히는 메뉴를 닫을 때 쓴다. ' +
+      'from 을 주면 거기서부터 steps 번에 걸쳐 지난다 — 메뉴 위로 미끄러지듯 옮겨야 안 닫히는 경우. ' + VIRTUAL_NOTE,
+    mutates: true,
+    params: [
+      { name: 'x', type: 'number', required: true, desc: '창 기준 x (캡처 픽셀)', arg: { kind: 'positional', at: 0 } },
+      { name: 'y', type: 'number', required: true, desc: '창 기준 y', arg: { kind: 'positional', at: 1 } },
+      { name: 'from', type: 'string', desc: '출발점 "x,y"', arg: { kind: 'flag', flag: 'from' } },
+      { name: 'steps', type: 'number', desc: 'from 이 있을 때 중간 이동 횟수 (기본 10)', arg: { kind: 'flag', flag: 'steps' } },
+      NO_FRAME,
+      ...FILTERS,
+    ],
+    exits: { 0: '옮겼다 — 받은 창이 대상이다', 2: '의심 — 받은 창이 대상과 다르다(출력에 이유)', 1: '옮기지 못했다' },
+  },
+  {
     name: 'zw_frame',
     verb: 'frame',
     title: '가상 커서 프레임',

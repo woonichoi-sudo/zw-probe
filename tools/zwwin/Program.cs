@@ -136,7 +136,8 @@ internal static partial class Program
             string verb = args.Length > 0 && !args[0].StartsWith("--") ? args[0] : "";
             // 기존 동사는 시스템 DPI 인식 그대로 둔다 — 업무 스크립트의 좌표표가 거기에 맞춰져 있다.
             // 가상 커서(v*·frame)만 모니터별 인식으로 돌아 캡처 픽셀과 클릭 좌표가 같아진다 (Virtual.cs).
-            if (UsesPerMonitorDpi(verb)) SetPerMonitorDpi(); else N.SetProcessDPIAware();
+            // uia --per-monitor: 가상 클릭을 이름으로 할 때 UIA 좌표를 캡처 픽셀 계로 읽는다
+            if (UsesPerMonitorDpi(verb) || a.ContainsKey("per-monitor")) SetPerMonitorDpi(); else N.SetProcessDPIAware();
 
             switch (verb)
             {
@@ -151,6 +152,7 @@ internal static partial class Program
                 case "vwheel": return CmdVWheel(a);
                 case "vkey": return CmdVKey(a);
                 case "vtype": return CmdVType(a);
+                case "vmove": return CmdVMove(a);
                 case "frame": return CmdFrame(a);
                 default:
                     return Fail("알 수 없는 명령: '" + verb + "'. windows, shot, key, click, uia, record, vclick, vdrag, vwheel, vkey, vtype, frame 중 하나를 쓴다.");

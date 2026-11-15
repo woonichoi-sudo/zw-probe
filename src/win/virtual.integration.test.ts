@@ -308,6 +308,28 @@ test('Qt — vwheel 은 그 좌표의 휠로 적힌다', { skip: qtSkip }, async
   }
 })
 
+test('Qt — vmove 는 버튼 없이 옮긴다 (press 없음), 출발점을 주면 중간 move 가 이어진다', { skip: qtSkip }, async () => {
+  const q = await launchQt()
+  try {
+    let n = (await q.log()).length
+    const { seen } = await observe(() => virtualInput({ op: 'move', ...q.at(60, 70), ...q.filter }))
+    assertUntouched(seen, 'Qt vmove')
+    let lines = await newLines(q.log, n)
+    assert.ok(lines.some((l) => l.startsWith('move 60,70 b=- bs=-')), `move 가 없다: ${lines.join(' | ')}`)
+    assert.ok(!lines.some((l) => l.startsWith('press')), `move 인데 press 가 있다: ${lines.join(' | ')}`)
+
+    n = (await q.log()).length
+    const a = q.at(10, 20), b = q.at(110, 20)
+    virtualInput({ op: 'move', ...b, fromX: a.x, fromY: a.y, steps: 5, ...q.filter })
+    lines = await newLines(q.log, n)
+    const moves = lines.filter((l) => /^move \d+,20 b=- bs=-/.test(l))
+    assert.ok(moves.length >= 4, `중간 move 가 모자라다: ${lines.join(' | ')}`)
+    assert.ok(moves[moves.length - 1]!.startsWith('move 110,20'), `끝점이 아니다: ${lines.join(' | ')}`)
+  } finally {
+    q.cleanup()
+  }
+})
+
 test('Qt — vkey 는 키로, Ctrl 조합은 m=C 로 적힌다', { skip: qtSkip }, async () => {
   const q = await launchQt()
   try {

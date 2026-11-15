@@ -238,6 +238,20 @@ export type UiaOptions = WindowFilter & {
   depth?: number
   /** 노드 상한. 닿으면 truncated 가 true 로 온다. 기본 2000 */
   max?: number
+  /**
+   * 모니터별 DPI 인식(PMv2)으로 읽는다 — 좌표가 캡처 픽셀과 같은 계가 된다. **가상 클릭을 이름으로 할 때 쓴다.**
+   * 기본(시스템 DPI 인식)은 배율이 다른 모니터에서 좌표가 배율만큼 작다 — 기존 click 이 그 계로 누르므로 기본은 그대로 둔다.
+   */
+  perMonitor?: boolean
+}
+
+/** uia 동사의 인자. 순수 — 시험한다(uiaArgs.test.ts) */
+export function uiaArgs(opts: UiaOptions = {}): string[] {
+  const args = ['uia', ...filterArgs(opts)]
+  if (opts.depth !== undefined) args.push('--depth', String(opts.depth))
+  if (opts.max !== undefined) args.push('--max', String(opts.max))
+  if (opts.perMonitor === true) args.push('--per-monitor')
+  return args
 }
 
 export type UiaDumpResult = UiaDump & { window: WindowInfo }
@@ -250,10 +264,7 @@ export type UiaDumpResult = UiaDump & { window: WindowInfo }
  * 이건 zwwin.exe 안에 박혀 있고 선택 옵션이 아니다.
  */
 export function uiaTree(opts: UiaOptions = {}): UiaDumpResult {
-  const args = ['uia', ...filterArgs(opts)]
-  if (opts.depth !== undefined) args.push('--depth', String(opts.depth))
-  if (opts.max !== undefined) args.push('--max', String(opts.max))
-  return run(args) as UiaDumpResult
+  return run(uiaArgs(opts)) as UiaDumpResult
 }
 
 export type StartRecordOptions = WindowFilter & {

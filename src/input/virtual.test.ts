@@ -42,6 +42,16 @@ test('type — 글자는 UTF-16 16진수로 넘긴다 (한글·따옴표·"--" �
   assert.deepEqual(virtualArgs({ op: 'type', text: '--x "y"' }), ['vtype', '--text-hex', textToHex('--x "y"')])
 })
 
+test('move — 버튼 없이 옮긴다. 출발점을 주면 그 사이를 단계로 지난다 (마우스를 올려야 열리는 메뉴용)', () => {
+  assert.deepEqual(virtualArgs({ op: 'move', x: 60, y: 70 }), ['vmove', '--x', '60', '--y', '70'])
+  assert.deepEqual(
+    virtualArgs({ op: 'move', x: 60, y: 70, fromX: 10, fromY: 20, steps: 4 }),
+    ['vmove', '--x', '60', '--y', '70', '--from-x', '10', '--from-y', '20', '--steps', '4'],
+  )
+  assert.throws(() => virtualArgs({ op: 'move', x: 1, y: 1, fromX: 2 }), /from/)
+  assert.throws(() => virtualArgs({ op: 'move', x: 1, y: 1, fromX: 2, fromY: 2, steps: 0 }), /steps/)
+})
+
 test('잘못된 요청은 보내기 전에 거부한다', () => {
   assert.throws(() => virtualArgs({ op: 'click', x: -1, y: 0 }), /좌표/)
   assert.throws(() => virtualArgs({ op: 'click', x: 1.5, y: 0 }), /좌표/)

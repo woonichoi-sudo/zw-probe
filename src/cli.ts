@@ -39,7 +39,7 @@ import {
 import type { Request } from './agent/protocol.ts'
 import { findPopupItem, parsePopup, popupLines } from './agent/popup.ts'
 import { judgeClick } from './input/click.ts'
-import { cmdDrag, cmdFrame, cmdType, cmdWheel, virtualClick, virtualKey } from './virtualCmd.ts'
+import { cmdDrag, cmdFrame, cmdMove, cmdType, cmdWheel, virtualClick, virtualKey } from './virtualCmd.ts'
 import { needsWidgetSize, planMouse } from './input/mouseArgs.ts'
 import { toQtKey } from './input/qtKey.ts'
 import type { ShortcutEntry } from './input/shortcut.ts'
@@ -346,7 +346,9 @@ function cmdClick(rest: string[], flags: Map<string, string>): number | Promise<
       return 1
     }
     // 누를 수 있는 것만 본다 — 크기 0 이나 화면 밖 요소는 좌표가 있어도 못 누른다.
-    const dump = uiaTree({ ...f, ...(flags.has('max') ? { max: Number(flags.get('max')) } : {}) })
+    // 가상 클릭이면 UIA 를 캡처 픽셀 계(PMv2)로 읽는다 — 안 그러면 배율 모니터에서 옆 요소를 누른다
+    // (2026-11-15 실앱: 250% 모니터 Z-Weave 에서 --name Help 가 Window 메뉴를 열었다)
+    const dump = uiaTree({ ...f, ...(flags.has('max') ? { max: Number(flags.get('max')) } : {}), perMonitor: flags.has('virtual') })
     const hit = findOne(dump, { ...q, clickableOnly: true })
     if (!hit.found) {
       console.error(`요소를 특정하지 못했다 — ${hit.reason}`)
@@ -1319,6 +1321,8 @@ async function main(): Promise<number> {
       return await cmdWheel(rest, targetFilter(flags), flags)
     case 'type':
       return await cmdType(rest, targetFilter(flags), flags)
+    case 'move':
+      return await cmdMove(rest, targetFilter(flags), flags)
     case 'frame': {
       const f = filterFrom(flags)
       const given = f.process !== undefined || f.pid !== undefined || f.title !== undefined
@@ -1345,6 +1349,7 @@ async function main(): Promise<number> {
           '    zwprobe drag <x> <y> <끝x> <끝y> [--steps 10] [--button left] [--ctrl] [--shift] [--alt]\n' +
           '    zwprobe wheel <x> <y> <delta>      120 = 한 칸 위, -120 = 한 칸 아래\n' +
           '    zwprobe type "<글자>"               포커스 입력칸에 넣는다\n' +
+          '    zwprobe move <x> <y> [--from x,y] [--steps 10]   버튼 없이 옮긴다 (마우스를 올려야 열리는 메뉴)\n' +
           '    zwprobe frame start|stop|status    프레임은 가상 입력 때 알아서 뜬다. --no-frame 으로 끈다\n' +
           '    (다른 프로그램은 --process·--title 로 고른다. 기본은 z-weave)\n' +
           '  시나리오\n' +

@@ -19,6 +19,8 @@ export type VirtualRequest =
   | { op: 'click'; x: number; y: number; button?: Button; double?: boolean; holdMs?: number; mods?: Mods }
   | { op: 'drag'; x: number; y: number; toX: number; toY: number; steps?: number; button?: Button; mods?: Mods }
   | { op: 'wheel'; x: number; y: number; delta: number; mods?: Mods }
+  /** 버튼 없이 옮긴다 — 마우스를 올려야 열리는 메뉴, 메뉴를 닫으려고 커서를 치우는 일 */
+  | { op: 'move'; x: number; y: number; fromX?: number; fromY?: number; steps?: number }
   | { op: 'key'; vk: number; mods?: Mods }
   | { op: 'type'; text: string }
 
@@ -103,6 +105,16 @@ export function virtualArgs(r: VirtualRequest): string[] {
     case 'wheel': {
       if (!Number.isInteger(r.delta) || r.delta === 0) throw new Error(`delta 는 0 이 아닌 정수여야 한다 (120 = 한 칸 위): ${r.delta}`)
       return ['vwheel', '--x', coord('x', r.x), '--y', coord('y', r.y), '--delta', String(r.delta), ...modArgs(r.mods)]
+    }
+    case 'move': {
+      const a = ['vmove', '--x', coord('x', r.x), '--y', coord('y', r.y)]
+      if ((r.fromX === undefined) !== (r.fromY === undefined)) throw new Error('fromX·fromY 는 함께 줘야 한다')
+      if (r.fromX !== undefined && r.fromY !== undefined) a.push('--from-x', coord('fromX', r.fromX), '--from-y', coord('fromY', r.fromY))
+      if (r.steps !== undefined) {
+        if (!Number.isInteger(r.steps) || r.steps < 1) throw new Error(`steps 는 1 이상 정수여야 한다: ${r.steps}`)
+        a.push('--steps', String(r.steps))
+      }
+      return a
     }
     case 'key': {
       if (!Number.isInteger(r.vk) || r.vk < 1 || r.vk > 255) throw new Error(`vk 는 1~255 정수여야 한다: ${r.vk}`)
