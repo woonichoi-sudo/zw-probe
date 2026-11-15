@@ -203,6 +203,26 @@ test('vclick — DPI 를 모르는 앱도 사람이 보는 화면 픽셀 그대�
   await quadrantCase('zwprobe-vc-unaware', ['--topmost'], 'screen')
 })
 
+test('vclick — 위에 겹친 투명 창(같은 프로세스)은 건너뛰고 그 아래 창이 받는다 (실제 클릭과 같다)', { skip: winSkip }, async () => {
+  // 2026-11-15 실앱: CLO 가 메뉴 막대 위에 투명 레이어드 팝업(200x60, 소유자 없음, 맨 위)을 띄워 둬서
+  // 가상 클릭 「파일」 이 그 팝업으로 갔다. 실제 마우스는 투명 창을 통과한다.
+  const title = 'zwprobe-vc-ghost'
+  const { child, pid, win } = await launchWinForms(title, '760,140', ['--topmost', '--dpi-aware', '--ghost'])
+  const dir = mkdtempSync(join(tmpdir(), 'zwprobe-ghost-'))
+  try {
+    await sleep(500)
+    assert.ok(listWindows({ pid, title: `${title}-ghost` }).length === 1, '사전 조건: 투명 창이 떠 있어야 한다')
+    const cx = Math.floor(win.width / 4), cy = Math.floor(win.height / 4)
+    const r = virtualInput({ op: 'click', x: cx, y: cy, pid, title })
+    assert.equal(r.target.root, win.hwnd, `투명 창(hwnd=${r.target.root})이 받았다 — 메인 창 hwnd=${win.hwnd} 이어야 한다`)
+    await sleep(150)
+    assert.equal(isBlack(capture({ pid, title }, dir, 'ghost'), cx, cy), true, '왼쪽 위 사분면이 검지 않다 — 클릭이 메인 창에 안 닿았다')
+  } finally {
+    child.kill()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 // ---- Qt 픽스처 (mouseLog) ------------------------------------------------------
 
 async function launchQt() {

@@ -139,15 +139,29 @@ internal static partial class Program
         return MakeLParam(sx, sy);
     }
 
-    /// 그 화면 점에서 **대상 프로세스의 맨 위 창**(EnumWindows 는 z 순서 위→아래)을 고르고, 그 안의 가장 깊은 자식을 찾는다.
-    /// 소유 다이얼로그가 메인 위에 떠 있으면 다이얼로그가 받는다 — 실제 클릭과 같다. 판정은 TS 가 한다.
+    /// 그 화면 점에서 받을 **대상 프로세스의 최상위 창**을 고르고, 그 안의 가장 깊은 자식을 찾는다. 판정은 TS 가 한다.
+    /// ① OS 의 실제 판정(WindowFromPoint)이 대상 프로세스의 창이면 그것 — 투명 레이어드 창·클릭 통과 창을 OS 가 건너뛴다.
+    ///    2026-11-15 CLO 실측: 메뉴 막대 위의 투명 팝업(200x60, WS_EX_LAYERED, 소유자 없음, 맨 위)을 ②만으로는 골랐다.
+    /// ② 다른 앱 창이 그 점을 덮고 있으면(가상 커서는 가려진 창에도 넣는다) 대상 프로세스 창을 z 순서로 — 클릭 통과
+    ///    (WS_EX_TRANSPARENT) 창은 건너뛴다. 소유 다이얼로그가 메인 위에 떠 있으면 다이얼로그가 받는다 — 실제 클릭과 같다.
     private static Hit HitAt(Win target, int sx, int sy)
     {
         IntPtr root = IntPtr.Zero;
-        foreach (var w in Enumerate())
+        IntPtr os = N.WindowFromPoint(new N.POINT { X = sx, Y = sy });
+        if (os != IntPtr.Zero)
         {
-            if (w.Pid != target.Pid || w.Minimized) continue;
-            if (sx >= w.Rect.Left && sx < w.Rect.Right && sy >= w.Rect.Top && sy < w.Rect.Bottom) { root = w.Hwnd; break; }
+            IntPtr osRoot = N.GetAncestor(os, N.GA_ROOT);
+            uint osPid;
+            N.GetWindowThreadProcessId(osRoot, out osPid);
+            if (osPid == target.Pid) root = osRoot;
+        }
+        if (root == IntPtr.Zero)
+        {
+            foreach (var w in Enumerate())
+            {
+                if (w.Pid != target.Pid || w.Minimized || (w.ExStyle & 0x20) != 0) continue;
+                if (sx >= w.Rect.Left && sx < w.Rect.Right && sy >= w.Rect.Top && sy < w.Rect.Bottom) { root = w.Hwnd; break; }
+            }
         }
         if (root == IntPtr.Zero) root = target.Hwnd;
 

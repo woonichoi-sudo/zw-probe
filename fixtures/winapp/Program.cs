@@ -84,9 +84,27 @@ internal sealed class FixtureForm : Form
         }
     }
 
+    /// --ghost: 왼쪽 위 사분면을 덮는 투명한(불투명도 0) 소유자 없는 맨 위 창. 보이지 않고 실제 클릭은 통과한다.
+    /// CLO 가 메뉴 막대 위에 띄워 두는 투명 레이어드 팝업과 같은 꼴 — 가상 클릭이 이것을 고르면 안 된다(2026-11-15 실앱).
+    public bool Ghost;
+
     protected override void OnShown(EventArgs e)
     {
         base.OnShown(e);
+        if (Ghost)
+        {
+            new Form
+            {
+                Text = Text + "-ghost",
+                FormBorderStyle = FormBorderStyle.None,
+                StartPosition = FormStartPosition.Manual,
+                Bounds = new Rectangle(Location, new Size(Width / 2, Height / 2)),
+                ShowInTaskbar = false,
+                TopMost = true,
+                Opacity = 0,
+                BackColor = Color.Yellow,
+            }.Show();
+        }
         if (!mWithDialog) return;
 
         // BeginInvoke 로 미뤄서 OnShown 이 끝난 뒤에 모달 루프에 들어간다.
@@ -136,6 +154,6 @@ internal static class Program
             }
         }
         Application.EnableVisualStyles();
-        Application.Run(new FixtureForm(withDialog, title, at) { TopMost = topmost });
+        Application.Run(new FixtureForm(withDialog, title, at) { TopMost = topmost, Ghost = Array.IndexOf(args, "--ghost") >= 0 });
     }
 }
