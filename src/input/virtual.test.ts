@@ -103,6 +103,37 @@ test('judgeVirtual — 다른 프로세스나 소유 관계 없는 창이 받으
   assert.equal(judgeVirtual(result({ root: 3 }), [win(1), win(3)]).onTarget, false)
 })
 
+// 2026-11-16 CLO 실측 (zwwin windows): 구독 안내 Notice(2558084, 1844x1334, 소유자 없음) 의 「확인」 자리를 눌렀는데
+// 위에 겹친 업데이트 소개 창(1377208, 1700x1260, 메인 2362052 소유) 이 받았고 Notice 는 닫히지 않았다 — 진짜 실패였다.
+// 11-15 시작 안내(배경+내용 창) 는 같은 구조인데 제대로 눌렸다. 구조로는 못 가르므로 "의심" 은 그대로, 이유에 받은 창을 밝힌다.
+const clo = (hwnd: number, owner: number, width: number, height: number, title = '다이얼로그'): WindowInfo => ({
+  ...win(hwnd, owner, 26896), title, width, height,
+})
+const cloBefore = [clo(2558084, 0, 1844, 1334), clo(1377208, 2362052, 1700, 1260), clo(2362052, 0, 1160, 1152, 'CLO Standalone OnlineAuth')]
+
+test('judgeVirtual — 같은 프로세스의 소유 관계 없는 창이 받으면 여전히 의심, 이유에 그 창을 밝힌다 (11-16 CLO)', () => {
+  const v = judgeVirtual(result({ hwnd: 1377210, root: 1377208, pid: 26896 }, clo(2558084, 0, 1844, 1334)), cloBefore)
+  assert.equal(v.onTarget, false)
+  assert.match(v.reason, /같은 프로세스/)
+  assert.match(v.reason, /1700x1260/)
+  assert.match(v.reason, /"다이얼로그"/)
+  assert.match(v.reason, /소유자 hwnd=2362052/)
+})
+
+test('judgeVirtual — 받은 창이 소유자 없는 창이면 "소유자 없음"', () => {
+  const before = [clo(1377208, 0, 1700, 1260), clo(2558084, 0, 1844, 1334)]
+  const v = judgeVirtual(result({ root: 1377208, pid: 26896 }, clo(2558084, 0, 1844, 1334)), before)
+  assert.equal(v.onTarget, false)
+  assert.match(v.reason, /소유자 없음/)
+})
+
+test('judgeVirtual — 받은 창이 누르기 전 목록에 없으면 그렇게 말한다', () => {
+  const v = judgeVirtual(result({ root: 555, pid: 26896 }, clo(2558084, 0, 1844, 1334)), cloBefore)
+  assert.equal(v.onTarget, false)
+  assert.match(v.reason, /같은 프로세스/)
+  assert.match(v.reason, /목록에 없/)
+})
+
 test('judgeVirtual — 받은 창이 없으면(hwnd 0) 틀리다', () => {
   assert.equal(judgeVirtual(result({ hwnd: 0 })).onTarget, false)
 })

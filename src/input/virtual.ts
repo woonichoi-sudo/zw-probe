@@ -143,8 +143,15 @@ export function judgeVirtual(r: VirtualResult, before: readonly WindowInfo[] = [
   if (isOwnedBy(t.root, r.window.hwnd, before)) {
     return { onTarget: true, reason: `대상이 소유한 창(hwnd=${t.root}, 다이얼로그)이 받았다.` }
   }
+  // 같은 프로세스의 소유 관계 없는 최상위 창 — 구조로는 정상(11-15 CLO 시작 안내, 배경+내용 창)과 실패(11-16 CLO Notice 위에
+  // 겹친 업데이트 소개 창이 가로챔)를 못 가른다. 그래서 "의심" 은 그대로 두고 받은 창을 밝혀 부르는 쪽이 가르게 한다.
+  const got = before.find((w) => w.hwnd === t.root)
+  const desc = got
+    ? `${got.width}x${got.height} "${got.title}" (${got.owner ? `소유자 hwnd=${got.owner}` : '소유자 없음'})`
+    : '누르기 전 창 목록에 없던 창'
   return {
     onTarget: false,
-    reason: `받은 창의 최상위가 hwnd=${t.root} 인데 대상은 hwnd=${r.window.hwnd} 이고 소유 관계도 없다.`,
+    reason: `같은 프로세스의 다른 최상위 창 hwnd=${t.root} ${desc} 이 받았다 — 대상 hwnd=${r.window.hwnd} 과 소유 관계 없음. ` +
+      '그 창이 대상 자리를 덮고 있다(대상이 가려졌을 수 있다).',
   }
 }
