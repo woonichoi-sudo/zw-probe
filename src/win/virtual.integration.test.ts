@@ -427,7 +427,7 @@ test('CLI — click --virtual 이 프레임을 알아서 띄우고 Qt 가 받는
 
 const WS_EX_TOPMOST = 0x8, WS_EX_TRANSPARENT = 0x20, WS_EX_TOOLWINDOW = 0x80, WS_EX_LAYERED = 0x80000, WS_EX_NOACTIVATE = 0x08000000
 
-async function withFrame<T>(filter: { pid: number; title: string }, opts: { exclude: boolean }, fn: (hwnd: number) => Promise<T>) {
+async function withFrame<T>(filter: { pid: number; title: string }, opts: { exclude: boolean }, fn: (hwnd: number, framePid: number) => Promise<T>) {
   const dir = mkdtempSync(join(tmpdir(), 'zwprobe-frame-'))
   const stop = join(dir, 'stop'), result = join(dir, 'result.json')
   const target = listWindows(filter)[0]!
@@ -441,7 +441,7 @@ async function withFrame<T>(filter: { pid: number; title: string }, opts: { excl
       await sleep(100)
     }
     assert.ok(frame, '프레임 창이 뜨지 않았다')
-    return await fn(frame.hwnd)
+    return await fn(frame.hwnd, framePid)
   } finally {
     writeFileSync(stop, '')
     await sleep(300)
@@ -455,12 +455,23 @@ test('frame — 클릭 통과·비활성·맨 위 창으로 대상 창을 덮고
   const { child, pid, win } = await launchWinForms(title, '760,140')
   try {
     const { seen } = await observe(() =>
-      withFrame({ pid, title }, { exclude: true }, async (hwnd) => {
+      withFrame({ pid, title }, { exclude: true }, async (hwnd, framePid) => {
         const f = listWindows({ title: `zwprobe-vcursor:${win.hwnd}` }).find((w) => w.hwnd === hwnd)!
-        for (const [bit, name] of [[WS_EX_TOPMOST, 'TOPMOST'], [WS_EX_TRANSPARENT, 'TRANSPARENT'], [WS_EX_TOOLWINDOW, 'TOOLWINDOW'], [WS_EX_LAYERED, 'LAYERED'], [WS_EX_NOACTIVATE, 'NOACTIVATE']] as const) {
-          assert.ok((f.exStyle & bit) !== 0, `프레임에 WS_EX_${name} 가 없다`)
+        // 프레임 프로세스의 창 전부(빛·선·알약·커서, 2026-11-17 Claude in Chrome 디자인)가 클릭 통과·비활성·맨 위여야 한다
+        const all = listWindows({ pid: framePid })
+        assert.ok(all.length >= 1, '프레임 프로세스 창이 없다')
+        for (const w of all) {
+          for (const [bit, name] of [[WS_EX_TOPMOST, 'TOPMOST'], [WS_EX_TRANSPARENT, 'TRANSPARENT'], [WS_EX_TOOLWINDOW, 'TOOLWINDOW'], [WS_EX_LAYERED, 'LAYERED'], [WS_EX_NOACTIVATE, 'NOACTIVATE']] as const) {
+            assert.ok((w.exStyle & bit) !== 0, `프레임 창 "${w.title}" 에 WS_EX_${name} 가 없다`)
+          }
         }
-        assert.ok(f.x <= win.x && f.y <= win.y && f.x + f.width >= win.x + win.width && f.y + f.height >= win.y + win.height, '프레임이 대상 창을 덮지 않는다')
+        // 테두리를 대상 창 안쪽 가장자리에 그린다 — 밖에 그리면 최대화된 창에서 모니터 밖으로 나가 안 보인다(2026-11-17).
+        // 픽스처는 모니터 안에 있으므로 프레임 = 대상 창 그대로다.
+        assert.deepEqual(
+          { x: f.x, y: f.y, width: f.width, height: f.height },
+          { x: win.x, y: win.y, width: win.width, height: win.height },
+          '프레임이 대상 창과 같은 자리·크기가 아니다',
+        )
       }),
     )
     assert.equal(seen.foregrounds.length, 1, `프레임을 띄우자 포그라운드가 바뀌었다: ${seen.foregrounds.join(' ')}`)
@@ -497,4 +508,186 @@ test('frame — 가상 커서는 사람에게만 보이고 캡처에는 안 찍�
     child.kill()
     rmSync(dir, { recursive: true, force: true })
   }
+})
+
+// ---- 프레임이 사람에게 보이는가 — Claude in Chrome 디자인 (2026-11-17) ----------------------
+//
+// Z-Weave 를 4K 보조 모니터에 최대화해 두자 테두리가 안 보였다 — 대상 창 **바깥** 3px 에 그려서
+// 위·오른쪽은 모니터 밖, 왼쪽은 옆 모니터, 아래는 작업 표시줄 위에 놓였다. 그 뒤 사용자가 "Claude in Chrome 과
+// 같은 디자인" 을 요청했다. 기준 값은 구현이 아니라 Claude in Chrome 확장(1.0.107)
+// `assets/agent-visual-indicator.js` 의 CSS 에서 왔다:
+//   - 색 B = rgb(198, 97, 63)
+//   - 테두리: 안쪽 3px 단색 선 + 안쪽 빛 inset 0 0 22px/44px/66px rgba(B, .8/.5/.25), 빛만 2초 주기로 0.6↔1 숨쉬기
+//   - 커서: 22px 칸(viewBox 18)에 끝이 왼쪽 위인 삼각 화살표, B 채움 + 흰 외곽선 1.5, 0.2초 미끄러짐
+//   - 클릭: 34px 원(3px B 테두리, B 30% 바탕)이 0.22→1 로 커지며 0.65초 동안 사라진다
+//   - 알약: 위 가운데에 붙은 B 바탕 + 흰 글자 (Stop 버튼은 뺐다 — 멈추는 장치가 따로 필요하다)
+// 정답은 화면 픽셀이다: 캡처 제외를 끈 프레임을 띄우고 대상 창을 화면 캡처한다. 배율의 기준 dpi 는
+// 구현이 아니라 PowerShell 의 GetDpiForWindow 로 따로 읽는다.
+
+const BORDER_BASE = 3 // 96 dpi 에서의 선 두께
+const GLOW_REACH_BASE = 66 // 96 dpi 에서 가장 넓은 빛의 번짐 반경 — 그 밖은 원래 색
+const ARROW_BASE_H = 19 // 96 dpi 에서의 화살표 높이 (채움 17.4 + 외곽선)
+
+const B = { r: 198, g: 97, b: 63 }
+const isOrange = (img: Bgra, x: number, y: number) => {
+  const p = pixelAt(img, x, y)
+  return Math.abs(p.r - B.r) < 12 && Math.abs(p.g - B.g) < 12 && Math.abs(p.b - B.b) < 12
+}
+const isWhite = (img: Bgra, x: number, y: number) => {
+  const p = pixelAt(img, x, y)
+  return p.r > 200 && p.g > 200 && p.b > 200
+}
+
+function dpiOf(hwnd: number): number {
+  const ps = `Add-Type -Namespace W -Name D -MemberDefinition '[DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr h);'; [W.D]::GetDpiForWindow([IntPtr]${hwnd})`
+  const r = spawnSync('powershell', ['-NoProfile', '-Command', ps], { encoding: 'utf8' })
+  const dpi = Number(r.stdout.trim())
+  assert.ok(dpi >= 96, `GetDpiForWindow 를 못 읽었다: ${r.stdout} ${r.stderr}`)
+  return dpi
+}
+
+/** 맨 위 픽스처 + 캡처 제외 끈 프레임으로 fn 을 돌린다 */
+async function withVisibleFrame(name: string, extra: string[], fn: (ctx: { pid: number; title: string; win: { width: number; height: number; hwnd: number }; dpi: number; shot: (n: string) => Bgra }) => Promise<void>) {
+  const title = `zwprobe-vc-${name}`
+  const { child, pid, win } = await launchWinForms(title, '760,140', ['--topmost', '--dpi-aware', ...extra])
+  const dir = mkdtempSync(join(tmpdir(), `zwprobe-f${name}-`))
+  try {
+    const dpi = dpiOf(win.hwnd)
+    await withFrame({ pid, title }, { exclude: false }, async () => {
+      await sleep(400)
+      await fn({ pid, title, win, dpi, shot: (n) => capture({ pid, title }, dir, n, 'screen') })
+    })
+  } finally {
+    child.kill()
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+
+for (const maximized of [false, true]) {
+  test(`frame — 테두리 선이 대상 창 네 변 안쪽에 보이고 두께가 배율을 따른다 (${maximized ? '최대화' : '보통'} 창)`, { skip: winSkip }, async () => {
+    await withVisibleFrame(`border-${maximized ? 'max' : 'win'}`, maximized ? ['--maximized'] : [], async ({ dpi, shot }) => {
+      const want = Math.round((BORDER_BASE * dpi) / 96)
+      const img = shot('border')
+      // 위 변은 가운데에 알약이 붙으므로 왼쪽 1/4 지점에서 본다
+      const qx = Math.floor(img.width / 4), my = Math.floor((img.height * 3) / 4)
+      const edges: Array<[string, number, number]> = [
+        ['위', qx, 0], ['아래', qx, img.height - 1], ['왼쪽', 0, my], ['오른쪽', img.width - 1, my],
+      ]
+      const missing = edges.filter(([, x, y]) => !isOrange(img, x, y)).map(([n, x, y]) => `${n}(${x},${y})=${JSON.stringify(pixelAt(img, x, y))}`)
+      assert.deepEqual(missing, [], `테두리가 안 보이는 변: ${missing.join(' ')}`)
+      let run = 0
+      while (run < img.width && isOrange(img, run, my)) run++
+      assert.equal(run, want, `왼쪽 테두리 두께 ${run}px — dpi ${dpi} 에서 ${want}px 여야 한다`)
+    })
+  })
+}
+
+test('frame — 선 안쪽으로 빛이 옅어지며 번지고, 번짐 반경 밖은 원래 색 그대로다', { skip: winSkip }, async () => {
+  await withVisibleFrame('glow', [], async ({ dpi, shot }) => {
+    const t = Math.round((BORDER_BASE * dpi) / 96), reach = Math.round((GLOW_REACH_BASE * dpi) / 96)
+    const img = shot('glow')
+    // 왼쪽 아래 사분면은 파랑(0,0,255) — 그 위에 B 가 섞인 만큼 빨강 채널이 오른다
+    const lines: Array<[string, (d: number) => [number, number]]> = [
+      ['왼쪽', (d) => [d, Math.floor((img.height * 3) / 4)]],
+      ['아래', (d) => [Math.floor(img.width / 4), img.height - 1 - d]],
+    ]
+    for (const [name, at] of lines) {
+      const reds = Array.from({ length: reach - t + 3 }, (_, i) => pixelAt(img, ...at(t + i)).r)
+      assert.ok(reds[0]! > 50, `${name}: 선 바로 안쪽에 빛이 없다 (빨강 ${reds[0]}) — ${reds.join(',')}`)
+      const mid = Math.floor((reach - t) / 3)
+      assert.ok(reds[mid]! > 3 && reds[mid]! < reds[0]!, `${name}: 번짐 중간이 옅어지는 중이 아니다 — ${reds.join(',')}`)
+      for (let i = 1; i < reds.length; i++) assert.ok(reds[i]! <= reds[i - 1]! + 2, `${name}: 안쪽으로 갈수록 옅어져야 하는데 ${i} 에서 진해졌다 — ${reds.join(',')}`)
+      const out = pixelAt(img, ...at(reach + 2))
+      assert.ok(out.r < 6 && out.g < 6 && out.b > 249, `${name}: 번짐 반경 밖(${reach + 2}px)이 원래 파랑이 아니다 ${JSON.stringify(out)}`)
+    }
+  })
+})
+
+test('frame — 빛이 숨쉰다 (진하기가 시간에 따라 바뀌고, 선은 그대로다)', { skip: winSkip }, async () => {
+  await withVisibleFrame('pulse', [], async ({ dpi, shot }) => {
+    const t = Math.round((BORDER_BASE * dpi) / 96)
+    const reds: number[] = [], lineOk: boolean[] = []
+    for (let i = 0; i < 4; i++) {
+      const img = shot(`pulse-${i}`)
+      const my = Math.floor((img.height * 3) / 4)
+      reds.push(pixelAt(img, t + 2, my).r)
+      lineOk.push(isOrange(img, 0, my))
+      await sleep(500)
+    }
+    assert.ok(Math.max(...reds) - Math.min(...reds) >= 15, `빛 세기가 시간에 따라 안 바뀐다 — ${reds.join(',')}`)
+    assert.deepEqual(lineOk, [true, true, true, true], '숨쉬는 동안 선 색이 흔들렸다')
+  })
+})
+
+test('frame — 가상 커서 화살표: 크기가 배율을 따르고, B 채움에 흰 외곽선이다', { skip: winSkip }, async () => {
+  await withVisibleFrame('arrow', [], async ({ pid, title, win, dpi, shot }) => {
+    const want = Math.round((ARROW_BASE_H * dpi) / 96)
+    // 좌상 사분면을 눌러 검게 만든 뒤 그 자리에 화살표가 있다 — 클릭 원이 사라진 뒤(1초) 잰다
+    const cx = Math.floor(win.width / 4), cy = Math.floor(win.height / 4)
+    virtualInput({ op: 'click', x: cx, y: cy, pid, title })
+    await sleep(1000)
+    const img = shot('arrow')
+    const rowHasArrow = (y: number) => {
+      for (let x = cx - 8; x < cx + 45; x++) if (!isBlack(img, x, y)) return true
+      return false
+    }
+    const rows: number[] = []
+    for (let y = cy - 8; y < Math.min(img.height / 2, cy + 60); y++) if (rowHasArrow(y)) rows.push(y)
+    const h = rows.length === 0 ? 0 : rows[rows.length - 1]! - rows[0]! + 1
+    let fill = 0, white = 0
+    for (let y = cy - 8; y < cy + 60; y++) for (let x = cx - 8; x < cx + 45; x++) {
+      if (isOrange(img, x, y)) fill++
+      if (isWhite(img, x, y)) white++
+    }
+    assert.ok(fill > 30, `화살표 채움이 B 색이 아니다 (그 색 픽셀 ${fill}개)`)
+    assert.ok(white > 10, `화살표에 흰 외곽선이 없다 (흰 픽셀 ${white}개)`)
+    assert.ok(Math.abs(h - want) <= 3, `화살표 높이 ${h}px — dpi ${dpi} 에서 ${want}px(±3) 여야 한다`)
+  })
+})
+
+test('frame — 가상 클릭하면 누른 자리에 원이 퍼졌다가 사라진다', { skip: winSkip }, async () => {
+  await withVisibleFrame('ring', [], async ({ pid, title, win, dpi, shot }) => {
+    // 먼저 한 번 눌러 좌상 사분면을 검게 만들고 원이 사라지길 기다린다 — 검은 바탕 위에서 원을 본다
+    const cx = Math.floor(win.width / 4), cy = Math.floor(win.height / 4)
+    virtualInput({ op: 'click', x: cx, y: cy, pid, title })
+    await sleep(1200)
+    // 화살표는 끝점의 오른쪽 아래에 있으므로 원은 왼쪽 위 1/4 고리에서 센다
+    const r = Math.round((22 * dpi) / 96)
+    const ringPixels = (img: Bgra) => {
+      let n = 0
+      for (let y = cy - r; y < cy - 2; y++) for (let x = cx - r; x < cx - 2; x++) if (pixelAt(img, x, y).r > 15) n++
+      return n
+    }
+    const before = ringPixels(shot('ring-before'))
+    assert.equal(before, 0, `누르기 전인데 원 자리에 픽셀 ${before}개`)
+    virtualInput({ op: 'click', x: cx, y: cy, pid, title })
+    const during = ringPixels(shot('ring-during'))
+    assert.ok(during > 10, `누른 직후 원이 안 보인다 (픽셀 ${during}개)`)
+    await sleep(1000)
+    const after = ringPixels(shot('ring-after'))
+    assert.equal(after, 0, `1초 뒤에도 원이 남았다 (픽셀 ${after}개)`)
+  })
+})
+
+test('frame — 위 가운데에 B 바탕·흰 글자 알약이 붙는다', { skip: winSkip }, async () => {
+  await withVisibleFrame('pill', [], async ({ dpi, shot }) => {
+    const s = dpi / 96
+    const img = shot('pill')
+    const mx = Math.floor(img.width / 2), y = Math.round(16 * s)
+    // 가운데에서 양쪽으로 B·흰색(글자)·그 사이 섞인 색이 이어지는 폭. 빛이 덮인 픽스처 빨강·초록은
+    // 초록 채널(빨강 위)이나 빨강 채널(초록 위)이 낮아 여기에 안 든다
+    const inPill = (x: number) => {
+      const p = pixelAt(img, x, y)
+      return p.r >= 185 && p.g >= 85 && p.b >= 50
+    }
+    assert.ok(inPill(mx) || inPill(mx - 1), `위 가운데 (${mx},${y}) 가 알약이 아니다 ${JSON.stringify(pixelAt(img, mx, y))}`)
+    let l = mx, r = mx
+    while (l > 0 && inPill(l - 1)) l--
+    while (r < img.width - 1 && inPill(r + 1)) r++
+    const w = r - l + 1
+    assert.ok(w >= 80 * s && w <= 320 * s, `알약 폭 ${w}px — ${Math.round(80 * s)}~${Math.round(320 * s)}px 여야 한다`)
+    let white = 0
+    for (let yy = 0; yy < Math.round(34 * s); yy++) for (let x = l; x <= r; x++) if (isWhite(img, x, yy)) white++
+    assert.ok(white > 20, `알약에 흰 글자가 없다 (흰 픽셀 ${white}개)`)
+  })
 })

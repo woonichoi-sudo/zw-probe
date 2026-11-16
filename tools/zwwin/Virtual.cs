@@ -55,6 +55,28 @@ internal static class V
     [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr hwnd);
     [DllImport("user32.dll")] public static extern IntPtr MonitorFromPoint(N.POINT pt, uint flags);
     [DllImport("shcore.dll")] public static extern int GetDpiForMonitor(IntPtr monitor, int type, out uint dpiX, out uint dpiY);
+    [DllImport("user32.dll")] public static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);
+    [DllImport("user32.dll")] public static extern bool GetMonitorInfo(IntPtr monitor, ref MONITORINFO info);
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MONITORINFO { public int cbSize; public N.RECT rcMonitor; public N.RECT rcWork; public uint dwFlags; }
+
+    // 프레임 — 픽셀마다 투명도가 있는 레이어드 창 (테두리 안쪽 옅어지는 띠, 2026-11-17)
+    [DllImport("user32.dll")] public static extern bool UpdateLayeredWindow(IntPtr hwnd, IntPtr hdcDst, ref N.POINT pptDst, ref SIZE psize, IntPtr hdcSrc, ref N.POINT pptSrc, uint crKey, ref BLENDFUNCTION pblend, uint dwFlags);
+    // 그림은 그대로 두고 창 전체 투명도만 바꾼다 (빛 숨쉬기) — hdcSrc 등을 NULL 로
+    [DllImport("user32.dll", EntryPoint = "UpdateLayeredWindow")] public static extern bool UpdateLayeredWindowAlpha(IntPtr hwnd, IntPtr hdcDst, IntPtr pptDst, IntPtr psize, IntPtr hdcSrc, IntPtr pptSrc, uint crKey, ref BLENDFUNCTION pblend, uint dwFlags);
+    [DllImport("user32.dll")] public static extern IntPtr GetDC(IntPtr hwnd);
+    [DllImport("user32.dll")] public static extern int ReleaseDC(IntPtr hwnd, IntPtr hdc);
+    [DllImport("gdi32.dll")] public static extern IntPtr CreateCompatibleDC(IntPtr hdc);
+    [DllImport("gdi32.dll")] public static extern bool DeleteDC(IntPtr hdc);
+    [DllImport("gdi32.dll")] public static extern IntPtr SelectObject(IntPtr hdc, IntPtr obj);
+    [DllImport("gdi32.dll")] public static extern bool DeleteObject(IntPtr obj);
+
+    [StructLayout(LayoutKind.Sequential)]
+    public struct SIZE { public int cx, cy; }
+
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    public struct BLENDFUNCTION { public byte BlendOp, BlendFlags, SourceConstantAlpha, AlphaFormat; }
 
     [StructLayout(LayoutKind.Sequential)]
     public struct GUITHREADINFO
@@ -69,6 +91,7 @@ internal static class V
     public const uint WM_MOUSEMOVE = 0x200, WM_MOUSEWHEEL = 0x20A, WM_KEYDOWN = 0x100, WM_KEYUP = 0x101, WM_CHAR = 0x102;
     public const uint WM_SYSKEYDOWN = 0x104, WM_SYSKEYUP = 0x105;
     public const uint WM_APP_VCURSOR = 0x8000 + 0x5A1; // 프레임에 커서 위치를 알린다 (wParam=x, lParam=y, 화면 물리 픽셀)
+    public const uint WM_APP_VCLICK = 0x8000 + 0x5A2;  // 프레임에 눌렀다고 알린다 — 그 자리에 클릭 원 (같은 좌표계, 2026-11-17)
     public const int MK_LBUTTON = 0x1, MK_RBUTTON = 0x2, MK_SHIFT = 0x4, MK_CONTROL = 0x8, MK_MBUTTON = 0x10;
     // 버튼 없는 WM_MOUSEMOVE 에 싣는 정의되지 않은 비트. Qt 는 wParam==0 인 이동을 "마우스가 창 위에 없으면" 버린다
     // (qwindowsmousehandler — 실제 커서가 딴 데 있으니 늘 버려진다, 2026-11-15 Qt 픽스처 실측). 0 이 아니게만 만들고
@@ -280,6 +303,20 @@ internal static partial class Program
         return V.PostMessage(f, V.WM_APP_VCURSOR, new IntPtr(sx), new IntPtr(sy));
     }
 
+    /// 프레임 커서가 새 자리로 미끄러지는 시간(FrameForm.GlideMs) 만큼 기다린다 — 사람이 보는 커서가 도착한 뒤 누른다
+    /// (Claude in Chrome 도 커서 이동이 끝난 뒤 누른다). 프레임이 없으면 기다리지 않는다.
+    private static void WaitGlide(bool frame)
+    {
+        if (frame) System.Threading.Thread.Sleep(FrameForm.GlideMs + 20);
+    }
+
+    /// 프레임에 눌렀다고 알린다 — 그 자리에 클릭 원이 퍼진다
+    private static void NotifyClick(Win w, int sx, int sy)
+    {
+        IntPtr f = V.FindWindowW(null, "zwprobe-vcursor:" + w.Hwnd.ToInt64());
+        if (f != IntPtr.Zero) V.PostMessage(f, V.WM_APP_VCLICK, new IntPtr(sx), new IntPtr(sy));
+    }
+
     private static void ButtonMsgs(string button, out uint down, out uint up, out uint dbl, out int mk)
     {
         switch (button)
@@ -349,11 +386,13 @@ internal static partial class Program
         bool hasDblClk = (V.GetClassLongPtr(h.Hwnd, V.GCL_STYLE).ToInt64() & V.CS_DBLCLKS) != 0;
 
         c.Frame = NotifyFrame(c.W, sx, sy);
+        WaitGlide(c.Frame);
         bool applied;
         using (var ks = new KeyState(c.W, c.Ctrl, c.Shift, c.Alt, false))
         {
             applied = ks.Applied;
             PostMouse(h, V.WM_MOUSEMOVE, mods | V.MK_VIRTUAL_HOVER);
+            if (c.Frame) NotifyClick(c.W, sx, sy);
             PostMouse(h, down, mk | mods);
             if (hold > 0) { ks.Drain(); System.Threading.Thread.Sleep(hold); }
             PostMouse(h, up, mods);
@@ -395,7 +434,9 @@ internal static partial class Program
         {
             applied = ks.Applied;
             c.Frame = NotifyFrame(c.W, sx, sy);
+            WaitGlide(c.Frame);
             PostMouse(h, V.WM_MOUSEMOVE, mods | V.MK_VIRTUAL_HOVER);
+            if (c.Frame) NotifyClick(c.W, sx, sy);
             PostMouse(h, down, mk | mods);
             ks.Drain();
             Hit last = h;
@@ -583,16 +624,143 @@ internal static partial class Program
     }
 }
 
-/// 클릭이 통과하고, 활성화되지 않고, 캡처에 안 찍히는 맨 위 창. 대상 창보다 테두리 두께만큼 크게 덮는다.
+// ---- 가상 커서 프레임 그림 — Claude in Chrome 디자인 (2026-11-17) ---------------------------
+//
+// 사용자 요청으로 Claude in Chrome 확장(1.0.107 `assets/agent-visual-indicator.js`)의 CSS 값을 옮겼다.
+//   빛   : inset 0 0 22px/44px/66px rgba(B, .8/.5/.25), 2초 주기 0.6↔1 숨쉬기 (claude-pulse)
+//   선   : inset 3px 단색 B — 숨쉬지 않는다 (알약과 한 몸으로 보이게)
+//   알약 : 위 가운데에 붙은 B 바탕 + 흰 Claude 로고·글자 (Stop 버튼은 뺐다 — 멈추는 장치가 따로 필요)
+//   커서 : 22px 칸(viewBox 18)의 삼각 화살표 B 채움 + 흰 외곽선 1.5, 그림자 0 1px 2px rgba(0,0,0,.28), 0.2초 미끄러짐
+//   클릭 : 34px 원 3px B 테두리 + B 30% 바탕, 0.22→1 로 커지며 0.65초 동안 사라진다
+// B = rgb(198, 97, 63). 길이는 모두 96 dpi 기준이고 대상 모니터 배율을 곱한다.
+//
+// 창은 셋이다 — 모두 클릭 통과·비활성·맨 위·캡처 제외. 숨쉬기는 그림을 다시 만들지 않고 창 투명도만 바꾸므로
+// (UpdateLayeredWindow 의 SourceConstantAlpha) 빛 창을 따로 둔다. 커서는 4K 그림을 매번 올리지 않게 작은 창으로 뗐다.
+//   FrameForm  — 빛. 제목 "zwprobe-vcursor:<대상 hwnd>" (NotifyFrame·zwprobe frame 이 이 제목으로 찾는다). 나머지 둘을 소유한다
+//   EdgeForm   — 선 + 알약
+//   CursorForm — 화살표 + 클릭 원
+
+internal static class Layered
+{
+    public static readonly Color B = Color.FromArgb(198, 97, 63);
+
+    /// 픽셀마다 투명도가 있는 그림을 창에 올린다 (GetHbitmap 이 미리 곱한 알파로 바꿔 준다)
+    public static void Push(Form f, Bitmap bmp, Point at, byte alpha)
+    {
+        IntPtr screen = V.GetDC(IntPtr.Zero), mem = V.CreateCompatibleDC(screen);
+        IntPtr hbmp = bmp.GetHbitmap(Color.FromArgb(0)), old = V.SelectObject(mem, hbmp);
+        try
+        {
+            var size = new V.SIZE { cx = bmp.Width, cy = bmp.Height };
+            var src = new N.POINT { X = 0, Y = 0 };
+            var dst = new N.POINT { X = at.X, Y = at.Y };
+            var blend = Blend(alpha);
+            V.UpdateLayeredWindow(f.Handle, screen, ref dst, ref size, mem, ref src, 0, ref blend, 2 /* ULW_ALPHA */);
+        }
+        finally
+        {
+            V.SelectObject(mem, old);
+            V.DeleteObject(hbmp);
+            V.DeleteDC(mem);
+            V.ReleaseDC(IntPtr.Zero, screen);
+        }
+    }
+
+    /// 그림은 그대로 두고 창 전체 투명도만 바꾼다
+    public static void Alpha(Form f, byte alpha)
+    {
+        var blend = Blend(alpha);
+        V.UpdateLayeredWindowAlpha(f.Handle, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, 0, ref blend, 2);
+    }
+
+    private static V.BLENDFUNCTION Blend(byte alpha)
+    {
+        return new V.BLENDFUNCTION { BlendOp = 0, BlendFlags = 0, SourceConstantAlpha = alpha, AlphaFormat = 1 /* AC_SRC_ALPHA */ };
+    }
+
+    /// 클릭 통과·비활성·맨 위·도구 창·레이어드
+    public const int ExStyle = 0x8 | 0x20 | 0x80 | 0x80000 | 0x08000000;
+
+    /// CSS ease-out = cubic-bezier(0, 0, 0.58, 1). t 에 대한 y 를 이분법으로 푼다
+    public static double EaseOut(double t)
+    {
+        if (t <= 0) return 0;
+        if (t >= 1) return 1;
+        double lo = 0, hi = 1, u = t;
+        for (int i = 0; i < 24; i++)
+        {
+            u = (lo + hi) / 2;
+            double x = 3 * (1 - u) * u * u * 0.58 + u * u * u; // x(u), P1.x=0, P2.x=0.58
+            if (x < t) lo = u; else hi = u;
+        }
+        return 3 * (1 - u) * (1 - u) * u * 0 + 3 * (1 - u) * u * u * 1 + u * u * u; // y(u), P1.y=0, P2.y=1
+    }
+
+    /// 표준 정규 누적분포 (빛 번짐 = 가우스 흐림)
+    public static double Phi(double z)
+    {
+        // Abramowitz-Stegun 7.1.26
+        double t = 1 / (1 + 0.3275911 * Math.Abs(z) / Math.Sqrt(2));
+        double y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.Exp(-z * z / 2);
+        return z >= 0 ? (1 + y) / 2 : (1 - y) / 2;
+    }
+
+    /// Claude in Chrome 이 알약에 쓰는 Claude 로고 (16x16 SVG 경로, 절대 M L H V C Z 만 쓴다)
+    public const string LogoPath = "M3.13946 10.6399L6.28757 8.87462L6.37405 8.73821L6.28757 8.6339H6.13189L5.60432 8.6018L3.80541 8.55366L2.24865 8.48947L0.735135 8.40923H0.492973L0.354595 8.32899L0.181622 8.1685L0.0345946 8.01605L0 7.85557L0.0345946 7.62287L0.138378 7.44634L0.224865 7.40622H0.354595L0.812973 7.44634L1.82486 7.51856L3.34703 7.62287L4.44541 7.68706L6.08 7.85557H6.33946L6.37405 7.75125L6.28757 7.68706L6.21838 7.62287L4.64432 6.55567L2.94054 5.4323L2.04973 4.78235L1.57405 4.45336L1.33189 4.14845L1.22811 3.92377L1.17622 3.69107L1.22811 3.47442L1.33189 3.28185L1.46162 3.13741L1.66054 2.99298H1.87676L2.24865 3.0331L2.39568 3.07322L2.99243 3.53059L4.26378 4.51755L5.92432 5.73721L6.16649 5.93781H6.27892V5.82548L6.16649 5.64092L5.26703 4.01204L4.30703 2.35105L3.87459 1.66098L3.76216 1.25176C3.7391 1.16082 3.69297 0.977332 3.69297 0.970913V0.762287L3.77946 0.505517L3.93513 0.240722L4.18595 0.0882648L4.4627 0H4.67892L4.83459 0.0240722L5.12865 0.0882648L5.4054 0.328987L5.82054 1.27583L6.48649 2.76028L7.52432 4.78235L7.82703 5.38415L7.99135 5.93781L8.05189 6.10632H8.15567V6.01003L8.24216 4.87061L8.39784 3.47442L8.55351 1.67703L8.6054 1.17151L8.85622 0.561685L8.9773 0.417252L9.21946 0.232698H9.35784L9.74703 0.417252L9.97189 0.665998L10.067 0.874624L10.0238 1.17151L9.83351 2.40722L9.46162 4.34102L9.21946 5.64092H9.35784L9.52216 5.47242L10.1795 4.60582L11.2778 3.22568L11.7622 2.68004L12.333 2.07823L12.6962 1.78937L13.0162 1.67703L13.3881 1.78937L13.7168 2.06219L13.8897 2.54363V2.76028L13.6649 3.32197L12.9557 4.22066L12.3676 4.98295L12.0043 5.56871L11.0011 7.02106V7.08526H11.1741L13.0768 6.67603L14.1059 6.49147L15.3341 6.28285L15.5762 6.34704L15.8876 6.53962L15.9481 6.80441L15.8876 7.12538L15.7319 7.34203L14.4173 7.66299L12.8778 7.97593L10.5854 8.51559C10.5705 8.51909 10.56 8.53236 10.56 8.54764C10.56 8.56468 10.573 8.57891 10.59 8.58044L11.6238 8.67402L12.0649 8.69809H13.1459L15.1611 8.85055L15.6886 9.19559L15.9481 9.39619L16 9.62086L15.9481 9.94985L15.8443 10.1023L15.4119 10.3029L15.1351 10.3591L14.0454 10.1023L11.4941 9.49248L10.6205 9.27583H10.4995V9.34804L11.2259 10.0622L12.5665 11.2658L14.2357 12.8225L14.3222 13.0953V13.2076L14.1059 13.5125L13.9243 13.5206L13.8811 13.4804L12.4108 12.3731L12.2984 12.325L11.84 11.8756L10.56 10.7924H10.4735V10.9047L10.7676 11.338L12.333 13.6891L12.4108 14.4112L12.2984 14.6439L11.8919 14.7884L11.667 14.7563L11.4508 14.7081L11.2605 14.5396L10.5254 13.4162L9.5827 11.9719L8.82162 10.672H8.79342C8.76039 10.672 8.73278 10.6972 8.7297 10.73L8.27676 15.5667L8.06919 15.8154L7.6454 16H7.58486L7.17838 15.6951L6.96216 15.1976L7.17838 14.2106L7.43784 12.9268L7.6454 11.9077L7.83567 10.6399L7.95187 10.2164C7.9548 10.2057 7.95069 10.1944 7.94161 10.1881C7.91157 10.1672 7.87034 10.1741 7.84878 10.2037L6.89297 11.5145L5.44 13.4804L4.28973 14.7081L4.01297 14.8205H3.80541L3.5373 14.5717V14.4514L3.58054 14.1304L3.84865 13.7372L5.44 11.7151L6.4 10.4554L7.01872 9.73222C7.04511 9.70139 7.04245 9.65523 7.0127 9.62763C7.00333 9.61894 6.98925 9.61773 6.97854 9.62471L2.75027 12.3811L1.99784 12.4774L1.66919 12.1725L1.71243 11.675L1.86811 11.5145L3.13946 10.6399Z";
+
+    /// 절대 좌표 M L H V C Z 만 읽는 SVG 경로 → GraphicsPath (scale 배, (ox, oy) 만큼 옮김)
+    public static GraphicsPath ParsePath(string d, float scale, float ox, float oy)
+    {
+        var path = new GraphicsPath(FillMode.Winding);
+        var tokens = System.Text.RegularExpressions.Regex.Matches(d, @"[MLHVCZ]|-?\d*\.?\d+(?:[eE]-?\d+)?");
+        int i = 0;
+        char cmd = 'M';
+        float cx = 0, cy = 0;
+        Func<float> num = () => float.Parse(tokens[i++].Value, System.Globalization.CultureInfo.InvariantCulture);
+        Func<float, float> X = (v) => ox + v * scale;
+        Func<float, float> Y = (v) => oy + v * scale;
+        while (i < tokens.Count)
+        {
+            string tk = tokens[i].Value;
+            if (char.IsLetter(tk[0])) { cmd = tk[0]; i++; if (cmd == 'Z') { path.CloseFigure(); continue; } }
+            switch (cmd)
+            {
+                case 'M': cx = num(); cy = num(); path.StartFigure(); cmd = 'L'; break;
+                case 'L': { float nx = num(), ny = num(); path.AddLine(X(cx), Y(cy), X(nx), Y(ny)); cx = nx; cy = ny; break; }
+                case 'H': { float nx = num(); path.AddLine(X(cx), Y(cy), X(nx), Y(cy)); cx = nx; break; }
+                case 'V': { float ny = num(); path.AddLine(X(cx), Y(cy), X(cx), Y(ny)); cy = ny; break; }
+                case 'C':
+                {
+                    float x1 = num(), y1 = num(), x2 = num(), y2 = num(), x3 = num(), y3 = num();
+                    path.AddBezier(X(cx), Y(cy), X(x1), Y(y1), X(x2), Y(y2), X(x3), Y(y3));
+                    cx = x3; cy = y3;
+                    break;
+                }
+                default: i++; break;
+            }
+        }
+        return path;
+    }
+}
+
+/// 빛 창 — 대상 창 중 그 모니터 안에 든 부분을 덮는다 (2026-11-17 전에는 3px 크게 덮고 바깥에 그려서
+/// 최대화된 창이면 모니터 밖으로 나가 안 보였다). 선·알약 창과 커서 창을 소유하고, 50ms 마다 대상 창을 따라간다.
 internal sealed class FrameForm : Form
 {
-    private const int Border = 3;
-    private static readonly Color Key = Color.FromArgb(255, 0, 255);
+    public const int GlideMs = 200;
+    private static readonly double[] GlowBlur = { 22, 44, 66 };
+    private static readonly double[] GlowAlpha = { 0.8, 0.5, 0.25 };
+    private const double PulseMs = 2000;
     private readonly Win mTarget;
     private readonly string mStop;
     private readonly bool mExclude;
-    private readonly Timer mTimer = new Timer { Interval = 50 };
-    private Point? mCursor; // 화면 물리 픽셀
+    private readonly Timer mTimer = new Timer { Interval = 33 };
+    private readonly System.Diagnostics.Stopwatch mClock = System.Diagnostics.Stopwatch.StartNew();
+    private readonly EdgeForm mEdge;
+    private readonly CursorForm mCursor;
+    private float mScale = 1f;
+    private Rectangle mRect = Rectangle.Empty;
+    private bool mDirty = true;
     public string EndReason = "stop";
 
     public FrameForm(Win target, string stop, bool exclude)
@@ -603,11 +771,11 @@ internal sealed class FrameForm : Form
         ShowInTaskbar = false;
         StartPosition = FormStartPosition.Manual;
         AutoScaleMode = AutoScaleMode.None;
-        BackColor = Key;
-        TransparencyKey = Key;
         TopMost = true;
-        DoubleBuffered = true;
-        Follow();
+        mEdge = new EdgeForm(target.Hwnd, exclude);
+        mCursor = new CursorForm(target.Hwnd, exclude);
+        Measure();
+        if (!mRect.IsEmpty) Bounds = mRect;
         mTimer.Tick += (s, e) => Tick();
     }
 
@@ -615,28 +783,54 @@ internal sealed class FrameForm : Form
 
     protected override CreateParams CreateParams
     {
-        get
-        {
-            var cp = base.CreateParams;
-            // TOPMOST | TRANSPARENT | TOOLWINDOW | LAYERED | NOACTIVATE
-            cp.ExStyle |= 0x8 | 0x20 | 0x80 | 0x80000 | 0x08000000;
-            return cp;
-        }
+        get { var cp = base.CreateParams; cp.ExStyle |= Layered.ExStyle; return cp; }
     }
 
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
         V.SetWindowDisplayAffinity(Handle, mExclude ? V.WDA_EXCLUDEFROMCAPTURE : V.WDA_NONE);
+    }
+
+    protected override void OnShown(EventArgs e)
+    {
+        base.OnShown(e);
+        mEdge.Show(this);
+        mCursor.Show(this);
+        mCursor.Visible = false;
+        Render();
         mTimer.Start();
     }
 
-    private void Follow()
+    protected override void OnPaintBackground(PaintEventArgs e) { }
+    protected override void OnPaint(PaintEventArgs e) { }
+
+    /// 대상 창 ∩ 그 모니터, 모니터 배율
+    private void Measure()
     {
         N.RECT r;
         if (!Program.RectOf(mTarget.Hwnd, out r)) return;
-        var b = new Rectangle(r.Left - Border, r.Top - Border, r.Right - r.Left + 2 * Border, r.Bottom - r.Top + 2 * Border);
-        if (Bounds != b) Bounds = b;
+        var b = Rectangle.FromLTRB(r.Left, r.Top, r.Right, r.Bottom);
+        IntPtr mon = V.MonitorFromWindow(mTarget.Hwnd, 2 /* MONITOR_DEFAULTTONEAREST */);
+        var mi = new V.MONITORINFO { cbSize = Marshal.SizeOf(typeof(V.MONITORINFO)) };
+        if (mon != IntPtr.Zero && V.GetMonitorInfo(mon, ref mi))
+        {
+            var m = Rectangle.FromLTRB(mi.rcMonitor.Left, mi.rcMonitor.Top, mi.rcMonitor.Right, mi.rcMonitor.Bottom);
+            var clipped = Rectangle.Intersect(b, m);
+            if (clipped.Width > 0 && clipped.Height > 0) b = clipped;
+            uint dx, dy;
+            try
+            {
+                if (V.GetDpiForMonitor(mon, 0 /* MDT_EFFECTIVE_DPI */, out dx, out dy) == 0 && dx > 0 && dx / 96f != mScale)
+                {
+                    mScale = dx / 96f;
+                    mDirty = true;
+                }
+            }
+            catch (EntryPointNotFoundException) { }
+            catch (DllNotFoundException) { }
+        }
+        if (b != mRect) { mRect = b; mDirty = true; }
     }
 
     private void Tick()
@@ -644,40 +838,318 @@ internal sealed class FrameForm : Form
         if (File.Exists(mStop)) { EndReason = "stop"; Close(); return; }
         if (!V.IsWindow(mTarget.Hwnd)) { EndReason = "target-gone"; Close(); return; }
         bool min = N.IsIconic(mTarget.Hwnd);
-        if (min == Visible) Visible = !min;
-        Follow();
-        V.SetWindowPos(Handle, V.HWND_TOPMOST, 0, 0, 0, 0, 0x1 | 0x2 | V.SWP_NOACTIVATE); // 크기·위치 유지, 맨 위로
+        if (min == Visible)
+        {
+            Visible = !min; mEdge.Visible = !min;
+            if (min) mCursor.Visible = false;
+            mDirty = true;
+        }
+        if (min) return;
+        Measure();
+        if (mDirty) Render();
+        // 숨쉬기 — 0.6 ↔ 1, 2초 주기 (CSS ease-in-out 에 가까운 코사인)
+        double ph = (mClock.Elapsed.TotalMilliseconds % PulseMs) / PulseMs;
+        double o = 0.8 - 0.2 * Math.Cos(2 * Math.PI * ph);
+        Layered.Alpha(this, (byte)Math.Round(255 * o));
+        // 빛 < 선·알약 < 커서 순으로 맨 위에 둔다
+        const uint keep = 0x1 | 0x2 | V.SWP_NOACTIVATE;
+        V.SetWindowPos(Handle, V.HWND_TOPMOST, 0, 0, 0, 0, keep);
+        V.SetWindowPos(mEdge.Handle, V.HWND_TOPMOST, 0, 0, 0, 0, keep);
+        V.SetWindowPos(mCursor.Handle, V.HWND_TOPMOST, 0, 0, 0, 0, keep);
+    }
+
+    private void Render()
+    {
+        if (mRect.Width <= 0 || mRect.Height <= 0) return;
+        if (Bounds != mRect) Bounds = mRect;
+        using (var bmp = BuildGlow(mRect.Width, mRect.Height, mScale)) Layered.Push(this, bmp, mRect.Location, 255);
+        mEdge.Render(mRect, mScale);
+        mCursor.SetScale(mScale);
+        mDirty = false;
+    }
+
+    /// inset box-shadow 세 겹. 사각형 안쪽 그림자 = 바깥(사각형의 여집합)을 가우스로 흐린 것이라
+    /// 덮임 = 1 - Px·Py (Px = 가로로 사각형 안에 남을 확률). σ = 흐림 반경 / 2 (CSS). 겹은 "위에 덮기" 로 합친다.
+    private static Bitmap BuildGlow(int w, int h, float scale)
+    {
+        int n = GlowBlur.Length;
+        var px = new double[n][]; var py = new double[n][];
+        for (int k = 0; k < n; k++)
+        {
+            double sigma = GlowBlur[k] * scale / 2;
+            px[k] = Inside(w, sigma); py[k] = Inside(h, sigma);
+        }
+        var bmp = new Bitmap(w, h, System.Drawing.Imaging.PixelFormat.Format32bppArgb);
+        var data = bmp.LockBits(new Rectangle(0, 0, w, h), System.Drawing.Imaging.ImageLockMode.WriteOnly, bmp.PixelFormat);
+        try
+        {
+            int rgb = (Layered.B.R << 16) | (Layered.B.G << 8) | Layered.B.B;
+            var row = new int[w];
+            for (int y = 0; y < h; y++)
+            {
+                for (int x = 0; x < w; x++)
+                {
+                    double keep = 1;
+                    for (int k = 0; k < n; k++) keep *= 1 - GlowAlpha[k] * (1 - px[k][x] * py[k][y]);
+                    int a = (int)Math.Round(255 * (1 - keep));
+                    row[x] = a <= 0 ? 0 : (a << 24) | rgb;
+                }
+                Marshal.Copy(row, 0, data.Scan0 + y * data.Stride, w);
+            }
+        }
+        finally { bmp.UnlockBits(data); }
+        return bmp;
+    }
+
+    /// 길이 len 인 구간에서 픽셀 가운데가 가우스 흐림 뒤에도 구간 안에 남을 확률
+    private static double[] Inside(int len, double sigma)
+    {
+        var v = new double[len];
+        for (int i = 0; i < len; i++)
+        {
+            double a = i + 0.5, b = len - i - 0.5;
+            v[i] = Math.Max(0, Layered.Phi(a / sigma) + Layered.Phi(b / sigma) - 1);
+        }
+        return v;
     }
 
     protected override void WndProc(ref Message m)
     {
         if (m.Msg == (int)V.WM_APP_VCURSOR)
         {
-            mCursor = new Point(m.WParam.ToInt32(), m.LParam.ToInt32());
-            Invalidate();
+            if (Visible) mCursor.MoveTo(new Point(m.WParam.ToInt32(), m.LParam.ToInt32()));
+            return;
+        }
+        if (m.Msg == (int)V.WM_APP_VCLICK)
+        {
+            if (Visible) mCursor.Ring(new Point(m.WParam.ToInt32(), m.LParam.ToInt32()));
             return;
         }
         base.WndProc(ref m);
     }
+}
 
-    protected override void OnPaint(PaintEventArgs e)
+/// 선 + 알약 — 숨쉬지 않는다
+internal sealed class EdgeForm : Form
+{
+    private const int BaseLine = 3;
+    private const string Words = "Claude 작업 중";
+    private readonly bool mExclude;
+
+    public EdgeForm(IntPtr target, bool exclude)
     {
-        var g = e.Graphics;
-        using (var pen = new Pen(Color.FromArgb(255, 170, 0), Border))
+        mExclude = exclude;
+        Text = "zwprobe-vcursor-edge:" + target.ToInt64();
+        FormBorderStyle = FormBorderStyle.None;
+        ShowInTaskbar = false;
+        StartPosition = FormStartPosition.Manual;
+        AutoScaleMode = AutoScaleMode.None;
+        TopMost = true;
+    }
+
+    protected override bool ShowWithoutActivation { get { return true; } }
+    protected override CreateParams CreateParams
+    {
+        get { var cp = base.CreateParams; cp.ExStyle |= Layered.ExStyle; return cp; }
+    }
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        V.SetWindowDisplayAffinity(Handle, mExclude ? V.WDA_EXCLUDEFROMCAPTURE : V.WDA_NONE);
+    }
+    protected override void OnPaintBackground(PaintEventArgs e) { }
+    protected override void OnPaint(PaintEventArgs e) { }
+
+    public void Render(Rectangle r, float s)
+    {
+        if (Bounds != r) Bounds = r;
+        using (var bmp = new Bitmap(r.Width, r.Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
         {
-            pen.Alignment = PenAlignment.Inset;
-            g.DrawRectangle(pen, 0, 0, Width - 1, Height - 1);
+            using (var g = Graphics.FromImage(bmp))
+            {
+                g.Clear(Color.Transparent);
+                int t = Math.Max(1, (int)Math.Round(BaseLine * s, MidpointRounding.AwayFromZero));
+                t = Math.Min(t, Math.Min(r.Width, r.Height) / 2);
+                using (var band = new SolidBrush(Layered.B))
+                {
+                    g.FillRectangle(band, 0, 0, r.Width, t);
+                    g.FillRectangle(band, 0, r.Height - t, r.Width, t);
+                    g.FillRectangle(band, 0, 0, t, r.Height);
+                    g.FillRectangle(band, r.Width - t, 0, t, r.Height);
+                }
+                DrawPill(g, r.Width, s);
+            }
+            Layered.Push(this, bmp, r.Location, 255);
         }
-        if (!mCursor.HasValue) return;
-        int x = mCursor.Value.X - Left, y = mCursor.Value.Y - Top;
-        // 화살표 커서 — 끝점이 누른 자리다. 사람 커서와 헷갈리지 않게 주황 채움 + 검은 테두리
-        var pts = new[]
+    }
+
+    /// 위 가운데에 붙은 알약: 아래 두 모서리만 둥글다(14px), 왼쪽부터 로고 16px · 글자 600 14px
+    private static void DrawPill(Graphics g, int width, float s)
+    {
+        g.SmoothingMode = SmoothingMode.AntiAlias;
+        g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+        using (var font = new Font("Malgun Gothic", 14 * s, FontStyle.Bold, GraphicsUnit.Pixel))
         {
-            new Point(x, y), new Point(x, y + 18), new Point(x + 4, y + 14), new Point(x + 7, y + 20),
-            new Point(x + 10, y + 19), new Point(x + 7, y + 13), new Point(x + 13, y + 13),
+            SizeF ts = g.MeasureString(Words, font, PointF.Empty, StringFormat.GenericTypographic);
+            float padL = 14 * s, padR = 16 * s, gap = 8 * s, logo = 16 * s, h = 32 * s, rad = 14 * s;
+            float w = padL + logo + gap + ts.Width + padR;
+            float x0 = (width - w) / 2;
+            using (var shape = new GraphicsPath())
+            {
+                shape.AddLine(x0, 0, x0 + w, 0);
+                shape.AddLine(x0 + w, 0, x0 + w, h - rad);
+                shape.AddArc(x0 + w - 2 * rad, h - 2 * rad, 2 * rad, 2 * rad, 0, 90);
+                shape.AddArc(x0, h - 2 * rad, 2 * rad, 2 * rad, 90, 90);
+                shape.CloseFigure();
+                // 아래로 옅은 그림자 (drop-shadow 0 2px 5px rgba(0,0,0,.22) 에 가깝게)
+                using (var m = new Matrix()) using (var sh = (GraphicsPath)shape.Clone())
+                {
+                    m.Translate(0, 2 * s);
+                    sh.Transform(m);
+                    using (var sb = new SolidBrush(Color.FromArgb(40, 0, 0, 0))) g.FillPath(sb, sh);
+                }
+                using (var fill = new SolidBrush(Layered.B)) g.FillPath(fill, shape);
+            }
+            float cy = h / 2 + 1 * s;
+            using (var lp = Layered.ParsePath(Layered.LogoPath, logo / 16f, x0 + padL, cy - logo / 2))
+            using (var white = new SolidBrush(Color.White))
+            {
+                g.FillPath(white, lp);
+                g.DrawString(Words, font, white, x0 + padL + logo + gap, cy - ts.Height / 2, StringFormat.GenericTypographic);
+            }
+        }
+    }
+}
+
+/// 화살표 + 클릭 원 — 작은 창이 커서를 따라다닌다. 새 자리로는 0.2초 ease-out 으로 미끄러진다.
+internal sealed class CursorForm : Form
+{
+    private const int RingMs = 650;
+    private readonly bool mExclude;
+    private readonly Timer mAnim = new Timer { Interval = 15 };
+    private readonly System.Diagnostics.Stopwatch mClock = System.Diagnostics.Stopwatch.StartNew();
+    private float mScale = 1f;
+    private PointF mPos, mFrom; private Point mTo; private double mGlideAt = -1e9;
+    private bool mHasPos;
+    private Point mRingAt; private double mRingStart = -1e9;
+
+    public CursorForm(IntPtr target, bool exclude)
+    {
+        mExclude = exclude;
+        Text = "zwprobe-vcursor-pointer:" + target.ToInt64();
+        FormBorderStyle = FormBorderStyle.None;
+        ShowInTaskbar = false;
+        StartPosition = FormStartPosition.Manual;
+        AutoScaleMode = AutoScaleMode.None;
+        TopMost = true;
+        Size = new Size(1, 1);
+        mAnim.Tick += (s, e) => Step();
+    }
+
+    protected override bool ShowWithoutActivation { get { return true; } }
+    protected override CreateParams CreateParams
+    {
+        get { var cp = base.CreateParams; cp.ExStyle |= Layered.ExStyle; return cp; }
+    }
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        V.SetWindowDisplayAffinity(Handle, mExclude ? V.WDA_EXCLUDEFROMCAPTURE : V.WDA_NONE);
+    }
+    protected override void OnPaintBackground(PaintEventArgs e) { }
+    protected override void OnPaint(PaintEventArgs e) { }
+
+    private double Now { get { return mClock.Elapsed.TotalMilliseconds; } }
+
+    public void SetScale(float s)
+    {
+        if (s == mScale) return;
+        mScale = s;
+        if (mHasPos) Draw();
+    }
+
+    public void MoveTo(Point p)
+    {
+        if (!mHasPos) { mPos = p; mFrom = p; mTo = p; mHasPos = true; }
+        else { mFrom = mPos; mTo = p; mGlideAt = Now; }
+        if (!Visible) Visible = true;
+        Draw();
+        mAnim.Start();
+    }
+
+    public void Ring(Point p)
+    {
+        mRingAt = p; mRingStart = Now;
+        if (!mHasPos) MoveTo(p);
+        mAnim.Start();
+        Draw();
+    }
+
+    private void Step()
+    {
+        double now = Now;
+        bool gliding = now - mGlideAt < FrameForm.GlideMs, ringing = now - mRingStart < RingMs;
+        if (gliding)
+        {
+            double e = Layered.EaseOut((now - mGlideAt) / FrameForm.GlideMs);
+            mPos = new PointF((float)(mFrom.X + (mTo.X - mFrom.X) * e), (float)(mFrom.Y + (mTo.Y - mFrom.Y) * e));
+        }
+        else mPos = mTo;
+        Draw();
+        if (!gliding && !ringing) mAnim.Stop();
+    }
+
+    /// 창은 커서 끝점을 가운데에 둔 정사각형 — 원이 다 펼쳐져도(지름 34) 들어가는 크기
+    private void Draw()
+    {
+        float s = mScale;
+        int size = (int)Math.Ceiling(64 * s);
+        var origin = new Point((int)Math.Round(mPos.X) - size / 2, (int)Math.Round(mPos.Y) - size / 2);
+        using (var bmp = new Bitmap(size, size, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
+        {
+            using (var g = Graphics.FromImage(bmp))
+            {
+                g.Clear(Color.Transparent);
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                double rt = (Now - mRingStart) / RingMs;
+                if (rt >= 0 && rt < 1) DrawRing(g, mRingAt.X - origin.X, mRingAt.Y - origin.Y, rt, s);
+                DrawArrow(g, mPos.X - origin.X, mPos.Y - origin.Y, s);
+            }
+            Layered.Push(this, bmp, origin, 255);
+        }
+    }
+
+    // 34px 원, 3px B 테두리 + B 30% 바탕, scale 0.22→1 · opacity 0.95→0 (ease-out 650ms). 테두리도 같이 줄었다 커진다
+    private static void DrawRing(Graphics g, float x, float y, double t, float s)
+    {
+        double e = Layered.EaseOut(t);
+        float sc = (float)(0.22 + 0.78 * e);
+        int a = (int)Math.Round(255 * 0.95 * (1 - e));
+        if (a <= 0) return;
+        float outer = 17 * s * sc, bw = 3 * s * sc, inner = outer - bw;
+        using (var bg = new SolidBrush(Color.FromArgb((int)Math.Round(a * 0.3), Layered.B)))
+            g.FillEllipse(bg, x - inner, y - inner, 2 * inner, 2 * inner);
+        using (var pen = new Pen(Color.FromArgb(a, Layered.B), bw))
+            g.DrawEllipse(pen, x - outer + bw / 2, y - outer + bw / 2, 2 * outer - bw, 2 * outer - bw);
+    }
+
+    // 끝이 왼쪽 위인 삼각 화살표: viewBox 18 을 22px 칸에, 칸은 끝점에서 (-3, -2) — 경로 끝 (2.2, 1.6) 이 끝점에 온다
+    private static void DrawArrow(Graphics g, float x, float y, float s)
+    {
+        float k = 22f / 18f * s;
+        float ox = x - 3 * s, oy = y - 2 * s;
+        PointF[] pts =
+        {
+            new PointF(ox + 2.2f * k, oy + 1.6f * k), new PointF(ox + 15.4f * k, oy + 7.9f * k),
+            new PointF(ox + 9.5f * k, oy + 9.8f * k), new PointF(ox + 7.2f * k, oy + 15.8f * k),
         };
-        g.SmoothingMode = SmoothingMode.None;
-        using (var fill = new SolidBrush(Color.FromArgb(255, 200, 0))) g.FillPolygon(fill, pts);
-        using (var outline = new Pen(Color.Black, 1)) g.DrawPolygon(outline, pts);
+        // 그림자 drop-shadow(0 1px 2px rgba(0,0,0,.28)) — 아래로 1px 옮긴 같은 모양을 두 겹으로 흐리게
+        for (int i = 1; i <= 2; i++)
+        {
+            var sh = Array.ConvertAll(pts, p => new PointF(p.X, p.Y + 1 * s + (i - 1) * 0.6f * s));
+            using (var sb = new SolidBrush(Color.FromArgb(i == 1 ? 50 : 25, 0, 0, 0))) g.FillPolygon(sb, sh);
+        }
+        using (var fill = new SolidBrush(Layered.B)) g.FillPolygon(fill, pts);
+        using (var pen = new Pen(Color.White, 1.5f * k) { LineJoin = LineJoin.Round }) g.DrawPolygon(pen, pts);
     }
 }

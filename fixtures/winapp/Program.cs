@@ -154,6 +154,10 @@ internal static class Program
             }
         }
         Application.EnableVisualStyles();
-        Application.Run(new FixtureForm(withDialog, title, at) { TopMost = topmost, Ghost = Array.IndexOf(args, "--ghost") >= 0 });
+        var form = new FixtureForm(withDialog, title, at) { TopMost = topmost, Ghost = Array.IndexOf(args, "--ghost") >= 0 };
+        // --maximized: --at 이 있는 모니터에 최대화해 뜬다. 창 가장자리가 모니터 가장자리와 겹칠 때
+        //   (실앱은 대개 최대화) 가상 커서 프레임의 테두리가 보이는지 보는 시험용이다 (2026-11-17).
+        if (Array.IndexOf(args, "--maximized") >= 0) form.WindowState = FormWindowState.Maximized;
+        Application.Run(form);
     }
 }
