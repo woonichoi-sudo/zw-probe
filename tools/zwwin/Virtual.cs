@@ -629,7 +629,7 @@ internal static partial class Program
 // 사용자 요청으로 Claude in Chrome 확장(1.0.107 `assets/agent-visual-indicator.js`)의 CSS 값을 옮겼다.
 //   빛   : inset 0 0 22px/44px/66px rgba(B, .8/.5/.25), 2초 주기 0.6↔1 숨쉬기 (claude-pulse)
 //   선   : inset 3px 단색 B — 숨쉬지 않는다 (알약과 한 몸으로 보이게)
-//   알약 : 위 가운데에 붙은 B 바탕 + 흰 글자 「AI 에이전트 작업 중」 (사용자 요청으로 Claude 로고·이름 대신, Stop 버튼은 뺐다 — 멈추는 장치가 따로 필요)
+//   알약 : 위 가운데에 붙은 B 바탕 + 흰 글자 「AI Agent 작업 중」 (사용자 요청으로 Claude 로고·이름 대신, Stop 버튼은 뺐다 — 멈추는 장치가 따로 필요)
 //   커서 : 22px 칸(viewBox 18)의 삼각 화살표 B 채움 + 흰 외곽선 1.5, 그림자 0 1px 2px rgba(0,0,0,.28), 0.2초 미끄러짐
 //   클릭 : 34px 원 3px B 테두리 + B 30% 바탕, 0.22→1 로 커지며 0.65초 동안 사라진다
 // B = rgb(198, 97, 63). 길이는 모두 96 dpi 기준이고 대상 모니터 배율을 곱한다.
@@ -896,7 +896,7 @@ internal sealed class FrameForm : Form
 internal sealed class EdgeForm : Form
 {
     private const int BaseLine = 3;
-    private const string Words = "AI 에이전트 작업 중";
+    private const string Words = "AI Agent 작업 중";
     private readonly bool mExclude;
 
     public EdgeForm(IntPtr target, bool exclude)
