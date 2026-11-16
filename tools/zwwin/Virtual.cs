@@ -629,7 +629,7 @@ internal static partial class Program
 // 사용자 요청으로 Claude in Chrome 확장(1.0.107 `assets/agent-visual-indicator.js`)의 CSS 값을 옮겼다.
 //   빛   : inset 0 0 22px/44px/66px rgba(B, .8/.5/.25), 2초 주기 0.6↔1 숨쉬기 (claude-pulse)
 //   선   : inset 3px 단색 B — 숨쉬지 않는다 (알약과 한 몸으로 보이게)
-//   알약 : 위 가운데에 붙은 B 바탕 + 흰 Claude 로고·글자 (Stop 버튼은 뺐다 — 멈추는 장치가 따로 필요)
+//   알약 : 위 가운데에 붙은 B 바탕 + 흰 글자 「AI 에이전트 작업 중」 (사용자 요청으로 Claude 로고·이름 대신, Stop 버튼은 뺐다 — 멈추는 장치가 따로 필요)
 //   커서 : 22px 칸(viewBox 18)의 삼각 화살표 B 채움 + 흰 외곽선 1.5, 그림자 0 1px 2px rgba(0,0,0,.28), 0.2초 미끄러짐
 //   클릭 : 34px 원 3px B 테두리 + B 30% 바탕, 0.22→1 로 커지며 0.65초 동안 사라진다
 // B = rgb(198, 97, 63). 길이는 모두 96 dpi 기준이고 대상 모니터 배율을 곱한다.
@@ -703,43 +703,6 @@ internal static class Layered
         double t = 1 / (1 + 0.3275911 * Math.Abs(z) / Math.Sqrt(2));
         double y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.Exp(-z * z / 2);
         return z >= 0 ? (1 + y) / 2 : (1 - y) / 2;
-    }
-
-    /// Claude in Chrome 이 알약에 쓰는 Claude 로고 (16x16 SVG 경로, 절대 M L H V C Z 만 쓴다)
-    public const string LogoPath = "M3.13946 10.6399L6.28757 8.87462L6.37405 8.73821L6.28757 8.6339H6.13189L5.60432 8.6018L3.80541 8.55366L2.24865 8.48947L0.735135 8.40923H0.492973L0.354595 8.32899L0.181622 8.1685L0.0345946 8.01605L0 7.85557L0.0345946 7.62287L0.138378 7.44634L0.224865 7.40622H0.354595L0.812973 7.44634L1.82486 7.51856L3.34703 7.62287L4.44541 7.68706L6.08 7.85557H6.33946L6.37405 7.75125L6.28757 7.68706L6.21838 7.62287L4.64432 6.55567L2.94054 5.4323L2.04973 4.78235L1.57405 4.45336L1.33189 4.14845L1.22811 3.92377L1.17622 3.69107L1.22811 3.47442L1.33189 3.28185L1.46162 3.13741L1.66054 2.99298H1.87676L2.24865 3.0331L2.39568 3.07322L2.99243 3.53059L4.26378 4.51755L5.92432 5.73721L6.16649 5.93781H6.27892V5.82548L6.16649 5.64092L5.26703 4.01204L4.30703 2.35105L3.87459 1.66098L3.76216 1.25176C3.7391 1.16082 3.69297 0.977332 3.69297 0.970913V0.762287L3.77946 0.505517L3.93513 0.240722L4.18595 0.0882648L4.4627 0H4.67892L4.83459 0.0240722L5.12865 0.0882648L5.4054 0.328987L5.82054 1.27583L6.48649 2.76028L7.52432 4.78235L7.82703 5.38415L7.99135 5.93781L8.05189 6.10632H8.15567V6.01003L8.24216 4.87061L8.39784 3.47442L8.55351 1.67703L8.6054 1.17151L8.85622 0.561685L8.9773 0.417252L9.21946 0.232698H9.35784L9.74703 0.417252L9.97189 0.665998L10.067 0.874624L10.0238 1.17151L9.83351 2.40722L9.46162 4.34102L9.21946 5.64092H9.35784L9.52216 5.47242L10.1795 4.60582L11.2778 3.22568L11.7622 2.68004L12.333 2.07823L12.6962 1.78937L13.0162 1.67703L13.3881 1.78937L13.7168 2.06219L13.8897 2.54363V2.76028L13.6649 3.32197L12.9557 4.22066L12.3676 4.98295L12.0043 5.56871L11.0011 7.02106V7.08526H11.1741L13.0768 6.67603L14.1059 6.49147L15.3341 6.28285L15.5762 6.34704L15.8876 6.53962L15.9481 6.80441L15.8876 7.12538L15.7319 7.34203L14.4173 7.66299L12.8778 7.97593L10.5854 8.51559C10.5705 8.51909 10.56 8.53236 10.56 8.54764C10.56 8.56468 10.573 8.57891 10.59 8.58044L11.6238 8.67402L12.0649 8.69809H13.1459L15.1611 8.85055L15.6886 9.19559L15.9481 9.39619L16 9.62086L15.9481 9.94985L15.8443 10.1023L15.4119 10.3029L15.1351 10.3591L14.0454 10.1023L11.4941 9.49248L10.6205 9.27583H10.4995V9.34804L11.2259 10.0622L12.5665 11.2658L14.2357 12.8225L14.3222 13.0953V13.2076L14.1059 13.5125L13.9243 13.5206L13.8811 13.4804L12.4108 12.3731L12.2984 12.325L11.84 11.8756L10.56 10.7924H10.4735V10.9047L10.7676 11.338L12.333 13.6891L12.4108 14.4112L12.2984 14.6439L11.8919 14.7884L11.667 14.7563L11.4508 14.7081L11.2605 14.5396L10.5254 13.4162L9.5827 11.9719L8.82162 10.672H8.79342C8.76039 10.672 8.73278 10.6972 8.7297 10.73L8.27676 15.5667L8.06919 15.8154L7.6454 16H7.58486L7.17838 15.6951L6.96216 15.1976L7.17838 14.2106L7.43784 12.9268L7.6454 11.9077L7.83567 10.6399L7.95187 10.2164C7.9548 10.2057 7.95069 10.1944 7.94161 10.1881C7.91157 10.1672 7.87034 10.1741 7.84878 10.2037L6.89297 11.5145L5.44 13.4804L4.28973 14.7081L4.01297 14.8205H3.80541L3.5373 14.5717V14.4514L3.58054 14.1304L3.84865 13.7372L5.44 11.7151L6.4 10.4554L7.01872 9.73222C7.04511 9.70139 7.04245 9.65523 7.0127 9.62763C7.00333 9.61894 6.98925 9.61773 6.97854 9.62471L2.75027 12.3811L1.99784 12.4774L1.66919 12.1725L1.71243 11.675L1.86811 11.5145L3.13946 10.6399Z";
-
-    /// 절대 좌표 M L H V C Z 만 읽는 SVG 경로 → GraphicsPath (scale 배, (ox, oy) 만큼 옮김)
-    public static GraphicsPath ParsePath(string d, float scale, float ox, float oy)
-    {
-        var path = new GraphicsPath(FillMode.Winding);
-        var tokens = System.Text.RegularExpressions.Regex.Matches(d, @"[MLHVCZ]|-?\d*\.?\d+(?:[eE]-?\d+)?");
-        int i = 0;
-        char cmd = 'M';
-        float cx = 0, cy = 0;
-        Func<float> num = () => float.Parse(tokens[i++].Value, System.Globalization.CultureInfo.InvariantCulture);
-        Func<float, float> X = (v) => ox + v * scale;
-        Func<float, float> Y = (v) => oy + v * scale;
-        while (i < tokens.Count)
-        {
-            string tk = tokens[i].Value;
-            if (char.IsLetter(tk[0])) { cmd = tk[0]; i++; if (cmd == 'Z') { path.CloseFigure(); continue; } }
-            switch (cmd)
-            {
-                case 'M': cx = num(); cy = num(); path.StartFigure(); cmd = 'L'; break;
-                case 'L': { float nx = num(), ny = num(); path.AddLine(X(cx), Y(cy), X(nx), Y(ny)); cx = nx; cy = ny; break; }
-                case 'H': { float nx = num(); path.AddLine(X(cx), Y(cy), X(nx), Y(cy)); cx = nx; break; }
-                case 'V': { float ny = num(); path.AddLine(X(cx), Y(cy), X(cx), Y(ny)); cy = ny; break; }
-                case 'C':
-                {
-                    float x1 = num(), y1 = num(), x2 = num(), y2 = num(), x3 = num(), y3 = num();
-                    path.AddBezier(X(cx), Y(cy), X(x1), Y(y1), X(x2), Y(y2), X(x3), Y(y3));
-                    cx = x3; cy = y3;
-                    break;
-                }
-                default: i++; break;
-            }
-        }
-        return path;
     }
 }
 
@@ -933,7 +896,7 @@ internal sealed class FrameForm : Form
 internal sealed class EdgeForm : Form
 {
     private const int BaseLine = 3;
-    private const string Words = "Claude 작업 중";
+    private const string Words = "AI 에이전트 작업 중";
     private readonly bool mExclude;
 
     public EdgeForm(IntPtr target, bool exclude)
@@ -983,7 +946,7 @@ internal sealed class EdgeForm : Form
         }
     }
 
-    /// 위 가운데에 붙은 알약: 아래 두 모서리만 둥글다(14px), 왼쪽부터 로고 16px · 글자 600 14px
+    /// 위 가운데에 붙은 알약: 아래 두 모서리만 둥글다(14px), 글자 600 14px
     private static void DrawPill(Graphics g, int width, float s)
     {
         g.SmoothingMode = SmoothingMode.AntiAlias;
@@ -991,8 +954,8 @@ internal sealed class EdgeForm : Form
         using (var font = new Font("Malgun Gothic", 14 * s, FontStyle.Bold, GraphicsUnit.Pixel))
         {
             SizeF ts = g.MeasureString(Words, font, PointF.Empty, StringFormat.GenericTypographic);
-            float padL = 14 * s, padR = 16 * s, gap = 8 * s, logo = 16 * s, h = 32 * s, rad = 14 * s;
-            float w = padL + logo + gap + ts.Width + padR;
+            float padL = 16 * s, padR = 16 * s, h = 32 * s, rad = 14 * s;
+            float w = padL + ts.Width + padR;
             float x0 = (width - w) / 2;
             using (var shape = new GraphicsPath())
             {
@@ -1011,12 +974,8 @@ internal sealed class EdgeForm : Form
                 using (var fill = new SolidBrush(Layered.B)) g.FillPath(fill, shape);
             }
             float cy = h / 2 + 1 * s;
-            using (var lp = Layered.ParsePath(Layered.LogoPath, logo / 16f, x0 + padL, cy - logo / 2))
             using (var white = new SolidBrush(Color.White))
-            {
-                g.FillPath(white, lp);
-                g.DrawString(Words, font, white, x0 + padL + logo + gap, cy - ts.Height / 2, StringFormat.GenericTypographic);
-            }
+                g.DrawString(Words, font, white, x0 + padL, cy - ts.Height / 2, StringFormat.GenericTypographic);
         }
     }
 }
