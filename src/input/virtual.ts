@@ -139,9 +139,23 @@ export function judgeVirtual(r: VirtualResult, before: readonly WindowInfo[] = [
   if (t.pid !== r.window.pid) {
     return { onTarget: false, reason: `받은 창(hwnd=${t.hwnd})이 다른 프로세스(pid=${t.pid})다. 대상 pid=${r.window.pid}.` }
   }
-  if (t.root === r.window.hwnd) return { onTarget: true, reason: `대상 창의 hwnd=${t.hwnd} (${t.clientX},${t.clientY}) 가 받았다.` }
-  if (isOwnedBy(t.root, r.window.hwnd, before)) {
-    return { onTarget: true, reason: `대상이 소유한 창(hwnd=${t.root}, 다이얼로그)이 받았다.` }
+  if (t.root === r.window.hwnd || isOwnedBy(t.root, r.window.hwnd, before)) {
+    // 받은 창이 입력 불가(모달에 막힘)면 실제 입력은 Windows 가 막는다 — 창 메시지는 들어가도 앱은 무시하기 쉽다
+    // (11-16 Z-Weave assert 모달 중 3D 끌기: 판정 "정상" 인데 카메라 안 돎). 누르기 전 목록의 enabled 로 본다.
+    const got = before.find((w) => w.hwnd === t.root) ?? (t.root === r.window.hwnd ? r.window : undefined)
+    if (got && !got.enabled) {
+      const blockers = before.filter((w) => w.pid === t.pid && w.hwnd !== t.root && w.enabled && !w.minimized)
+      const desc = blockers.length > 0
+        ? ` 같은 프로세스의 입력 받는 창: ${blockers.map((w) => `hwnd=${w.hwnd} ${w.width}x${w.height} "${w.title}"`).join(', ')}`
+        : ''
+      return {
+        onTarget: false,
+        reason: `받은 창 hwnd=${t.root} 이 입력을 받을 수 없는 상태(enabled=false — 모달 창에 막힘)다. 실제 입력이면 막혔다.${desc}`,
+      }
+    }
+    return t.root === r.window.hwnd
+      ? { onTarget: true, reason: `대상 창의 hwnd=${t.hwnd} (${t.clientX},${t.clientY}) 가 받았다.` }
+      : { onTarget: true, reason: `대상이 소유한 창(hwnd=${t.root}, 다이얼로그)이 받았다.` }
   }
   // 같은 프로세스의 소유 관계 없는 최상위 창 — 구조로는 정상(11-15 CLO 시작 안내, 배경+내용 창)과 실패(11-16 CLO Notice 위에
   // 겹친 업데이트 소개 창이 가로챔)를 못 가른다. 그래서 "의심" 은 그대로 두고 받은 창을 밝혀 부르는 쪽이 가르게 한다.

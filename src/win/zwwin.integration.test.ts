@@ -30,6 +30,13 @@ import type { Bgra, Rgb } from '../image/stats.ts'
 const HERE = dirname(fileURLToPath(import.meta.url))
 const FIXTURE_EXE = resolve(HERE, '../../bin/zwfixture.exe')
 const FIXTURE_TITLE = 'zwprobe-fixture'
+/**
+ * 픽스처는 모니터별 DPI 인식으로 띄운다 (2026-11-16). 기본(인식 없음)이면 배율 모니터(이 PC 주 모니터 200 %)에서
+ * Windows 가 늘려 보여주어 ① PrintWindow 가 늘리기 전 그림을 큰 캡처의 왼쪽 위에만 주고 ② 시스템 DPI 인식 zwwin 의
+ * 좌표와 픽스처 좌표가 어긋난다 — 이 파일의 시험 5~6 개가 그 때문에 실패했다 (2026-11-15 원인 확인, CLAUDE.md 열린 항목).
+ * 가상 커서 시험(virtual.integration.test.ts)과 같은 방식. 시험이 보려는 것(좌표계·클릭·UIA)은 배율과 무관하다.
+ */
+const FIXTURE_ARGS = ['--dpi-aware']
 
 const built = existsSync(ZWWIN_EXE) && existsSync(FIXTURE_EXE)
 const skip = process.platform === 'darwin'
@@ -66,7 +73,7 @@ test('픽스처 창을 찾아 캡처하고 4분면 색을 확인한다', { skip 
   const dir = mkdtempSync(join(tmpdir(), 'zwprobe-'))
   const png = join(dir, 'fixture.png')
   const raw = join(dir, 'fixture.bgra')
-  const child = spawn(FIXTURE_EXE, [], { detached: false, stdio: 'ignore' })
+  const child = spawn(FIXTURE_EXE, FIXTURE_ARGS, { detached: false, stdio: 'ignore' })
 
   try {
     await waitForFixture()
@@ -121,6 +128,36 @@ test('없는 창을 요청하면 예외로 알려준다', { skip }, () => {
   )
 })
 
+test('--hwnd 로 같은 제목의 작은 창(가려진 다이얼로그)을 골라 찍는다 (11-16 CLO 안내 창 두 개)', { skip }, async () => {
+  // 제목 필터는 부분 일치라 메인·다이얼로그가 다 걸리고, 고르는 규칙은 "가장 큰 창" 이다. 11-16 CLO 시작 때
+  // 같은 제목 "다이얼로그" 창 둘 중 작은 쪽(업데이트 안내)을 찍을 방법이 없었다. hwnd 로 하나를 집는다.
+  // 실제 입력은 쓰지 않는다 (창 목록·PrintWindow 만).
+  const child = spawn(FIXTURE_EXE, [...FIXTURE_ARGS, '--dialog'], { detached: false, stdio: 'ignore' })
+  const dir = mkdtempSync(join(tmpdir(), 'zwprobe-hwnd-'))
+  try {
+    await waitForFixture()
+    const deadline = Date.now() + 8000
+    let wins = listWindows({ title: FIXTURE_TITLE })
+    while (wins.length < 2 && Date.now() < deadline) {
+      await sleep(100)
+      wins = listWindows({ title: FIXTURE_TITLE })
+    }
+    assert.equal(wins.length, 2)
+    const small = [...wins].sort((a, b) => a.width * a.height - b.width * b.height)[0]!
+    assert.notEqual(small.hwnd, wins[0]!.hwnd, '작은 창은 기본 규칙(가장 큰 창)으로는 안 골라진다')
+
+    const only = listWindows({ hwnd: small.hwnd })
+    assert.deepEqual(only.map((w) => w.hwnd), [small.hwnd])
+
+    const info = shot({ hwnd: small.hwnd, png: join(dir, 's.png') })
+    assert.equal(info.window.hwnd, small.hwnd)
+    assert.equal(info.candidates, 1)
+  } finally {
+    child.kill()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('소유된 모달 다이얼로그를 창 구조로 읽어낸다', { skip }, async () => {
   // zwwin.exe 가 owner·enabled·style 을 옳게 보고하는지 확인한다.
   //
@@ -129,7 +166,7 @@ test('소유된 모달 다이얼로그를 창 구조로 읽어낸다', { skip },
   // 이벤트 루프로 모달을 처리할 수도 있어서, 대상 앱에서 메인 창이 실제로
   // 비활성이 되는지는 실앱에서 다이얼로그를 한 번 띄워봐야 닫힌다.
   // 여기서 닫히는 것은 "보고 경로가 옳다" 는 것뿐이다.
-  const child = spawn(FIXTURE_EXE, ['--dialog'], { detached: false, stdio: 'ignore' })
+  const child = spawn(FIXTURE_EXE, [...FIXTURE_ARGS, '--dialog'], { detached: false, stdio: 'ignore' })
 
   try {
     await waitForFixture()
@@ -166,7 +203,7 @@ test('소유된 모달 다이얼로그를 창 구조로 읽어낸다', { skip },
 })
 
 test('다이얼로그가 없으면 idle 로 판정한다', { skip }, async () => {
-  const child = spawn(FIXTURE_EXE, [], { detached: false, stdio: 'ignore' })
+  const child = spawn(FIXTURE_EXE, FIXTURE_ARGS, { detached: false, stdio: 'ignore' })
   try {
     const main = await waitForFixture()
     const activity = judgeActivity(listWindows({ title: FIXTURE_TITLE }))
@@ -188,7 +225,7 @@ test('클릭 좌표가 캡처 좌표계와 같다 — 누른 사분면이 검게
   // 픽스처는 눌린 사분면을 검게 칠한다. 네 칸을 다 눌러 확인하므로 x·y 를 맞바꾸는
   // 종류의 실수(전치)도 잡힌다 — 대각선만 눌러보면 그건 통과해버린다.
   const dir = mkdtempSync(join(tmpdir(), 'zwprobe-click-'))
-  const child = spawn(FIXTURE_EXE, [], { detached: false, stdio: 'ignore' })
+  const child = spawn(FIXTURE_EXE, FIXTURE_ARGS, { detached: false, stdio: 'ignore' })
 
   try {
     const w = await waitForFixture()
@@ -246,7 +283,7 @@ test('--slow 는 같은 자리를 누르고 커서를 돌려놓는다 — 느려
   // 안 된다** — 좌표 변환, 대상 판정, 누른 결과, 커서 복원이 다 같아야 한다.
   // 창은 pid 로 좁힌다. 다른 테스트 파일이 같은 제목의 픽스처를 띄울 수 있다.
   const dir = mkdtempSync(join(tmpdir(), 'zwprobe-slow-'))
-  const child = spawn(FIXTURE_EXE, [], { detached: false, stdio: 'ignore' })
+  const child = spawn(FIXTURE_EXE, FIXTURE_ARGS, { detached: false, stdio: 'ignore' })
 
   try {
     const pid = child.pid!
@@ -291,7 +328,7 @@ test('--slow 는 같은 자리를 누르고 커서를 돌려놓는다 — 느려
 
 test('--stay 는 같은 자리를 누르고 커서를 돌려놓지 않는다', { skip }, async () => {
   // 하위 메뉴(›)는 커서가 떠나면 닫힌다. 돌려놓지 않는 것 말고는 같아야 한다.
-  const child = spawn(FIXTURE_EXE, [], { detached: false, stdio: 'ignore' })
+  const child = spawn(FIXTURE_EXE, FIXTURE_ARGS, { detached: false, stdio: 'ignore' })
   try {
     const pid = child.pid!
     const deadline = Date.now() + 8000
@@ -318,7 +355,7 @@ test('--stay 는 같은 자리를 누르고 커서를 돌려놓지 않는다', {
 
 test('창 밖 좌표는 거부한다', { skip }, async () => {
   // 창 밖을 누르면 다른 앱이 맞는다. 되돌릴 수 없으므로 실행 전에 끊어야 한다.
-  const child = spawn(FIXTURE_EXE, [], { detached: false, stdio: 'ignore' })
+  const child = spawn(FIXTURE_EXE, FIXTURE_ARGS, { detached: false, stdio: 'ignore' })
   try {
     const w = await waitForFixture()
     assert.throws(() => click({ title: FIXTURE_TITLE, x: w.width, y: 10 }), /창 밖 좌표/)
@@ -330,7 +367,7 @@ test('창 밖 좌표는 거부한다', { skip }, async () => {
 })
 
 test('UIA 트리를 읽고 창 기준 좌표로 변환한다', { skip }, async () => {
-  const child = spawn(FIXTURE_EXE, [], { detached: false, stdio: 'ignore' })
+  const child = spawn(FIXTURE_EXE, FIXTURE_ARGS, { detached: false, stdio: 'ignore' })
   try {
     const w = await waitForFixture()
     const dump = uiaTree({ title: FIXTURE_TITLE })
@@ -367,7 +404,7 @@ test('이름으로 찾아 누르는 전 경로가 돈다', { skip }, async () =>
   // 눌리면 **우하단** 사분면을 검게 만든다 — 버튼 자신은 좌상단에 있으므로
   // 확인할 픽셀이 버튼에 가려지지 않는다.
   const dir = mkdtempSync(join(tmpdir(), 'zwprobe-uia-'))
-  const child = spawn(FIXTURE_EXE, [], { detached: false, stdio: 'ignore' })
+  const child = spawn(FIXTURE_EXE, FIXTURE_ARGS, { detached: false, stdio: 'ignore' })
 
   try {
     const w = await waitForFixture()
@@ -408,7 +445,7 @@ test('이름으로 찾아 누르는 전 경로가 돈다', { skip }, async () =>
 test('이름이 겹치면 누르지 않고 거부한다', { skip }, async () => {
   // 픽스처에는 겹치는 이름이 없으므로, 트리를 읽어 질의를 느슨하게 줘서 확인한다.
   // "e" 는 창 이름("zwprobe-fixture")과 버튼 이름("fixture-target") 둘에 다 들어 있다.
-  const child = spawn(FIXTURE_EXE, [], { detached: false, stdio: 'ignore' })
+  const child = spawn(FIXTURE_EXE, FIXTURE_ARGS, { detached: false, stdio: 'ignore' })
   try {
     await waitForFixture()
     const r = findOne(uiaTree({ title: FIXTURE_TITLE }), { name: 'e' })

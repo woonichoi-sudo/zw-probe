@@ -233,3 +233,12 @@ test('buildArgv — zw_frame 은 start·stop·status 만', () => {
   if (r.ok) assert.deepEqual(r.argv, ['frame', 'start', '--title', 'CLO'])
   assert.equal(build('zw_frame', { action: 'show' }).ok, false)
 })
+
+test('buildArgv — 창 필터 hwnd 는 --hwnd 로 (같은 제목 창 중 작은 쪽을 집는다, 2026-11-16)', () => {
+  const r = build('zw_shot', { hwnd: 5181132 })
+  assert.ok(r.ok, r.ok ? '' : r.reason)
+  if (r.ok) assert.deepEqual(r.argv.slice(-2), ['--hwnd', '5181132'])
+  const u = build('zw_uia', { hwnd: 77 })
+  assert.ok(u.ok, u.ok ? '' : u.reason)
+  if (u.ok) assert.ok(u.argv.join(' ').includes('--hwnd 77'))
+})

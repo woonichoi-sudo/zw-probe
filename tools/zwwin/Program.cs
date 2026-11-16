@@ -1,4 +1,4 @@
-// zwwin.exe — 창을 찾고 캡처해서 JSON 을 뱉는다. 아무것도 판단하지 않는다.
+﻿// zwwin.exe — 창을 찾고 캡처해서 JSON 을 뱉는다. 아무것도 판단하지 않는다.
 //
 // CLAUDE.md 절대 규칙 5: 판단은 전부 zwprobe(TS)에, I/O는 가장자리에.
 // 이 프로그램은 "검은 화면인가", "버그인가" 를 묻지 않는다. 찾고, 찍고, 사실만 보고한다.
@@ -229,7 +229,8 @@ internal static partial class Program
         return N.GetWindowRect(hwnd, out rect) && rect.Right > rect.Left && rect.Bottom > rect.Top;
     }
 
-    // 프로세스 이름·pid·제목으로 걸러내고, 남은 것 중 가장 큰 창을 고른다.
+    // 프로세스 이름·pid·제목·hwnd 로 걸러내고, 남은 것 중 가장 큰 창을 고른다. hwnd 는 같은 제목 창이 여럿일 때
+    // 작은 쪽(가려진 다이얼로그)을 집으려고 둔다 (2026-11-16).
     // "가장 큰 것이 메인 창" 은 판단이 아니라 선택 규칙이며, 후보 전체를 JSON 에 함께 실어
     // TS 쪽에서 다르게 고를 수 있게 한다.
     private static List<Win> Filter(List<Win> all, Dictionary<string, string> a)
@@ -238,6 +239,7 @@ internal static partial class Program
         string proc = Get(a, "process");
         string pidS = Get(a, "pid");
         string title = Get(a, "title");
+        string hwndS = Get(a, "hwnd");
 
         var pidsOfProc = new HashSet<uint>();
         if (proc != null)
@@ -252,6 +254,7 @@ internal static partial class Program
             if (proc != null && !pidsOfProc.Contains(w.Pid)) continue;
             if (pidS != null && w.Pid.ToString(CultureInfo.InvariantCulture) != pidS) continue;
             if (title != null && w.Title.IndexOf(title, StringComparison.OrdinalIgnoreCase) < 0) continue;
+            if (hwndS != null && w.Hwnd.ToInt64().ToString(CultureInfo.InvariantCulture) != hwndS) continue;
             outp.Add(w);
         }
         outp.Sort((x, y) => y.Area.CompareTo(x.Area));

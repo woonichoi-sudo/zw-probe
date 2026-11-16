@@ -134,6 +134,35 @@ test('judgeVirtual — 받은 창이 누르기 전 목록에 없으면 그렇게
   assert.match(v.reason, /목록에 없/)
 })
 
+// 2026-11-16 Z-Weave 실측: 변환 아바타 zls 로 시뮬을 켜자 assert 모달(`ztSimulationStandardCPUExecutor.cpp:1014`)이 연달아 떴고,
+// 메인 창은 enabled=false(모달에 막힘)였다. 그 사이 3D 가상 끌기는 메인 창이 받아 판정 "정상" 인데 카메라는 안 돌았다.
+// 실제 입력이면 Windows 가 막는 창이다 → 받은 창(또는 그 최상위)이 입력 불가면 의심, 이유에 막고 있는 창을 밝힌다.
+const disabled = (w: WindowInfo): WindowInfo => ({ ...w, enabled: false })
+const zwMain = { ...win(5001, 0, 4956), title: 'z-weave', width: 3840, height: 2088 }
+const zwAssert = { ...win(5002, 5001, 4956), title: 'Assertion failed', width: 600, height: 300 }
+
+test('judgeVirtual — 대상 창이 입력 불가(모달에 막힘)면 의심, 이유에 막고 있는 창을 밝힌다 (11-16 Z-Weave assert)', () => {
+  const before = [disabled(zwMain), zwAssert]
+  const v = judgeVirtual(result({ hwnd: 5010, root: 5001, pid: 4956 }, disabled(zwMain)), before)
+  assert.equal(v.onTarget, false)
+  assert.match(v.reason, /입력을 받을 수 없/)
+  assert.match(v.reason, /hwnd=5002/)
+  assert.match(v.reason, /"Assertion failed"/)
+})
+
+test('judgeVirtual — 대상이 소유한 다이얼로그가 받았어도 그 창이 입력 불가면 의심', () => {
+  const before = [zwMain, disabled(zwAssert)]
+  const v = judgeVirtual(result({ root: 5002, pid: 4956 }, zwMain), before)
+  assert.equal(v.onTarget, false)
+  assert.match(v.reason, /입력을 받을 수 없/)
+})
+
+test('judgeVirtual — 목록에 없어도 대상 창 정보가 입력 불가면 의심', () => {
+  const v = judgeVirtual(result({ root: 5001, pid: 4956 }, disabled(zwMain)), [])
+  assert.equal(v.onTarget, false)
+  assert.match(v.reason, /입력을 받을 수 없/)
+})
+
 test('judgeVirtual — 받은 창이 없으면(hwnd 0) 틀리다', () => {
   assert.equal(judgeVirtual(result({ hwnd: 0 })).onTarget, false)
 })

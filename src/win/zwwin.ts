@@ -75,6 +75,8 @@ export type WindowFilter = {
   process?: string
   pid?: number
   title?: string
+  /** 창 하나를 hwnd 로 집는다 — 같은 제목 창이 여럿일 때 "가장 큰 창" 이 아닌 쪽 (2026-11-16) */
+  hwnd?: number
 }
 
 export type ShotOptions = WindowFilter & {
@@ -92,6 +94,7 @@ function filterArgs(f: WindowFilter): string[] {
   if (f.process !== undefined) args.push('--process', f.process)
   if (f.pid !== undefined) args.push('--pid', String(f.pid))
   if (f.title !== undefined) args.push('--title', f.title)
+  if (f.hwnd !== undefined) args.push('--hwnd', String(f.hwnd))
   return args
 }
 

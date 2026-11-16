@@ -42,6 +42,7 @@ const FILTERS: Param[] = [
   { name: 'process', type: 'string', desc: '프로세스 이름. 기본은 z-weave', arg: { kind: 'flag', flag: 'process' } },
   { name: 'pid', type: 'number', desc: '프로세스 id. 창이 여럿일 때 확실하다', arg: { kind: 'flag', flag: 'pid' } },
   { name: 'title', type: 'string', desc: '창 제목 조각', arg: { kind: 'flag', flag: 'title' } },
+  { name: 'hwnd', type: 'number', desc: '창 하나를 hwnd 로 집는다. 같은 제목 창이 여럿이면 기본은 가장 큰 창 — 다른 쪽은 zw_windows 의 hwnd= 로', arg: { kind: 'flag', flag: 'hwnd' } },
 ]
 
 /** UIA 요소 질의. click 과 uia 가 같은 것을 쓴다. */

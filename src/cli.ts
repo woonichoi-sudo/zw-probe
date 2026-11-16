@@ -79,9 +79,11 @@ function filterFrom(flags: Map<string, string>): WindowFilter {
   const p = flags.get('process')
   const pid = flags.get('pid')
   const title = flags.get('title')
+  const hwnd = flags.get('hwnd')
   if (p) f.process = p
   if (pid) f.pid = Number(pid)
   if (title) f.title = title
+  if (hwnd) f.hwnd = Number(hwnd)
   return f
 }
 
@@ -103,7 +105,8 @@ function cmdWindows(flags: Map<string, string>): number {
   for (const w of wins) {
     const size = `${w.width}x${w.height}`.padEnd(11)
     const min = w.minimized ? ' [최소화]' : ''
-    console.log(`${size} pid=${String(w.pid).padEnd(7)} ${w.class.padEnd(26)} ${w.title}${min}`)
+    // hwnd 는 줄 끝 — 스크립트들이 "크기 pid 클래스" 순서에 기댄다 (^WxH +pid=N +클래스). --hwnd 로 집을 때 쓴다
+    console.log(`${size} pid=${String(w.pid).padEnd(7)} ${w.class.padEnd(26)} ${w.title}${min}  hwnd=${w.hwnd}`)
   }
   return 0
 }
@@ -182,7 +185,7 @@ function cmdShot(flags: Map<string, string>): number {
  */
 function runningAppVersion(flags: Map<string, string>): string | undefined {
   const f = filterFrom(flags)
-  if (f.process === undefined && f.pid === undefined && f.title === undefined) {
+  if (f.process === undefined && f.pid === undefined && f.title === undefined && f.hwnd === undefined) {
     f.process = TARGET_PROCESS
   }
   try {
