@@ -220,7 +220,10 @@ internal static partial class Program
         public readonly bool Applied;
 
         /// ctrl·shift·alt 를 **요청대로** 둔다 — 요청하지 않은 것은 뗀 상태로 둔다(이전 상태가 새지 않게).
-        public KeyState(Win w, bool ctrl, bool shift, bool alt, bool always)
+        public KeyState(Win w, bool ctrl, bool shift, bool alt, bool always) : this(w, ctrl, shift, alt, always, false) { }
+
+        /// testCapsOn: 시험 전용 — 사람이 Caps Lock 을 켜 둔 상태를 흉내 낸다 (--test-caps-on, 2026-11-17)
+        public KeyState(Win w, bool ctrl, bool shift, bool alt, bool always, bool testCapsOn)
         {
             uint pid;
             mTarget = N.GetWindowThreadProcessId(w.Hwnd, out pid);
@@ -231,6 +234,10 @@ internal static partial class Program
             if (!mAttached) return;
             V.GetKeyboardState(mSaved);
             var s = (byte[])mSaved.Clone();
+            if (testCapsOn) s[0x14] |= 0x01; // 사람 키보드의 Caps Lock 토글 흉내
+            // 사람 키보드의 Caps Lock 이 새지 않게 끈다 — 켜져 있으면 보낸 글자의 대소문자가 뒤집힌다 (2026-11-17).
+            // 이 표는 넣는 동안만 쓰고 Dispose 에서 되돌린다. SetKeyboardState 는 키보드 표시등을 바꾸지 않는다
+            s[0x14] = 0;
             Set(s, 0x11, ctrl); Set(s, 0xA2, ctrl); Set(s, 0xA3, false);
             Set(s, 0x10, shift); Set(s, 0xA0, shift); Set(s, 0xA1, false);
             Set(s, 0x12, alt); Set(s, 0xA4, alt); Set(s, 0xA5, false);
@@ -271,6 +278,7 @@ internal static partial class Program
         public long FgBefore;
         public bool Ctrl, Shift, Alt;
         public bool Frame;
+        public bool TestCapsOn;
         /// 사람이 알약의 「중지」 를 누르면 생기는 파일 (2026-11-17). 있으면 입력하지 않고, 끌기·이동·글자는 단계마다 보고 끊는다
         public string HaltFile;
         public bool Halted;
@@ -283,7 +291,7 @@ internal static partial class Program
         ctx = null;
         var wins = Filter(Enumerate(), a);
         if (wins.Count == 0) return "조건에 맞는 창을 찾지 못했다.";
-        ctx = new VCtx { W = wins[0], Ctrl = a.ContainsKey("ctrl"), Shift = a.ContainsKey("shift"), Alt = a.ContainsKey("alt"), HaltFile = Get(a, "halt-file") };
+        ctx = new VCtx { W = wins[0], Ctrl = a.ContainsKey("ctrl"), Shift = a.ContainsKey("shift"), Alt = a.ContainsKey("alt"), HaltFile = Get(a, "halt-file"), TestCapsOn = a.ContainsKey("test-caps-on") };
         if (ctx.HaltNow()) { ctx.Halted = true; ctx.StepsDone = 0; }
         N.GetCursorPos(out ctx.CursorBefore);
         ctx.FgBefore = N.GetForegroundWindow().ToInt64();
@@ -567,7 +575,7 @@ internal static partial class Program
         var h = KeyTarget(c.W);
         bool applied;
         // 수식키가 없어도 키 상태를 맞춘다 — 대상 스레드에 남아 있던 Ctrl 같은 것이 새면 다른 명령이 된다
-        using (var ks = new KeyState(c.W, c.Ctrl, c.Shift, c.Alt, true))
+        using (var ks = new KeyState(c.W, c.Ctrl, c.Shift, c.Alt, true, c.TestCapsOn))
         {
             applied = ks.Applied;
             PostKey(h.Hwnd, vk, c.Alt);
@@ -607,7 +615,7 @@ internal static partial class Program
                 System.Threading.Thread.Sleep(5);
                 continue;
             }
-            using (var ks = new KeyState(c.W, false, (shiftState & 1) != 0, false, true))
+            using (var ks = new KeyState(c.W, false, (shiftState & 1) != 0, false, true, c.TestCapsOn))
             {
                 allApplied &= ks.Applied;
                 PostKey(h.Hwnd, vk, false);

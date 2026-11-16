@@ -880,3 +880,33 @@ test('Qt — 끌기 도중 멈추면 다음 단계에서 끊고 버튼을 뗀다
 })
 
 type VirtualResultWithHalt = ReturnType<typeof virtualInput> & { halted?: boolean; stepsDone?: number }
+
+// ---- 사람 키보드의 Caps Lock 이 새지 않는다 (2026-11-17) --------------------------------
+// Caps Lock 이 켜진 채 위 vkey·vtype 시험이 대소문자가 뒤집혀 실패했다(aB1 → A b 1). 가상 키는 대상 스레드 키 상태 표를
+// 잠깐 바꿔 넣는데 사람의 Caps Lock 토글이 그대로 따라갔다. 사람 키보드가 꺼져 있으면 위 시험으로는 못 가르므로,
+// 시험 전용 --test-caps-on 이 "사람이 켜 둔 상태" 를 흉내 낸다. 정답은 Qt 가 실제로 받은 글자(mouseLog).
+
+test('Qt — 사람이 Caps Lock 을 켜 둬도 vtype 은 보낸 대소문자 그대로', { skip: qtSkip }, async () => {
+  const q = await launchQt()
+  try {
+    const n = (await q.log()).length
+    virtualInput({ op: 'type', text: 'aB1', ...q.filter, testCapsOn: true })
+    const lines = await newLines(q.log, n)
+    const typed = lines.filter((l) => l.startsWith('keypress')).map((l) => l.replace(/^.* t=/, ''))
+    assert.deepEqual(typed, ['a', 'B', '1'], `글자가 다르다: ${lines.join(' | ')}`)
+  } finally {
+    q.cleanup()
+  }
+})
+
+test('Qt — 사람이 Caps Lock 을 켜 둬도 vkey A 는 소문자 a', { skip: qtSkip }, async () => {
+  const q = await launchQt()
+  try {
+    const n = (await q.log()).length
+    virtualInput({ op: 'key', vk: 0x41, ...q.filter, testCapsOn: true })
+    const lines = await newLines(q.log, n)
+    assert.ok(lines.some((l) => l.startsWith('keypress k=41 m=- t=a')), `소문자 a 가 아니다: ${lines.join(' | ')}`)
+  } finally {
+    q.cleanup()
+  }
+})
