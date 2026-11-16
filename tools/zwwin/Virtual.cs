@@ -271,6 +271,11 @@ internal static partial class Program
         public long FgBefore;
         public bool Ctrl, Shift, Alt;
         public bool Frame;
+        /// 사람이 알약의 「중지」 를 누르면 생기는 파일 (2026-11-17). 있으면 입력하지 않고, 끌기·이동·글자는 단계마다 보고 끊는다
+        public string HaltFile;
+        public bool Halted;
+        public int StepsDone = -1;
+        public bool HaltNow() { return HaltFile != null && File.Exists(HaltFile); }
     }
 
     private static string VInit(Dictionary<string, string> a, out VCtx ctx)
@@ -278,7 +283,8 @@ internal static partial class Program
         ctx = null;
         var wins = Filter(Enumerate(), a);
         if (wins.Count == 0) return "조건에 맞는 창을 찾지 못했다.";
-        ctx = new VCtx { W = wins[0], Ctrl = a.ContainsKey("ctrl"), Shift = a.ContainsKey("shift"), Alt = a.ContainsKey("alt") };
+        ctx = new VCtx { W = wins[0], Ctrl = a.ContainsKey("ctrl"), Shift = a.ContainsKey("shift"), Alt = a.ContainsKey("alt"), HaltFile = Get(a, "halt-file") };
+        if (ctx.HaltNow()) { ctx.Halted = true; ctx.StepsDone = 0; }
         N.GetCursorPos(out ctx.CursorBefore);
         ctx.FgBefore = N.GetForegroundWindow().ToInt64();
         return null;
@@ -356,6 +362,7 @@ internal static partial class Program
         sb.Append(",\"foregroundAfter\":").Append(N.GetForegroundWindow().ToInt64());
         sb.Append(",\"modsApplied\":").Append(modsApplied ? "true" : "false");
         sb.Append(",\"frame\":").Append(c.Frame ? "true" : "false");
+        if (c.Halted) sb.Append(",\"halted\":true,\"stepsDone\":").Append(c.StepsDone);
         sb.Append(",\"window\":"); AppendWin(sb, c.W);
         sb.Append('}');
         Console.Out.Write(sb.ToString());
@@ -369,6 +376,7 @@ internal static partial class Program
         VCtx c;
         string err = VInit(a, out c);
         if (err != null) return Fail(err);
+        if (c.Halted) return VReply(c, "click", 0, 0, 0, 0, null, false); // 사람이 멈춤 — 입력하지 않는다
         int x, y;
         err = Point(a, "x", "y", c.W, out x, out y);
         if (err != null) return Fail(err);
@@ -411,6 +419,7 @@ internal static partial class Program
         VCtx c;
         string err = VInit(a, out c);
         if (err != null) return Fail(err);
+        if (c.Halted) return VReply(c, "drag", 0, 0, 0, 0, null, false); // 사람이 멈춤 — 입력하지 않는다
         int x, y, tx, ty;
         err = Point(a, "x", "y", c.W, out x, out y);
         if (err != null) return Fail(err);
@@ -442,6 +451,8 @@ internal static partial class Program
             Hit last = h;
             for (int i = 1; i <= steps; i++)
             {
+                // 사람이 멈추면 다음 단계에서 끊는다 — 아래에서 지금 자리에서 버튼을 뗀다
+                if (c.HaltNow()) { c.Halted = true; c.StepsDone = i - 1; break; }
                 int px = sx + (int)Math.Round((double)(tx - x) * i / steps);
                 int py = sy + (int)Math.Round((double)(ty - y) * i / steps);
                 int cx, cy; uint wd, md;
@@ -462,6 +473,7 @@ internal static partial class Program
         VCtx c;
         string err = VInit(a, out c);
         if (err != null) return Fail(err);
+        if (c.Halted) return VReply(c, "wheel", 0, 0, 0, 0, null, false); // 사람이 멈춤 — 입력하지 않는다
         int x, y, delta;
         err = Point(a, "x", "y", c.W, out x, out y);
         if (err != null) return Fail(err);
@@ -490,6 +502,7 @@ internal static partial class Program
         VCtx c;
         string err = VInit(a, out c);
         if (err != null) return Fail(err);
+        if (c.Halted) return VReply(c, "move", 0, 0, 0, 0, null, false); // 사람이 멈춤 — 입력하지 않는다
         int x, y;
         err = Point(a, "x", "y", c.W, out x, out y);
         if (err != null) return Fail(err);
@@ -508,6 +521,7 @@ internal static partial class Program
         int sx = 0, sy = 0;
         for (int i = hasFrom ? 0 : steps; i <= steps; i++)
         {
+            if (c.HaltNow()) { c.Halted = true; c.StepsDone = i; break; }
             int px = fx + (int)Math.Round((double)(x - fx) * i / steps);
             int py = fy + (int)Math.Round((double)(y - fy) * i / steps);
             sx = c.W.Rect.Left + px; sy = c.W.Rect.Top + py;
@@ -517,6 +531,7 @@ internal static partial class Program
             System.Threading.Thread.Sleep(15);
         }
         try { Process.GetProcessById((int)c.W.Pid).WaitForInputIdle(1000); } catch { }
+        if (h == null) return VReply(c, "move", 0, 0, 0, 0, null, false);
         return VReply(c, "move", x, y, sx, sy, h, false);
     }
 
@@ -546,6 +561,7 @@ internal static partial class Program
         VCtx c;
         string err = VInit(a, out c);
         if (err != null) return Fail(err);
+        if (c.Halted) return VReply(c, "key", 0, 0, 0, 0, null, false); // 사람이 멈춤 — 입력하지 않는다
         int vk;
         if (!int.TryParse(Get(a, "vk") ?? "", out vk) || vk < 1 || vk > 255) return Fail("--vk 는 1~255 정수여야 한다.");
         var h = KeyTarget(c.W);
@@ -565,6 +581,7 @@ internal static partial class Program
         VCtx c;
         string err = VInit(a, out c);
         if (err != null) return Fail(err);
+        if (c.Halted) return VReply(c, "type", 0, 0, 0, 0, null, false); // 사람이 멈춤 — 입력하지 않는다
         string hex = Get(a, "text-hex");
         if (hex == null || hex.Length == 0 || hex.Length % 4 != 0) return Fail("--text-hex 는 UTF-16 코드 단위마다 16진 4자리여야 한다.");
         var text = new StringBuilder();
@@ -576,8 +593,11 @@ internal static partial class Program
         }
         var h = KeyTarget(c.W);
         bool allApplied = true;
+        int typed = 0;
         foreach (char ch in text.ToString())
         {
+            if (c.HaltNow()) { c.Halted = true; c.StepsDone = typed; break; }
+            typed++;
             short scan = V.VkKeyScan(ch);
             int vk = scan & 0xFF, shiftState = (scan >> 8) & 0xFF;
             if (scan == -1 || vk == 0xFF || (shiftState & 0x6) != 0)
@@ -608,11 +628,12 @@ internal static partial class Program
         var target = wins[0];
         bool exclude = !a.ContainsKey("no-exclude");
         string labelFile = Get(a, "label-file");
+        string haltFile = Get(a, "halt-file");
 
         string reason = "stop";
         var t = new System.Threading.Thread(() =>
         {
-            var form = new FrameForm(target, stop, exclude, labelFile);
+            var form = new FrameForm(target, stop, exclude, labelFile, haltFile);
             Application.Run(form);
             reason = form.EndReason;
         });
@@ -720,7 +741,10 @@ internal sealed class FrameForm : Form
     private readonly string mStop;
     private readonly bool mExclude;
     private readonly string mLabelFile;
+    private readonly string mHaltFile;
     private double mLabelReadAt = -1e9;
+    private bool mHalted;
+    private readonly StopForm mStopBtn; // 멈춤 파일 경로가 없으면 null — 버튼을 안 띄운다
     private readonly Timer mTimer = new Timer { Interval = 33 };
     private readonly System.Diagnostics.Stopwatch mClock = System.Diagnostics.Stopwatch.StartNew();
     private readonly EdgeForm mEdge;
@@ -730,9 +754,9 @@ internal sealed class FrameForm : Form
     private bool mDirty = true;
     public string EndReason = "stop";
 
-    public FrameForm(Win target, string stop, bool exclude, string labelFile)
+    public FrameForm(Win target, string stop, bool exclude, string labelFile, string haltFile)
     {
-        mTarget = target; mStop = stop; mExclude = exclude; mLabelFile = labelFile;
+        mTarget = target; mStop = stop; mExclude = exclude; mLabelFile = labelFile; mHaltFile = haltFile;
         Text = "zwprobe-vcursor:" + target.Hwnd.ToInt64();
         FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false;
@@ -740,7 +764,10 @@ internal sealed class FrameForm : Form
         AutoScaleMode = AutoScaleMode.None;
         TopMost = true;
         mEdge = new EdgeForm(target.Hwnd, exclude);
+        mEdge.WithButton = !string.IsNullOrEmpty(haltFile);
+        if (mEdge.WithButton) mStopBtn = new StopForm(target.Hwnd, exclude, haltFile, () => { if (ReadHalt()) RenderEdge(); });
         ReadLabel();
+        ReadHalt();
         mCursor = new CursorForm(target.Hwnd, exclude);
         Measure();
         if (!mRect.IsEmpty) Bounds = mRect;
@@ -764,6 +791,7 @@ internal sealed class FrameForm : Form
     {
         base.OnShown(e);
         mEdge.Show(this);
+        if (mStopBtn != null) mStopBtn.Show(this);
         mCursor.Show(this);
         mCursor.Visible = false;
         Render();
@@ -809,6 +837,7 @@ internal sealed class FrameForm : Form
         if (min == Visible)
         {
             Visible = !min; mEdge.Visible = !min;
+            if (mStopBtn != null) mStopBtn.Visible = !min;
             if (min) mCursor.Visible = false;
             mDirty = true;
         }
@@ -816,16 +845,37 @@ internal sealed class FrameForm : Form
         Measure();
         if (mDirty) Render();
         // 문구가 바뀌면 선·알약 창만 다시 그린다 (4K 빛 그림은 그대로)
-        else if (mClock.Elapsed.TotalMilliseconds - mLabelReadAt >= 500 && ReadLabel()) mEdge.Render(mRect, mScale);
+        else if (mClock.Elapsed.TotalMilliseconds - mLabelReadAt >= 500 && (ReadLabel() | ReadHalt())) RenderEdge();
         // 숨쉬기 — 0.6 ↔ 1, 2초 주기 (CSS ease-in-out 에 가까운 코사인)
         double ph = (mClock.Elapsed.TotalMilliseconds % PulseMs) / PulseMs;
-        double o = 0.8 - 0.2 * Math.Cos(2 * Math.PI * ph);
+        double o = mHalted ? 0.6 : 0.8 - 0.2 * Math.Cos(2 * Math.PI * ph); // 멈춤이면 숨쉬지 않는다
         Layered.Alpha(this, (byte)Math.Round(255 * o));
         // 빛 < 선·알약 < 커서 순으로 맨 위에 둔다
         const uint keep = 0x1 | 0x2 | V.SWP_NOACTIVATE;
         V.SetWindowPos(Handle, V.HWND_TOPMOST, 0, 0, 0, 0, keep);
         V.SetWindowPos(mEdge.Handle, V.HWND_TOPMOST, 0, 0, 0, 0, keep);
+        if (mStopBtn != null) V.SetWindowPos(mStopBtn.Handle, V.HWND_TOPMOST, 0, 0, 0, 0, keep);
         V.SetWindowPos(mCursor.Handle, V.HWND_TOPMOST, 0, 0, 0, 0, keep);
+    }
+
+    /// 멈춤 파일이 있는가. 바뀌었으면 true — 버튼(사람)이나 CLI frame resume 이 바꾼다
+    private bool ReadHalt()
+    {
+        if (string.IsNullOrEmpty(mHaltFile)) return false;
+        bool h;
+        try { h = File.Exists(mHaltFile); } catch (IOException) { return false; }
+        if (h == mHalted) return false;
+        mHalted = h;
+        mEdge.SetHalted(h);
+        return true;
+    }
+
+    /// 선·알약과 그 위 버튼을 다시 그린다 (4K 빛 그림은 그대로)
+    private void RenderEdge()
+    {
+        if (mRect.Width <= 0 || mRect.Height <= 0) return;
+        mEdge.Render(mRect, mScale);
+        if (mStopBtn != null) mStopBtn.Place(mEdge.ButtonRect, mScale, mHalted);
     }
 
     /// 알약 문구 파일을 읽는다. 바뀌었으면 true. 못 읽으면(없음·쓰는 중) 그대로 둔다
@@ -847,7 +897,7 @@ internal sealed class FrameForm : Form
         if (mRect.Width <= 0 || mRect.Height <= 0) return;
         if (Bounds != mRect) Bounds = mRect;
         using (var bmp = BuildGlow(mRect.Width, mRect.Height, mScale)) Layered.Push(this, bmp, mRect.Location, 255);
-        mEdge.Render(mRect, mScale);
+        RenderEdge();
         mCursor.SetScale(mScale);
         mDirty = false;
     }
@@ -918,8 +968,14 @@ internal sealed class EdgeForm : Form
 {
     private const int BaseLine = 3;
     public const string DefaultWords = "AI Agent 작업 중"; // src/input/frameLabel.ts DEFAULT_FRAME_LABEL 과 같게
+    public const string HaltedWords = "사람이 멈춤";
     private string mWords = DefaultWords;
+    private bool mHalted;
     private readonly bool mExclude;
+    /// 중지 버튼이 놓일 자리 (화면 좌표). Render 가 정한다 — StopForm 이 여기에 선다
+    public Rectangle ButtonRect = Rectangle.Empty;
+    /// 버튼 자리를 비워 두는가 (멈춤 파일 경로가 주어졌을 때만)
+    public bool WithButton;
 
     public EdgeForm(IntPtr target, bool exclude)
     {
@@ -955,6 +1011,14 @@ internal sealed class EdgeForm : Form
         return true;
     }
 
+    /// 멈춤이면 알약 글자가 「사람이 멈춤」. 바뀌었으면 true
+    public bool SetHalted(bool halted)
+    {
+        if (halted == mHalted) return false;
+        mHalted = halted;
+        return true;
+    }
+
     public void Render(Rectangle r, float s)
     {
         if (Bounds != r) Bounds = r;
@@ -972,23 +1036,28 @@ internal sealed class EdgeForm : Form
                     g.FillRectangle(band, 0, 0, t, r.Height);
                     g.FillRectangle(band, r.Width - t, 0, t, r.Height);
                 }
-                DrawPill(g, r.Width, s, mWords);
+                var btn = DrawPill(g, r.Width, s, mHalted ? HaltedWords : mWords, WithButton);
+                ButtonRect = btn.IsEmpty ? Rectangle.Empty : Rectangle.Round(new RectangleF(r.X + btn.X, r.Y + btn.Y, btn.Width, btn.Height));
             }
             Layered.Push(this, bmp, r.Location, 255);
         }
     }
 
-    /// 위 가운데에 붙은 알약: 아래 두 모서리만 둥글다(14px), 글자 600 14px
-    private static void DrawPill(Graphics g, int width, float s, string words)
+    /// 위 가운데에 붙은 알약: 아래 두 모서리만 둥글다(14px), 글자 600 14px. 버튼이 있으면 오른쪽에 그 자리를
+    /// 비워 두고(StopForm 이 그 위에 선다) 그 자리(이 그림 좌표)를 돌려준다
+    private static RectangleF DrawPill(Graphics g, int width, float s, string words, bool withButton)
     {
+        var btn = RectangleF.Empty;
         g.SmoothingMode = SmoothingMode.AntiAlias;
         g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
         using (var font = new Font("Malgun Gothic", 14 * s, FontStyle.Bold, GraphicsUnit.Pixel))
         {
             SizeF ts = g.MeasureString(words, font, PointF.Empty, StringFormat.GenericTypographic);
             float padL = 16 * s, padR = 16 * s, h = 32 * s, rad = 14 * s;
-            float w = padL + ts.Width + padR;
+            float bw = withButton ? StopForm.Width(s) : 0, bh = StopForm.Height(s), gap = 10 * s;
+            float w = padL + ts.Width + (withButton ? gap + bw + 6 * s : padR);
             float x0 = (width - w) / 2;
+            if (withButton) btn = new RectangleF(x0 + padL + ts.Width + gap, (h - bh) / 2 + 1 * s, bw, bh);
             using (var shape = new GraphicsPath())
             {
                 shape.AddLine(x0, 0, x0 + w, 0);
@@ -1008,6 +1077,109 @@ internal sealed class EdgeForm : Form
             float cy = h / 2 + 1 * s;
             using (var white = new SolidBrush(Color.White))
                 g.DrawString(words, font, white, x0 + padL, cy - ts.Height / 2, StringFormat.GenericTypographic);
+        }
+        return btn;
+    }
+}
+
+/// 알약 오른쪽 「■ 중지 / ▶ 재개」 버튼 — 프레임에서 **클릭을 받는 유일한 창**이다 (WS_EX_TRANSPARENT 없음).
+/// 눌러도 활성화되지 않는다(NOACTIVATE). 누르면 멈춤 파일을 만들거나 지우고 프레임에 알린다 (2026-11-17).
+/// 멈춤 파일이 있으면 그 창으로 가는 가상 입력은 거절되고(CLI 종료 코드 4) 진행 중인 끌기는 끊긴다.
+internal sealed class StopForm : Form
+{
+    private readonly bool mExclude;
+    private readonly string mHaltFile;
+    private readonly Action mChanged;
+
+    public static float Height(float s) { return 22 * s; }
+    public static float Width(float s)
+    {
+        using (var bmp = new Bitmap(1, 1)) using (var g = Graphics.FromImage(bmp)) using (var f = LabelFont(s))
+        {
+            float a = g.MeasureString(Label(false), f, PointF.Empty, StringFormat.GenericTypographic).Width;
+            float b = g.MeasureString(Label(true), f, PointF.Empty, StringFormat.GenericTypographic).Width;
+            return (float)Math.Ceiling(Math.Max(a, b) + 20 * s);
+        }
+    }
+    private static Font LabelFont(float s) { return new Font("Malgun Gothic", 12.5f * s, FontStyle.Bold, GraphicsUnit.Pixel); }
+    private static string Label(bool halted) { return halted ? "\u25B6 재개" : "\u25A0 중지"; }
+
+    public StopForm(IntPtr target, bool exclude, string haltFile, Action changed)
+    {
+        mExclude = exclude; mHaltFile = haltFile; mChanged = changed;
+        Text = "zwprobe-vcursor-stop:" + target.ToInt64();
+        FormBorderStyle = FormBorderStyle.None;
+        ShowInTaskbar = false;
+        StartPosition = FormStartPosition.Manual;
+        AutoScaleMode = AutoScaleMode.None;
+        TopMost = true;
+        Cursor = Cursors.Hand;
+        Size = new Size(1, 1);
+    }
+
+    protected override bool ShowWithoutActivation { get { return true; } }
+    protected override CreateParams CreateParams
+    {
+        // 클릭 통과(TRANSPARENT)만 뺀다 — 맨 위·도구 창·레이어드·비활성
+        get { var cp = base.CreateParams; cp.ExStyle |= Layered.ExStyle & ~0x20; return cp; }
+    }
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        V.SetWindowDisplayAffinity(Handle, mExclude ? V.WDA_EXCLUDEFROMCAPTURE : V.WDA_NONE);
+    }
+    protected override void OnPaintBackground(PaintEventArgs e) { }
+    protected override void OnPaint(PaintEventArgs e) { }
+
+    protected override void OnMouseUp(MouseEventArgs e)
+    {
+        base.OnMouseUp(e);
+        if (e.Button != MouseButtons.Left) return;
+        try
+        {
+            if (File.Exists(mHaltFile)) File.Delete(mHaltFile);
+            else
+            {
+                string dir = Path.GetDirectoryName(mHaltFile);
+                if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+                File.WriteAllText(mHaltFile, "사람이 알약의 중지를 눌렀다 " + DateTime.Now.ToString("s"), Encoding.UTF8);
+            }
+        }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
+        mChanged();
+    }
+
+    public void Place(Rectangle r, float s, bool halted)
+    {
+        if (r.IsEmpty) return;
+        Bounds = r;
+        using (var bmp = new Bitmap(r.Width, r.Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
+        {
+            using (var g = Graphics.FromImage(bmp))
+            {
+                g.Clear(Color.Transparent);
+                g.SmoothingMode = SmoothingMode.AntiAlias;
+                g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+                float rad = 7 * s;
+                using (var shape = new GraphicsPath())
+                {
+                    shape.AddArc(0, 0, 2 * rad, 2 * rad, 180, 90);
+                    shape.AddArc(r.Width - 1 - 2 * rad, 0, 2 * rad, 2 * rad, 270, 90);
+                    shape.AddArc(r.Width - 1 - 2 * rad, r.Height - 1 - 2 * rad, 2 * rad, 2 * rad, 0, 90);
+                    shape.AddArc(0, r.Height - 1 - 2 * rad, 2 * rad, 2 * rad, 90, 90);
+                    shape.CloseFigure();
+                    using (var bg = new SolidBrush(Color.FromArgb(250, 249, 245))) g.FillPath(bg, shape);
+                }
+                using (var f = LabelFont(s))
+                {
+                    string t = Label(halted);
+                    SizeF ts = g.MeasureString(t, f, PointF.Empty, StringFormat.GenericTypographic);
+                    using (var fg = new SolidBrush(Layered.B))
+                        g.DrawString(t, f, fg, (r.Width - ts.Width) / 2, (r.Height - ts.Height) / 2, StringFormat.GenericTypographic);
+                }
+            }
+            Layered.Push(this, bmp, r.Location, 255);
         }
     }
 }

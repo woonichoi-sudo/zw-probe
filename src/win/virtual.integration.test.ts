@@ -15,7 +15,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -457,8 +457,9 @@ test('frame — 클릭 통과·비활성·맨 위 창으로 대상 창을 덮고
     const { seen } = await observe(() =>
       withFrame({ pid, title }, { exclude: true }, async (hwnd, framePid) => {
         const f = listWindows({ title: `zwprobe-vcursor:${win.hwnd}` }).find((w) => w.hwnd === hwnd)!
-        // 프레임 프로세스의 창 전부(빛·선·알약·커서, 2026-11-17 Claude in Chrome 디자인)가 클릭 통과·비활성·맨 위여야 한다
-        const all = listWindows({ pid: framePid })
+        // 프레임 프로세스의 창 전부(빛·선·알약·커서, 2026-11-17 Claude in Chrome 디자인)가 클릭 통과·비활성·맨 위여야 한다.
+        // 알약의 중지 버튼 창만 클릭을 받는다 — 그 창은 아래 Stop 시험이 따로 본다
+        const all = listWindows({ pid: framePid }).filter((w) => !w.title.startsWith('zwprobe-vcursor-stop:'))
         assert.ok(all.length >= 1, '프레임 프로세스 창이 없다')
         for (const w of all) {
           for (const [bit, name] of [[WS_EX_TOPMOST, 'TOPMOST'], [WS_EX_TRANSPARENT, 'TRANSPARENT'], [WS_EX_TOOLWINDOW, 'TOOLWINDOW'], [WS_EX_LAYERED, 'LAYERED'], [WS_EX_NOACTIVATE, 'NOACTIVATE']] as const) {
@@ -764,3 +765,118 @@ test('frame — 떠 있는 동안 문구 파일이 바뀌면 알약 글자가 �
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+// ---- 사람이 멈춤: 알약의 Stop 버튼 (2026-11-17) ----------------------------------------
+// 알약 오른쪽 「중지」 버튼만 클릭을 받는다. 누르면 runs/frames/<대상 hwnd>.halt 가 생기고, 그 창으로 가는
+// 가상 입력은 모두 거절된다(종료 코드 4, --no-frame 이어도). 진행 중인 끌기는 다음 단계에서 끊고 버튼을 뗀다.
+// 재개는 사람이 「재개」 를 누르거나 CLI frame resume — MCP 에는 없다(AI 가 스스로 못 푼다). frame stop 은 안 푼다.
+// 정답: 픽스처가 받았는가(WinForms 사분면 색, Qt mouseLog), 파일이 있는가, 창 스타일.
+
+const haltFileOf = (hwnd: number) => join(FRAMES_DIR, `${hwnd}.halt`)
+const cliRun = (...args: string[]) => spawnSync(process.execPath, [CLI_TS, ...args], { encoding: 'utf8', windowsHide: true, env: qtEnv() })
+
+test('CLI — 멈춤 파일이 있으면 가상 클릭을 거절한다 (종료 코드 4, --no-frame 이어도), 픽스처에 안 닿는다', { skip: winSkip }, async () => {
+  const title = 'zwprobe-vc-halt-cli'
+  const { child, pid, win } = await launchWinForms(title, '760,140', ['--topmost', '--dpi-aware'])
+  const halt = haltFileOf(win.hwnd)
+  const dir = mkdtempSync(join(tmpdir(), 'zwprobe-fhalt-'))
+  try {
+    mkdirSync(FRAMES_DIR, { recursive: true })
+    writeFileSync(halt, 'test')
+    const cx = Math.floor(win.width / 4), cy = Math.floor(win.height / 4)
+    for (const extra of [[], ['--no-frame']]) {
+      const r = cliRun('click', String(cx), String(cy), '--virtual', '--pid', String(pid), '--title', title, ...extra)
+      assert.equal(r.status, 4, `멈춤인데 종료 코드 ${r.status}\n${r.stdout}\n${r.stderr}`)
+      assert.match(r.stdout + r.stderr, /멈춤/)
+    }
+    await sleep(300)
+    const img = capture({ pid, title }, dir, 'halted', 'screen')
+    assert.ok(!isBlack(img, cx + 20, cy + 20), '멈춤인데 클릭이 픽스처에 닿았다(사분면이 검다)')
+  } finally {
+    cliRun('frame', 'stop', '--pid', String(pid), '--title', title)
+    rmSync(halt, { force: true })
+    child.kill()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('CLI — frame resume 은 멈춤을 풀고, frame stop 은 풀지 않는다', { skip: winSkip }, async () => {
+  const title = 'zwprobe-vc-halt-resume'
+  const { child, pid, win } = await launchWinForms(title, '760,140', ['--dpi-aware'])
+  const halt = haltFileOf(win.hwnd)
+  try {
+    assert.equal(cliRun('frame', 'start', '--pid', String(pid), '--title', title).status, 0)
+    writeFileSync(halt, 'test')
+    cliRun('frame', 'stop', '--pid', String(pid), '--title', title)
+    assert.ok(existsSync(halt), 'frame stop 이 멈춤을 풀었다 — AI 가 프레임을 닫았다 다시 띄우면 빠져나간다')
+    const r = cliRun('frame', 'resume', '--pid', String(pid), '--title', title)
+    assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`)
+    assert.ok(!existsSync(halt), 'frame resume 뒤에도 멈춤 파일이 남았다')
+  } finally {
+    rmSync(halt, { force: true })
+    child.kill()
+  }
+})
+
+test('frame — 중지 버튼 창만 클릭을 받고(클릭 통과 아님) 비활성·맨 위이며 알약 자리에 있다, 누르면 멈추고 또 누르면 푼다', { skip: winSkip }, async () => {
+  const title = 'zwprobe-vc-halt-button'
+  const { child, pid, win } = await launchWinForms(title, '760,140', ['--topmost', '--dpi-aware'])
+  const dir = mkdtempSync(join(tmpdir(), 'zwprobe-fbtn-'))
+  const stop = join(dir, 'stop'), result = join(dir, 'result.json'), halt = join(dir, 'halt')
+  const framePid = startFrame({ pid, title, stop, result, excludeFromCapture: false, haltFile: halt })
+  try {
+    const s = dpiOf(win.hwnd) / 96
+    let btn
+    const deadline = Date.now() + 8000
+    while (Date.now() < deadline && btn === undefined) {
+      btn = listWindows({ pid: framePid, title: `zwprobe-vcursor-stop:${win.hwnd}` })[0]
+      if (btn === undefined) await sleep(100)
+    }
+    assert.ok(btn, '중지 버튼 창이 없다')
+    assert.equal(btn.exStyle & WS_EX_TRANSPARENT, 0, '중지 버튼이 클릭 통과다 — 누를 수 없다')
+    for (const [bit, name] of [[WS_EX_TOPMOST, 'TOPMOST'], [WS_EX_NOACTIVATE, 'NOACTIVATE'], [WS_EX_TOOLWINDOW, 'TOOLWINDOW']] as const) {
+      assert.ok((btn.exStyle & bit) !== 0, `중지 버튼에 WS_EX_${name} 가 없다`)
+    }
+    assert.ok(btn.y >= win.y && btn.y + btn.height <= win.y + Math.round(40 * s), `중지 버튼이 위쪽 알약 자리가 아니다 (y ${btn.y}~${btn.y + btn.height}, 창 위 ${win.y})`)
+    assert.ok(btn.x > win.x && btn.x + btn.width < win.x + win.width, '중지 버튼이 대상 창 가로 범위 밖이다')
+    // 사람 대신 가상 클릭으로 버튼 창을 누른다 (실제 커서를 쓰지 않는다)
+    const press = () => virtualInput({ op: 'click', x: Math.floor(btn!.width / 2), y: Math.floor(btn!.height / 2), pid: framePid, title: `zwprobe-vcursor-stop:${win.hwnd}` })
+    press()
+    await sleep(600)
+    assert.ok(existsSync(halt), '중지를 눌렀는데 멈춤 파일이 없다')
+    press()
+    await sleep(600)
+    assert.ok(!existsSync(halt), '재개를 눌렀는데 멈춤 파일이 남았다')
+  } finally {
+    writeFileSync(stop, '')
+    await sleep(300)
+    spawnSync('taskkill', ['/F', '/PID', String(framePid)], { stdio: 'ignore' })
+    child.kill()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('Qt — 끌기 도중 멈추면 다음 단계에서 끊고 버튼을 뗀다', { skip: qtSkip }, async () => {
+  const q = await launchQt()
+  const dir = mkdtempSync(join(tmpdir(), 'zwprobe-vhalt-'))
+  const halt = join(dir, 'halt')
+  try {
+    const n = (await q.log()).length
+    const a = q.at(30, 40), b = q.at(230, 40)
+    // virtualInput 은 끝날 때까지 막으므로 멈춤 파일은 다른 프로세스가 0.4초 뒤에 만든다 (사람이 누르는 것 대신)
+    spawn(process.execPath, ['-e', `setTimeout(() => require('fs').writeFileSync(${JSON.stringify(halt)}, 'x'), 400)`], { stdio: 'ignore' })
+    const r = virtualInput({ op: 'drag', ...a, toX: b.x, toY: b.y, steps: 200, ...q.filter, haltFile: halt }) as VirtualResultWithHalt
+    assert.equal(r.halted, true, '멈춤 파일이 생겼는데 끌기가 끝까지 갔다')
+    assert.ok(r.stepsDone !== undefined && r.stepsDone > 0 && r.stepsDone < 200, `끊긴 단계가 이상하다: ${r.stepsDone}`)
+    const lines = await newLines(q.log, n)
+    const press = lines.findIndex((l) => l.startsWith('press 30,40 b=L'))
+    const release = lines.findIndex((l, i) => i > press && l.startsWith('release '))
+    assert.ok(press >= 0 && release > press, `끊은 뒤 버튼을 안 뗐다: ${lines.join(' | ')}`)
+    assert.ok(!lines.some((l) => l.startsWith('release 230,40')), '끝점까지 갔다')
+  } finally {
+    q.cleanup()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+type VirtualResultWithHalt = ReturnType<typeof virtualInput> & { halted?: boolean; stepsDone?: number }

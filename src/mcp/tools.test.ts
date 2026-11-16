@@ -242,3 +242,19 @@ test('buildArgv — 창 필터 hwnd 는 --hwnd 로 (같은 제목 창 중 작은
   assert.ok(u.ok, u.ok ? '' : u.reason)
   if (u.ok) assert.ok(u.argv.join(' ').includes('--hwnd 77'))
 })
+
+// ---- 사람이 멈춤 (Stop 버튼, 2026-11-17) ----------------------------------------------
+test('가상 입력 도구는 종료 코드 4(사람이 멈춤)의 뜻을 갖는다', () => {
+  for (const name of ['zw_drag', 'zw_wheel', 'zw_type', 'zw_move']) {
+    const t = findTool(name)!
+    assert.ok(t.exits[4]?.includes('멈춤'), `${name} 에 종료 코드 4 의 뜻이 없다`)
+  }
+  for (const name of ['zw_click', 'zw_key']) {
+    assert.ok(findTool(name)!.exits[4]?.includes('멈춤'), `${name}(virtual) 에 종료 코드 4 의 뜻이 없다`)
+  }
+})
+
+test('zw_frame 은 멈춤을 풀 수 없다 — 재개는 사람 몫 (resume 없음)', () => {
+  const action = findTool('zw_frame')!.params.find((p) => p.name === 'action')!
+  assert.ok(!(action.choices ?? []).includes('resume'), 'MCP 로 AI 가 스스로 멈춤을 풀 수 있다')
+})

@@ -19,6 +19,16 @@ import type { WindowFilter, WindowInfo } from './win/zwwin.ts'
 const FRAMES_DIR = resolve(dirname(fileURLToPath(import.meta.url)), '../runs/frames')
 const FRAME_PREFIX = 'zwprobe-vcursor:'
 
+/** 사람이 알약의 「중지」 를 누르면 생기는 파일 — 대상 창마다 하나 (2026-11-17) */
+export const haltFileOf = (targetHwnd: number) => join(FRAMES_DIR, `${targetHwnd}.halt`)
+
+/** 사람이 멈췄을 때의 종료 코드. MCP 도구의 exits[4] 와 같다 */
+export const EXIT_HALTED = 4
+
+const HALT_HELP =
+  '사람이 알약의 「중지」 를 눌렀다 — 사용자에게 묻는다. 스스로 풀지 않는다. ' +
+  '재개는 사람이 알약의 「재개」 를 누르거나 (사람이) zwprobe frame resume'
+
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
 export function modsFrom(flags: Map<string, string>): Mods {
@@ -51,7 +61,7 @@ export async function ensureFrame(filter: WindowFilter, flags?: Map<string, stri
   if (frames().some((f) => f.target === target.hwnd)) return { target, started: false }
   const stop = join(FRAMES_DIR, `${target.hwnd}.stop`)
   rmSync(stop, { force: true })
-  startFrame({ pid: target.pid, title: target.title, stop, result: join(FRAMES_DIR, `${target.hwnd}.json`), labelFile })
+  startFrame({ pid: target.pid, title: target.title, stop, result: join(FRAMES_DIR, `${target.hwnd}.json`), labelFile, haltFile: haltFileOf(target.hwnd) })
   const deadline = Date.now() + 5000
   while (Date.now() < deadline) {
     if (frames().some((f) => f.target === target.hwnd)) return { target, started: true }
@@ -61,15 +71,26 @@ export async function ensureFrame(filter: WindowFilter, flags?: Map<string, stri
   return { target, started: false }
 }
 
-/** 입력하고 결과를 찍는다. 0=대상이 받았다 2=의심 */
+/** 입력하고 결과를 찍는다. 0=대상이 받았다 2=의심 4=사람이 멈춤 */
 async function runVirtual(req: VirtualRequest, filter: WindowFilter, flags: Map<string, string>): Promise<number> {
+  // 사람이 멈췄으면 아무것도 하지 않는다 — --no-frame 이어도 (멈춤은 대상 창에 붙는다)
+  const target = targetOf(filter)
+  const halt = target !== undefined ? haltFileOf(target.hwnd) : undefined
+  if (halt !== undefined && existsSync(halt)) {
+    console.log(`멈춤  입력하지 않았다 — ${HALT_HELP}`)
+    return EXIT_HALTED
+  }
   if (!flags.has('no-frame')) {
     const f = await ensureFrame(filter, flags)
     if (f.started) console.log(`프레임  대상 창 위에 가상 커서를 띄웠다 (끄기: zwprobe frame stop)`)
   }
   // 누르기 전의 창 목록 — 소유 다이얼로그가 받은 것을 맞다고 판정하려면 필요하다(judgeVirtual)
   const before = listWindows(filter.pid !== undefined ? { pid: filter.pid } : filter)
-  const r: VirtualResult = virtualInput({ ...req, ...filter })
+  const r: VirtualResult = virtualInput({ ...req, ...filter, ...(halt !== undefined ? { haltFile: halt } : {}) })
+  if (r.halted === true) {
+    console.log(`멈춤  ${r.stepsDone === 0 ? '입력하지 않았다' : `${r.stepsDone} 단계에서 끊었다 (끌기면 그 자리에서 버튼을 뗐다)`} — ${HALT_HELP}`)
+    return EXIT_HALTED
+  }
   printVirtual(r)
   const v = judgeVirtual(r, before.filter((w) => w.pid === r.window.pid))
   console.log(`판정  ${v.onTarget ? '정상' : '의심'} — ${v.reason}`)
@@ -209,6 +230,17 @@ export async function cmdFrame(rest: string[], filter: WindowFilter, hasFilter: 
     for (const f of mine) console.log(`프레임  pid=${f.frame.pid} 대상 hwnd=${f.target}`)
     return 0
   }
+  if (action === 'resume') {
+    // 사람이 쓰라고 둔다 — MCP 에는 없다 (AI 가 스스로 멈춤을 풀지 못하게)
+    const ts = hasFilter ? listWindows(filter) : frames().map((f) => ({ hwnd: f.target }))
+    let n = 0
+    for (const t of ts) {
+      const h = haltFileOf(t.hwnd)
+      if (existsSync(h)) { rmSync(h, { force: true }); n++ }
+    }
+    console.log(n === 0 ? '멈춤  멈춘 것이 없다' : `멈춤  ${n}개를 풀었다 — 가상 입력을 다시 받는다`)
+    return 0
+  }
   if (action === 'stop') {
     if (mine.length === 0) {
       console.log('프레임  떠 있는 것이 없다')
@@ -228,6 +260,6 @@ export async function cmdFrame(rest: string[], filter: WindowFilter, hasFilter: 
     console.log(`프레임  ${mine.length}개 닫았다`)
     return 0
   }
-  console.error(`frame 뒤에는 start · stop · status 중 하나를 쓴다: '${action}'`)
+  console.error(`frame 뒤에는 start · stop · status · resume 중 하나를 쓴다: '${action}'`)
   return 1
 }

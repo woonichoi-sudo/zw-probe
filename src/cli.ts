@@ -1354,6 +1354,7 @@ async function main(): Promise<number> {
           '    zwprobe type "<글자>"               포커스 입력칸에 넣는다\n' +
           '    zwprobe move <x> <y> [--from x,y] [--steps 10]   버튼 없이 옮긴다 (마우스를 올려야 열리는 메뉴)\n' +
           '    zwprobe frame start|stop|status    프레임은 가상 입력 때 알아서 뜬다. --no-frame 으로 끈다\n' +
+          '    zwprobe frame resume               사람이 알약의 「중지」 로 멈춘 것을 푼다 (사람이 쓴다, 멈춤이면 가상 입력은 종료 코드 4)\n' +
           '                                       알약 문구: --label "..." (없으면 MCP 클라이언트 이름, 그것도 없으면 AI Agent 작업 중)\n' +
           '    (다른 프로그램은 --process·--title 로 고른다. 기본은 z-weave)\n' +
           '  시나리오\n' +

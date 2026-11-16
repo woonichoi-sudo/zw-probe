@@ -324,8 +324,13 @@ export function startRecord(opts: StartRecordOptions): number {
  * SetKeyboardState, 대상이 처리한 뒤 되돌린다). 좌표는 `shot` 캡처 픽셀 그대로다.
  * 인자 조립·검사는 virtual.ts, 판정은 judgeVirtual.
  */
-export function virtualInput(opts: VirtualRequest & WindowFilter): VirtualResult {
-  return run([...virtualArgs(opts), ...filterArgs(opts)]) as VirtualResult
+/**
+ * 가상 입력. haltFile 이 있으면 zwwin 이 입력 전과 끌기·이동·글자 단계마다 보고, 생기면 끊는다
+ * (결과 halted·stepsDone, 사람이 알약의 「중지」 를 누른 것, 2026-11-17).
+ */
+export function virtualInput(opts: VirtualRequest & WindowFilter & { haltFile?: string }): VirtualResult {
+  const halt = opts.haltFile !== undefined ? ['--halt-file', opts.haltFile] : []
+  return run([...virtualArgs(opts), ...filterArgs(opts), ...halt]) as VirtualResult
 }
 
 /** 가상 커서 프레임 창의 제목. v* 동사가 이 제목으로 프레임을 찾아 커서 위치를 알린다 */
@@ -342,6 +347,8 @@ export type StartFrameOptions = WindowFilter & {
   excludeFromCapture?: boolean
   /** 알약 문구 파일 (UTF-8). 프레임이 0.5초마다 읽는다. 없거나 비면 "AI Agent 작업 중" */
   labelFile?: string
+  /** 멈춤 파일. 주면 알약에 「중지/재개」 버튼이 생기고 누르면 이 파일을 만들거나 지운다 */
+  haltFile?: string
 }
 
 /**
@@ -353,6 +360,7 @@ export function startFrame(opts: StartFrameOptions): number {
   const args = ['frame', '--stop', opts.stop, '--result', opts.result, ...filterArgs(opts)]
   if (opts.excludeFromCapture === false) args.push('--no-exclude')
   if (opts.labelFile !== undefined) args.push('--label-file', opts.labelFile)
+  if (opts.haltFile !== undefined) args.push('--halt-file', opts.haltFile)
   const e = edge(args)
   const child = spawn(e.cmd, e.argv, { detached: true, stdio: 'ignore', windowsHide: true })
   child.unref()
