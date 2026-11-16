@@ -20,7 +20,12 @@ export type Message = { jsonrpc?: string; id?: number | string | null; method?: 
 export type Response = { jsonrpc: '2.0'; id: number | string | null; result?: unknown; error?: { code: number; message: string } }
 
 export type RunResult = { code: number; stdout: string; stderr: string }
-export type Runner = (argv: string[]) => Promise<RunResult>
+/** 실행 문맥 — 지금은 부른 AI 클라이언트 이름뿐이다 (프레임 알약에 뜬다, 2026-11-17) */
+export type RunContext = { agent?: string }
+export type Runner = (argv: string[], ctx?: RunContext) => Promise<RunResult>
+
+/** 연결 하나 동안 기억하는 것. initialize 의 clientInfo.name 을 담는다 */
+export type Session = { agent?: string }
 
 function ok(id: number | string | null, result: unknown): Response {
   return { jsonrpc: '2.0', id, result }
@@ -73,14 +78,18 @@ export function formatRun(tool: Tool, argv: string[], r: RunResult): string {
 /**
  * 메시지 하나를 처리한다. 알림(id 없음)이면 null — 답하지 않는다.
  */
-export async function handle(msg: Message, run: Runner): Promise<Response | null> {
+export async function handle(msg: Message, run: Runner, session: Session = {}): Promise<Response | null> {
   const id = msg.id ?? null
   const method = msg.method ?? ''
   const isNotification = msg.id === undefined || msg.id === null
 
   switch (method) {
     case 'initialize': {
-      const asked = (msg.params as { protocolVersion?: unknown } | undefined)?.protocolVersion
+      const params = msg.params as { protocolVersion?: unknown; clientInfo?: { name?: unknown } } | undefined
+      const asked = params?.protocolVersion
+      // MCP 표준: 클라이언트는 자기 이름을 clientInfo.name 에 싣는다 — 프레임 알약에 "<이름> 작업 중" 으로 띄운다
+      const agent = params?.clientInfo?.name
+      if (typeof agent === 'string' && agent.trim() !== '') session.agent = agent
       const version = typeof asked === 'string' && SUPPORTED_PROTOCOLS.includes(asked) ? asked : DEFAULT_PROTOCOL
       return ok(id, {
         protocolVersion: version,
@@ -117,7 +126,7 @@ export async function handle(msg: Message, run: Runner): Promise<Response | null
 
       let r: RunResult
       try {
-        r = await run(built.argv)
+        r = await run(built.argv, session.agent !== undefined ? { agent: session.agent } : undefined)
       } catch (err) {
         return ok(id, {
           content: [{ type: 'text', text: `zwprobe 를 실행하지 못했다: ${err instanceof Error ? err.message : String(err)}` }],

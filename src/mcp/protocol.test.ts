@@ -120,3 +120,33 @@ test('formatRun — 긴 출력을 자르고 그렇다고 말한다', () => {
   // 잘린 것을 모르면 "없다" 를 단정하게 된다 — 트리에서 가장 나쁜 실패다.
   assert.match(text, /잘랐다/)
 })
+
+// ---- 어떤 AI 가 부르는가 (2026-11-17) ------------------------------------------------
+// MCP 표준: 클라이언트는 initialize 의 params.clientInfo.name 에 자기 이름을 싣는다. 서버는 세션에 기억했다가
+// 도구를 실행할 때 러너에 넘긴다 — 러너(server.ts)가 ZWPROBE_AGENT 로 CLI 에 주고, 프레임 알약에 뜬다.
+
+/** 러너가 받은 두 번째 인자(실행 문맥)도 기록한다 */
+function ctxRunner(): Runner & { ctxs: Array<{ agent?: string } | undefined> } {
+  const ctxs: Array<{ agent?: string } | undefined> = []
+  const run = async (_argv: string[], ctx?: { agent?: string }) => {
+    ctxs.push(ctx)
+    return { code: 0, stdout: '', stderr: '' }
+  }
+  return Object.assign(run, { ctxs })
+}
+
+test('initialize 의 clientInfo.name 을 세션에 기억해 도구 실행에 넘긴다', async () => {
+  const run = ctxRunner()
+  const session = {}
+  await handle({ id: 1, method: 'initialize', params: { protocolVersion: DEFAULT_PROTOCOL, clientInfo: { name: 'claude-code', version: '2.0.0' } } }, run, session)
+  await handle({ id: 2, method: 'tools/call', params: { name: 'zw_state', arguments: {} } }, run, session)
+  assert.equal(run.ctxs[0]?.agent, 'claude-code')
+})
+
+test('clientInfo 가 없으면 이름을 넘기지 않는다', async () => {
+  const run = ctxRunner()
+  const session = {}
+  await handle({ id: 1, method: 'initialize', params: { protocolVersion: DEFAULT_PROTOCOL } }, run, session)
+  await handle({ id: 2, method: 'tools/call', params: { name: 'zw_state', arguments: {} } }, run, session)
+  assert.equal(run.ctxs[0]?.agent, undefined)
+})

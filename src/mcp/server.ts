@@ -14,7 +14,7 @@ import { createInterface } from 'node:readline'
 import { join, resolve } from 'node:path'
 
 import { handle } from './protocol.ts'
-import type { Message, RunResult } from './protocol.ts'
+import type { Message, RunContext, RunResult, Session } from './protocol.ts'
 
 /** 리포 루트. captures/·runs/·baselines/ 가 여기 기준이라 cwd 를 여기로 맞춘다. */
 const ROOT = resolve(import.meta.dirname, '..', '..')
@@ -23,11 +23,13 @@ const CLI = join(ROOT, 'src', 'cli.ts')
 /** 시나리오는 앱 준비까지 포함해 분 단위로 돈다. 상한은 넉넉히 두고 넘으면 죽인다. */
 const TIMEOUT_MS = 10 * 60 * 1000
 
-function runCli(argv: string[]): Promise<RunResult> {
+function runCli(argv: string[], ctx?: RunContext): Promise<RunResult> {
   return new Promise((resolvePromise, rejectPromise) => {
     // shell 을 쓰지 않는다 — 인자가 셸을 거치지 않으므로 따옴표·공백을 신경 쓸 필요가
     // 없고 주입도 성립하지 않는다.
-    const child = spawn(process.execPath, [CLI, ...argv], { cwd: ROOT, shell: false })
+    // 부른 AI 이름을 CLI 에 넘긴다 — 가상 입력이 프레임 알약에 "<이름> 작업 중" 으로 띄운다 (frameLabel.ts)
+    const env = ctx?.agent !== undefined ? { ...process.env, ZWPROBE_AGENT: ctx.agent } : process.env
+    const child = spawn(process.execPath, [CLI, ...argv], { cwd: ROOT, shell: false, env })
 
     let stdout = ''
     let stderr = ''
@@ -68,6 +70,8 @@ const rl = createInterface({ input: process.stdin })
 // 요청은 순서대로 처리한다. 하나가 앱을 조작하는 동안 다른 하나가 끼어들면 **관찰과
 // 조작이 뒤섞여** 무엇을 본 것인지 알 수 없어진다.
 let queue: Promise<void> = Promise.resolve()
+/** 이 연결(이 서버 프로세스) 동안 기억하는 것 — 부른 AI 클라이언트 이름 */
+const session: Session = {}
 
 rl.on('line', (line) => {
   const text = line.trim()
@@ -88,7 +92,7 @@ rl.on('line', (line) => {
 
   queue = queue.then(async () => {
     try {
-      const res = await handle(msg, runCli)
+      const res = await handle(msg, runCli, session)
       if (res !== null) send(res)
     } catch (err) {
       process.stderr.write(`처리 중 예외: ${err instanceof Error ? err.stack : String(err)}\n`)

@@ -11,6 +11,7 @@ import { spawnSync } from 'node:child_process'
 
 import { frameTitle, listWindows, startFrame, virtualInput } from './win/zwwin.ts'
 import { judgeVirtual } from './input/virtual.ts'
+import { frameLabel } from './input/frameLabel.ts'
 import type { Mods, VirtualRequest, VirtualResult } from './input/virtual.ts'
 import type { WindowFilter, WindowInfo } from './win/zwwin.ts'
 
@@ -36,15 +37,21 @@ function targetOf(filter: WindowFilter): WindowInfo | undefined {
   return listWindows(filter)[0]
 }
 
-/** 대상 창에 프레임이 없으면 띄우고 뜰 때까지 기다린다. 띄운 것이 있으면 true */
-export async function ensureFrame(filter: WindowFilter): Promise<{ target?: WindowInfo; started: boolean }> {
+/**
+ * 대상 창에 프레임이 없으면 띄우고 뜰 때까지 기다린다. 띄운 것이 있으면 true.
+ * 알약 문구는 **부를 때마다** `<hwnd>.label` 에 쓴다 — 떠 있는 프레임이 0.5초마다 읽으므로 다른 AI 가 이어서
+ * 부르면 문구가 바뀐다 (--label > ZWPROBE_AGENT > 기본, frameLabel.ts, 2026-11-17).
+ */
+export async function ensureFrame(filter: WindowFilter, flags?: Map<string, string>): Promise<{ target?: WindowInfo; started: boolean }> {
   const target = targetOf(filter)
   if (target === undefined) return { started: false }
-  if (frames().some((f) => f.target === target.hwnd)) return { target, started: false }
   mkdirSync(FRAMES_DIR, { recursive: true })
+  const labelFile = join(FRAMES_DIR, `${target.hwnd}.label`)
+  writeFileSync(labelFile, frameLabel(process.env.ZWPROBE_AGENT, flags?.get('label')), 'utf8')
+  if (frames().some((f) => f.target === target.hwnd)) return { target, started: false }
   const stop = join(FRAMES_DIR, `${target.hwnd}.stop`)
   rmSync(stop, { force: true })
-  startFrame({ pid: target.pid, title: target.title, stop, result: join(FRAMES_DIR, `${target.hwnd}.json`) })
+  startFrame({ pid: target.pid, title: target.title, stop, result: join(FRAMES_DIR, `${target.hwnd}.json`), labelFile })
   const deadline = Date.now() + 5000
   while (Date.now() < deadline) {
     if (frames().some((f) => f.target === target.hwnd)) return { target, started: true }
@@ -57,7 +64,7 @@ export async function ensureFrame(filter: WindowFilter): Promise<{ target?: Wind
 /** 입력하고 결과를 찍는다. 0=대상이 받았다 2=의심 */
 async function runVirtual(req: VirtualRequest, filter: WindowFilter, flags: Map<string, string>): Promise<number> {
   if (!flags.has('no-frame')) {
-    const f = await ensureFrame(filter)
+    const f = await ensureFrame(filter, flags)
     if (f.started) console.log(`프레임  대상 창 위에 가상 커서를 띄웠다 (끄기: zwprobe frame stop)`)
   }
   // 누르기 전의 창 목록 — 소유 다이얼로그가 받은 것을 맞다고 판정하려면 필요하다(judgeVirtual)
@@ -180,10 +187,10 @@ export async function cmdType(rest: string[], filter: WindowFilter, flags: Map<s
   return runVirtual({ op: 'type', text: rest[0]! }, filter, flags)
 }
 
-export async function cmdFrame(rest: string[], filter: WindowFilter, hasFilter: boolean): Promise<number> {
+export async function cmdFrame(rest: string[], filter: WindowFilter, hasFilter: boolean, flags?: Map<string, string>): Promise<number> {
   const action = rest[0] ?? 'status'
   if (action === 'start') {
-    const f = await ensureFrame(filter)
+    const f = await ensureFrame(filter, flags)
     if (f.target === undefined) {
       console.error('대상 창을 찾지 못했다.')
       return 1

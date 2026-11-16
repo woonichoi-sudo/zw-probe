@@ -691,3 +691,76 @@ test('frame — 위 가운데에 B 바탕·흰 글자 알약이 붙는다', { sk
     assert.ok(white > 20, `알약에 흰 글자가 없다 (흰 픽셀 ${white}개)`)
   })
 })
+
+// ---- 알약 문구: 어떤 AI 가 작업 중인가 (2026-11-17) ------------------------------------
+// CLI 가 문구를 runs/frames/<대상 hwnd>.label 에 쓰고(--label > ZWPROBE_AGENT > "AI Agent 작업 중", 규칙은
+// frameLabel.test.ts), 떠 있는 프레임이 그 파일을 읽어 알약을 바꾼다. 글자 내용은 픽셀로 못 가르므로
+// 프레임 쪽은 "짧은 문구 → 긴 문구로 바꾸면 알약이 넓어진다" 로 본다.
+
+const FRAMES_DIR = resolve(HERE, '../../runs/frames')
+
+/** 위 가운데 알약 폭 (pill 시험과 같은 기준) */
+function pillWidth(img: Bgra, s: number): number {
+  const mx = Math.floor(img.width / 2), y = Math.round(16 * s)
+  const inPill = (x: number) => {
+    const p = pixelAt(img, x, y)
+    return p.r >= 185 && p.g >= 85 && p.b >= 50
+  }
+  if (!inPill(mx)) return 0
+  let l = mx, r = mx
+  while (l > 0 && inPill(l - 1)) l--
+  while (r < img.width - 1 && inPill(r + 1)) r++
+  return r - l + 1
+}
+
+test('CLI — frame start 가 알약 문구를 파일에 쓴다: --label 이 이기고, 없으면 ZWPROBE_AGENT 이름으로', { skip: winSkip }, async () => {
+  const title = 'zwprobe-vc-label-cli'
+  const { child, pid, win } = await launchWinForms(title, '760,140', ['--dpi-aware'])
+  const file = join(FRAMES_DIR, `${win.hwnd}.label`)
+  const run = (agent: string | undefined, ...extra: string[]) => {
+    const env = { ...process.env }
+    delete env.ZWPROBE_AGENT
+    if (agent !== undefined) env.ZWPROBE_AGENT = agent
+    return spawnSync(process.execPath, [CLI_TS, 'frame', 'start', '--pid', String(pid), '--title', title, ...extra], { encoding: 'utf8', windowsHide: true, env })
+  }
+  try {
+    let r = run(undefined, '--label', '수동 문구')
+    assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`)
+    assert.equal(readFileSync(file, 'utf8'), '수동 문구')
+    // 이미 떠 있는 프레임에도 문구는 다시 쓴다 — 다른 AI 가 이어서 부르면 바뀌어야 한다
+    r = run('claude-code')
+    assert.equal(r.status, 0, `${r.stdout}\n${r.stderr}`)
+    assert.equal(readFileSync(file, 'utf8'), 'Claude Code 작업 중')
+    r = run(undefined)
+    assert.equal(readFileSync(file, 'utf8'), 'AI Agent 작업 중')
+  } finally {
+    spawnSync(process.execPath, [CLI_TS, 'frame', 'stop', '--pid', String(pid), '--title', title], { encoding: 'utf8', windowsHide: true })
+    child.kill()
+    rmSync(file, { force: true })
+  }
+})
+
+test('frame — 떠 있는 동안 문구 파일이 바뀌면 알약 글자가 바뀐다', { skip: winSkip }, async () => {
+  const title = 'zwprobe-vc-label-live'
+  const { child, pid, win } = await launchWinForms(title, '760,140', ['--topmost', '--dpi-aware'])
+  const dir = mkdtempSync(join(tmpdir(), 'zwprobe-flabel-'))
+  const stop = join(dir, 'stop'), result = join(dir, 'result.json'), label = join(dir, 'label')
+  writeFileSync(label, 'AB')
+  const framePid = startFrame({ pid, title, stop, result, excludeFromCapture: false, labelFile: label })
+  try {
+    const s = dpiOf(win.hwnd) / 96
+    await sleep(1200)
+    const short = pillWidth(capture({ pid, title }, dir, 'short', 'screen'), s)
+    assert.ok(short > 0, '알약이 없다')
+    writeFileSync(label, 'Claude Code 작업 중')
+    await sleep(1200)
+    const long = pillWidth(capture({ pid, title }, dir, 'long', 'screen'), s)
+    assert.ok(long > short + 40 * s, `문구를 길게 바꿨는데 알약 폭이 ${short} → ${long}px`)
+  } finally {
+    writeFileSync(stop, '')
+    await sleep(300)
+    spawnSync('taskkill', ['/F', '/PID', String(framePid)], { stdio: 'ignore' })
+    child.kill()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

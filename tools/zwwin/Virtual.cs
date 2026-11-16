@@ -607,11 +607,12 @@ internal static partial class Program
         if (wins.Count == 0) return Fail("조건에 맞는 창을 찾지 못했다.");
         var target = wins[0];
         bool exclude = !a.ContainsKey("no-exclude");
+        string labelFile = Get(a, "label-file");
 
         string reason = "stop";
         var t = new System.Threading.Thread(() =>
         {
-            var form = new FrameForm(target, stop, exclude);
+            var form = new FrameForm(target, stop, exclude, labelFile);
             Application.Run(form);
             reason = form.EndReason;
         });
@@ -629,7 +630,8 @@ internal static partial class Program
 // 사용자 요청으로 Claude in Chrome 확장(1.0.107 `assets/agent-visual-indicator.js`)의 CSS 값을 옮겼다.
 //   빛   : inset 0 0 22px/44px/66px rgba(B, .8/.5/.25), 2초 주기 0.6↔1 숨쉬기 (claude-pulse)
 //   선   : inset 3px 단색 B — 숨쉬지 않는다 (알약과 한 몸으로 보이게)
-//   알약 : 위 가운데에 붙은 B 바탕 + 흰 글자 「AI Agent 작업 중」 (사용자 요청으로 Claude 로고·이름 대신, Stop 버튼은 뺐다 — 멈추는 장치가 따로 필요)
+//   알약 : 위 가운데에 붙은 B 바탕 + 흰 글자. 문구는 --label-file 을 0.5초마다 읽는다 — CLI 가 "<AI 이름> 작업 중" 을 쓴다
+//          (없으면 「AI Agent 작업 중」, Claude 로고는 사용자 요청으로 뺐다, Stop 버튼도 뺐다 — 멈추는 장치가 따로 필요)
 //   커서 : 22px 칸(viewBox 18)의 삼각 화살표 B 채움 + 흰 외곽선 1.5, 그림자 0 1px 2px rgba(0,0,0,.28), 0.2초 미끄러짐
 //   클릭 : 34px 원 3px B 테두리 + B 30% 바탕, 0.22→1 로 커지며 0.65초 동안 사라진다
 // B = rgb(198, 97, 63). 길이는 모두 96 dpi 기준이고 대상 모니터 배율을 곱한다.
@@ -717,6 +719,8 @@ internal sealed class FrameForm : Form
     private readonly Win mTarget;
     private readonly string mStop;
     private readonly bool mExclude;
+    private readonly string mLabelFile;
+    private double mLabelReadAt = -1e9;
     private readonly Timer mTimer = new Timer { Interval = 33 };
     private readonly System.Diagnostics.Stopwatch mClock = System.Diagnostics.Stopwatch.StartNew();
     private readonly EdgeForm mEdge;
@@ -726,9 +730,9 @@ internal sealed class FrameForm : Form
     private bool mDirty = true;
     public string EndReason = "stop";
 
-    public FrameForm(Win target, string stop, bool exclude)
+    public FrameForm(Win target, string stop, bool exclude, string labelFile)
     {
-        mTarget = target; mStop = stop; mExclude = exclude;
+        mTarget = target; mStop = stop; mExclude = exclude; mLabelFile = labelFile;
         Text = "zwprobe-vcursor:" + target.Hwnd.ToInt64();
         FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false;
@@ -736,6 +740,7 @@ internal sealed class FrameForm : Form
         AutoScaleMode = AutoScaleMode.None;
         TopMost = true;
         mEdge = new EdgeForm(target.Hwnd, exclude);
+        ReadLabel();
         mCursor = new CursorForm(target.Hwnd, exclude);
         Measure();
         if (!mRect.IsEmpty) Bounds = mRect;
@@ -810,6 +815,8 @@ internal sealed class FrameForm : Form
         if (min) return;
         Measure();
         if (mDirty) Render();
+        // 문구가 바뀌면 선·알약 창만 다시 그린다 (4K 빛 그림은 그대로)
+        else if (mClock.Elapsed.TotalMilliseconds - mLabelReadAt >= 500 && ReadLabel()) mEdge.Render(mRect, mScale);
         // 숨쉬기 — 0.6 ↔ 1, 2초 주기 (CSS ease-in-out 에 가까운 코사인)
         double ph = (mClock.Elapsed.TotalMilliseconds % PulseMs) / PulseMs;
         double o = 0.8 - 0.2 * Math.Cos(2 * Math.PI * ph);
@@ -819,6 +826,20 @@ internal sealed class FrameForm : Form
         V.SetWindowPos(Handle, V.HWND_TOPMOST, 0, 0, 0, 0, keep);
         V.SetWindowPos(mEdge.Handle, V.HWND_TOPMOST, 0, 0, 0, 0, keep);
         V.SetWindowPos(mCursor.Handle, V.HWND_TOPMOST, 0, 0, 0, 0, keep);
+    }
+
+    /// 알약 문구 파일을 읽는다. 바뀌었으면 true. 못 읽으면(없음·쓰는 중) 그대로 둔다
+    private bool ReadLabel()
+    {
+        mLabelReadAt = mClock.Elapsed.TotalMilliseconds;
+        if (string.IsNullOrEmpty(mLabelFile)) return false;
+        try
+        {
+            if (!File.Exists(mLabelFile)) return mEdge.SetWords(null);
+            return mEdge.SetWords(File.ReadAllText(mLabelFile, Encoding.UTF8));
+        }
+        catch (IOException) { return false; }
+        catch (UnauthorizedAccessException) { return false; }
     }
 
     private void Render()
@@ -896,7 +917,8 @@ internal sealed class FrameForm : Form
 internal sealed class EdgeForm : Form
 {
     private const int BaseLine = 3;
-    private const string Words = "AI Agent 작업 중";
+    public const string DefaultWords = "AI Agent 작업 중"; // src/input/frameLabel.ts DEFAULT_FRAME_LABEL 과 같게
+    private string mWords = DefaultWords;
     private readonly bool mExclude;
 
     public EdgeForm(IntPtr target, bool exclude)
@@ -923,6 +945,16 @@ internal sealed class EdgeForm : Form
     protected override void OnPaintBackground(PaintEventArgs e) { }
     protected override void OnPaint(PaintEventArgs e) { }
 
+    /// 알약 문구를 바꾼다. 비거나 null 이면 기본. 바뀌었으면 true (다시 그려야 한다)
+    public bool SetWords(string words)
+    {
+        string w = string.IsNullOrWhiteSpace(words) ? DefaultWords : words.Trim();
+        if (w.Length > 40) w = w.Substring(0, 40);
+        if (w == mWords) return false;
+        mWords = w;
+        return true;
+    }
+
     public void Render(Rectangle r, float s)
     {
         if (Bounds != r) Bounds = r;
@@ -940,20 +972,20 @@ internal sealed class EdgeForm : Form
                     g.FillRectangle(band, 0, 0, t, r.Height);
                     g.FillRectangle(band, r.Width - t, 0, t, r.Height);
                 }
-                DrawPill(g, r.Width, s);
+                DrawPill(g, r.Width, s, mWords);
             }
             Layered.Push(this, bmp, r.Location, 255);
         }
     }
 
     /// 위 가운데에 붙은 알약: 아래 두 모서리만 둥글다(14px), 글자 600 14px
-    private static void DrawPill(Graphics g, int width, float s)
+    private static void DrawPill(Graphics g, int width, float s, string words)
     {
         g.SmoothingMode = SmoothingMode.AntiAlias;
         g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
         using (var font = new Font("Malgun Gothic", 14 * s, FontStyle.Bold, GraphicsUnit.Pixel))
         {
-            SizeF ts = g.MeasureString(Words, font, PointF.Empty, StringFormat.GenericTypographic);
+            SizeF ts = g.MeasureString(words, font, PointF.Empty, StringFormat.GenericTypographic);
             float padL = 16 * s, padR = 16 * s, h = 32 * s, rad = 14 * s;
             float w = padL + ts.Width + padR;
             float x0 = (width - w) / 2;
@@ -975,7 +1007,7 @@ internal sealed class EdgeForm : Form
             }
             float cy = h / 2 + 1 * s;
             using (var white = new SolidBrush(Color.White))
-                g.DrawString(Words, font, white, x0 + padL, cy - ts.Height / 2, StringFormat.GenericTypographic);
+                g.DrawString(words, font, white, x0 + padL, cy - ts.Height / 2, StringFormat.GenericTypographic);
         }
     }
 }

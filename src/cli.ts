@@ -1329,7 +1329,7 @@ async function main(): Promise<number> {
     case 'frame': {
       const f = filterFrom(flags)
       const given = f.process !== undefined || f.pid !== undefined || f.title !== undefined
-      return await cmdFrame(rest, given ? f : targetFilter(flags), given)
+      return await cmdFrame(rest, given ? f : targetFilter(flags), given, flags)
     }
     default:
       console.error(
@@ -1354,6 +1354,7 @@ async function main(): Promise<number> {
           '    zwprobe type "<글자>"               포커스 입력칸에 넣는다\n' +
           '    zwprobe move <x> <y> [--from x,y] [--steps 10]   버튼 없이 옮긴다 (마우스를 올려야 열리는 메뉴)\n' +
           '    zwprobe frame start|stop|status    프레임은 가상 입력 때 알아서 뜬다. --no-frame 으로 끈다\n' +
+          '                                       알약 문구: --label "..." (없으면 MCP 클라이언트 이름, 그것도 없으면 AI Agent 작업 중)\n' +
           '    (다른 프로그램은 --process·--title 로 고른다. 기본은 z-weave)\n' +
           '  시나리오\n' +
           '    zwprobe run <파일.ts> [--out 폴더] [--keep-going]   (0=통과 2=실패 1=거부)\n' +

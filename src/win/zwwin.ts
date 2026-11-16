@@ -340,6 +340,8 @@ export type StartFrameOptions = WindowFilter & {
   result: string
   /** 캡처·녹화에서 빼는가. 기본 true — 끄는 것은 시험의 대조용이다 */
   excludeFromCapture?: boolean
+  /** 알약 문구 파일 (UTF-8). 프레임이 0.5초마다 읽는다. 없거나 비면 "AI Agent 작업 중" */
+  labelFile?: string
 }
 
 /**
@@ -350,6 +352,7 @@ export type StartFrameOptions = WindowFilter & {
 export function startFrame(opts: StartFrameOptions): number {
   const args = ['frame', '--stop', opts.stop, '--result', opts.result, ...filterArgs(opts)]
   if (opts.excludeFromCapture === false) args.push('--no-exclude')
+  if (opts.labelFile !== undefined) args.push('--label-file', opts.labelFile)
   const e = edge(args)
   const child = spawn(e.cmd, e.argv, { detached: true, stdio: 'ignore', windowsHide: true })
   child.unref()
