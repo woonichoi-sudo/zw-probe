@@ -144,6 +144,7 @@ internal static partial class Program
                 case "windows": return CmdWindows(a);
                 case "shot": return CmdShot(a);
                 case "key": return CmdKey(a);
+                case "activate": return CmdActivate(a);
                 case "click": return CmdClick(a);
                 case "uia": return CmdUia(a);
                 case "record": return CmdRecord(a);
@@ -649,6 +650,30 @@ internal static partial class Program
         sb.Append(",\"shift\":").Append(shift ? "true" : "false");
         sb.Append(",\"activated\":").Append(activated ? "true" : "false");
         sb.Append(",\"foregroundAfter\":").Append(N.GetForegroundWindow().ToInt64());
+        sb.Append(",\"window\":");
+        AppendWin(sb, w);
+        sb.Append('}');
+        Console.Out.Write(sb.ToString());
+        return 0;
+    }
+
+    // 활성화만 해 본다 — 입력도 커서 이동도 없다 (2026-11-16). 실제 입력(SendInput) 을 쓰기 전에 이 프로세스가
+    // 창을 포그라운드로 올릴 수 있는지 사실로 알리려고 둔다 (백그라운드 작업이면 포그라운드 잠금으로 못 올린다).
+    private static int CmdActivate(Dictionary<string, string> a)
+    {
+        var wins = Filter(Enumerate(), a);
+        if (wins.Count == 0) return Fail("조건에 맞는 창을 찾지 못했다.");
+        var w = wins[0];
+        N.POINT before, after;
+        N.GetCursorPos(out before);
+        bool activated = Activate(w.Hwnd, 10, 40);
+        N.GetCursorPos(out after);
+        var sb = new StringBuilder();
+        sb.Append("{\"ok\":true,\"hwnd\":").Append(w.Hwnd.ToInt64());
+        sb.Append(",\"activated\":").Append(activated ? "true" : "false");
+        sb.Append(",\"foregroundAfter\":").Append(N.GetForegroundWindow().ToInt64());
+        sb.Append(",\"cursorBefore\":{\"x\":").Append(before.X).Append(",\"y\":").Append(before.Y).Append('}');
+        sb.Append(",\"cursorAfter\":{\"x\":").Append(after.X).Append(",\"y\":").Append(after.Y).Append('}');
         sb.Append(",\"window\":");
         AppendWin(sb, w);
         sb.Append('}');

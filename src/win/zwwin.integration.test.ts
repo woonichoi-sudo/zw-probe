@@ -19,7 +19,7 @@ import { join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { dirname } from 'node:path'
 
-import { click, listWindows, shot, uiaTree, ZWWIN_EXE } from './zwwin.ts'
+import { activate, click, listWindows, shot, uiaTree, ZWWIN_EXE } from './zwwin.ts'
 import { analyze, judgeBlank, pixelAt } from '../image/stats.ts'
 import { isInteractive, judgeActivity, styleNames } from './windowState.ts'
 import { judgeClick } from '../input/click.ts'
@@ -217,7 +217,57 @@ test('다이얼로그가 없으면 idle 로 판정한다', { skip }, async () =>
   }
 })
 
-test('클릭 좌표가 캡처 좌표계와 같다 — 누른 사분면이 검게 변한다', { skip }, async () => {
+
+/**
+ * 실제 클릭 시험(SendInput)을 이 환경에서 할 수 있나 — 픽스처를 띄워 활성화만 해 본다 (커서는 안 움직인다).
+ * 옛 `click` 은 누르기 전에 대상 창을 포그라운드로 올리는데, 백그라운드 작업에서 돌면 Windows 포그라운드 잠금으로
+ * 못 올린다 (2026-11-16, 판정 이유 「포그라운드를 잡지 못했다」). 그때는 실패 대신 건너뛴다 — 사람이 연 터미널에선 돈다.
+ * 한 번만 재고 기억한다. 못 하면 건너뛸 이유 문자열, 되면 false.
+ */
+let realClickProbe: Promise<string | false> | undefined
+function realClickBlocked(): Promise<string | false> {
+  realClickProbe ??= (async () => {
+    const child = spawn(FIXTURE_EXE, FIXTURE_ARGS, { detached: false, stdio: 'ignore' })
+    try {
+      const pid = child.pid!
+      const deadline = Date.now() + 8000
+      while (listWindows({ pid }).length === 0 && Date.now() < deadline) await sleep(100)
+      const r = activate({ pid })
+      return r.activated ? false : '이 프로세스는 창을 포그라운드로 올릴 수 없다 (백그라운드 작업 등 — Windows 포그라운드 잠금). 실제 클릭 시험은 사람이 연 터미널에서 돈다'
+    } finally {
+      child.kill()
+      await sleep(300)
+    }
+  })()
+  return realClickProbe
+}
+
+test('activate 는 커서를 움직이지 않고 활성화 결과를 사실로 보고한다 (2026-11-16)', { skip }, async () => {
+  const child = spawn(FIXTURE_EXE, FIXTURE_ARGS, { detached: false, stdio: 'ignore' })
+  try {
+    const pid = child.pid!
+    const deadline = Date.now() + 8000
+    let w = listWindows({ pid })[0]
+    while (!w && Date.now() < deadline) {
+      await sleep(100)
+      w = listWindows({ pid })[0]
+    }
+    assert.ok(w, '픽스처 창이 떠야 한다')
+    const r = activate({ pid })
+    assert.equal(typeof r.activated, 'boolean')
+    assert.equal(r.hwnd, w!.hwnd)
+    assert.deepEqual(r.cursorAfter, r.cursorBefore, '활성화만 한다 — 커서는 그대로')
+  } finally {
+    child.kill()
+  }
+})
+
+test('클릭 좌표가 캡처 좌표계와 같다 — 누른 사분면이 검게 변한다', { skip }, async (t) => {
+  const why = await realClickBlocked()
+  if (why) {
+    t.skip(why)
+    return
+  }
   // 이 테스트의 요점은 "클릭이 됐다" 가 아니라 **좌표계가 일치한다** 는 것이다.
   // zwwin.exe 는 캡처와 같은 사각형(BestRect)으로 창 기준 좌표를 화면 좌표로 옮긴다.
   // 그게 어긋나면 여기서 다른 사분면이 검어지거나 아무 것도 안 변한다.
@@ -278,7 +328,12 @@ test('클릭 좌표가 캡처 좌표계와 같다 — 누른 사분면이 검게
   }
 })
 
-test('--slow 는 같은 자리를 누르고 커서를 돌려놓는다 — 느려질 뿐이다', { skip }, async () => {
+test('--slow 는 같은 자리를 누르고 커서를 돌려놓는다 — 느려질 뿐이다', { skip }, async (t) => {
+  const why = await realClickBlocked()
+  if (why) {
+    t.skip(why)
+    return
+  }
   // 사람이 눈으로 따라가라고 느리게 하는 모드다. **느려지는 것 말고는 아무것도 달라지면
   // 안 된다** — 좌표 변환, 대상 판정, 누른 결과, 커서 복원이 다 같아야 한다.
   // 창은 pid 로 좁힌다. 다른 테스트 파일이 같은 제목의 픽스처를 띄울 수 있다.
@@ -326,7 +381,12 @@ test('--slow 는 같은 자리를 누르고 커서를 돌려놓는다 — 느려
   }
 })
 
-test('--stay 는 같은 자리를 누르고 커서를 돌려놓지 않는다', { skip }, async () => {
+test('--stay 는 같은 자리를 누르고 커서를 돌려놓지 않는다', { skip }, async (t) => {
+  const why = await realClickBlocked()
+  if (why) {
+    t.skip(why)
+    return
+  }
   // 하위 메뉴(›)는 커서가 떠나면 닫힌다. 돌려놓지 않는 것 말고는 같아야 한다.
   const child = spawn(FIXTURE_EXE, FIXTURE_ARGS, { detached: false, stdio: 'ignore' })
   try {
@@ -399,7 +459,12 @@ test('UIA 트리를 읽고 창 기준 좌표로 변환한다', { skip }, async (
   }
 })
 
-test('이름으로 찾아 누르는 전 경로가 돈다', { skip }, async () => {
+test('이름으로 찾아 누르는 전 경로가 돈다', { skip }, async (t) => {
+  const why = await realClickBlocked()
+  if (why) {
+    t.skip(why)
+    return
+  }
   // findOne → clickPoint → click 이 한 줄로 이어지는지 본다. 픽스처 버튼은
   // 눌리면 **우하단** 사분면을 검게 만든다 — 버튼 자신은 좌상단에 있으므로
   // 확인할 픽셀이 버튼에 가려지지 않는다.

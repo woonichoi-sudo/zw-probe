@@ -177,6 +177,21 @@ export function sendKey(opts: SendKeyOptions): KeyResult {
   return run(args) as KeyResult
 }
 
+export type ActivateResult = {
+  hwnd: number
+  /** 포그라운드로 올렸나 — 백그라운드 작업 등에서는 Windows 포그라운드 잠금으로 false */
+  activated: boolean
+  foregroundAfter: number
+  cursorBefore: { x: number; y: number }
+  cursorAfter: { x: number; y: number }
+  window: WindowInfo
+}
+
+/** 활성화만 해 본다 — 입력·커서 이동 없음 (2026-11-16). 실제 입력 시험을 이 환경에서 할 수 있는지 알 때 쓴다 */
+export function activate(filter: WindowFilter): ActivateResult {
+  return run(['activate', ...filterArgs(filter)]) as ActivateResult
+}
+
 export type ClickResult = {
   button: string
   double: boolean
