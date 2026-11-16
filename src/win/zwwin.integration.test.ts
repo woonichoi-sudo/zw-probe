@@ -244,7 +244,7 @@ test('클릭 좌표가 캡처 좌표계와 같다 — 누른 사분면이 검게
 
     for (const [name, cx, cy] of cases) {
       const r = await withRealInput(() => click({ title: FIXTURE_TITLE, x: cx, y: cy }))
-      assert.equal(judgeClick(r).onTarget, true, `${name} 클릭이 대상에 닿지 않았다`)
+      assert.equal(judgeClick(r).onTarget, true, `${name} 클릭이 대상에 닿지 않았다 — ${judgeClick(r).reason}`)
       assert.equal(r.x, cx)
       assert.equal(r.y, cy)
       // 창 위치가 반영돼야 한다 — 창 기준 좌표를 그대로 화면 좌표로 쓰면 여기서 걸린다
@@ -307,7 +307,7 @@ test('--slow 는 같은 자리를 누르고 커서를 돌려놓는다 — 느려
     })
     const took = Date.now() - t0
 
-    assert.equal(judgeClick(r).onTarget, true, '클릭이 대상에 닿지 않았다')
+    assert.equal(judgeClick(r).onTarget, true, `클릭이 대상에 닿지 않았다 — ${judgeClick(r).reason}`)
     assert.equal(r.screenX, w.x + cx)
     assert.equal(r.screenY, w.y + cy)
     assert.equal(r.cursorRestored, true)
@@ -344,7 +344,7 @@ test('--stay 는 같은 자리를 누르고 커서를 돌려놓지 않는다', {
     const cy = Math.floor(w.height / 4)
     const r = await withRealInput(() => click({ pid, x: cx, y: cy, stay: true }))
 
-    assert.equal(judgeClick(r).onTarget, true, '클릭이 대상에 닿지 않았다')
+    assert.equal(judgeClick(r).onTarget, true, `클릭이 대상에 닿지 않았다 — ${judgeClick(r).reason}`)
     assert.equal(r.screenX, w.x + cx)
     assert.equal(r.screenY, w.y + cy)
     assert.equal(r.cursorRestored, false, '--stay 인데 커서를 돌려놓았다고 보고했다')
