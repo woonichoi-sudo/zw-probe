@@ -351,6 +351,12 @@ export type StartFrameOptions = WindowFilter & {
   labelFile?: string
   /** 멈춤 파일. 주면 알약에 「중지/재개」 버튼이 생기고 누르면 이 파일을 만들거나 지운다 */
   haltFile?: string
+  /** 마지막 가상 입력 뒤 이만큼(ms) 동안 사람 클릭을 막는다. 기본 10000 */
+  idleMs?: number
+  /** Claude Code 훅이 세션마다 작업 시작 시각을 쓰는 폴더 — 그 작업이 이어지는 동안 막는다 (tools/claude-hooks/frame-busy.mjs) */
+  busyDir?: string
+  /** 작업 표시가 남아 있어도 마지막 가상 입력 뒤 이만큼(ms) 지나면 걷는다. 기본 300000 (5분) */
+  busyFallbackMs?: number
 }
 
 /**
@@ -363,6 +369,9 @@ export function startFrame(opts: StartFrameOptions): number {
   if (opts.excludeFromCapture === false) args.push('--no-exclude')
   if (opts.labelFile !== undefined) args.push('--label-file', opts.labelFile)
   if (opts.haltFile !== undefined) args.push('--halt-file', opts.haltFile)
+  if (opts.idleMs !== undefined) args.push('--idle-ms', String(opts.idleMs))
+  if (opts.busyDir !== undefined) args.push('--busy-dir', opts.busyDir)
+  if (opts.busyFallbackMs !== undefined) args.push('--busy-fallback-ms', String(opts.busyFallbackMs))
   const e = edge(args)
   const child = spawn(e.cmd, e.argv, { detached: true, stdio: 'ignore', windowsHide: true })
   child.unref()

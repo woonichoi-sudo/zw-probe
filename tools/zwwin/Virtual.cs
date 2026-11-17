@@ -91,6 +91,7 @@ internal static class V
     public const uint WM_MOUSEMOVE = 0x200, WM_MOUSEWHEEL = 0x20A, WM_KEYDOWN = 0x100, WM_KEYUP = 0x101, WM_CHAR = 0x102;
     public const uint WM_SYSKEYDOWN = 0x104, WM_SYSKEYUP = 0x105;
     public const uint WM_APP_VCURSOR = 0x8000 + 0x5A1; // 프레임에 커서 위치를 알린다 (wParam=x, lParam=y, 화면 물리 픽셀)
+    public const uint WM_APP_VACTIVE = 0x8000 + 0x5A3; // 프레임에 가상 입력이 있었다고 알린다 — 작업 중(사람 클릭 막기) 시계를 다시 잰다
     public const uint WM_APP_VCLICK = 0x8000 + 0x5A2;  // 프레임에 눌렀다고 알린다 — 그 자리에 클릭 원 (같은 좌표계, 2026-11-17)
     public const int MK_LBUTTON = 0x1, MK_RBUTTON = 0x2, MK_SHIFT = 0x4, MK_CONTROL = 0x8, MK_MBUTTON = 0x10;
     // 버튼 없는 WM_MOUSEMOVE 에 싣는 정의되지 않은 비트. Qt 는 wParam==0 인 이동을 "마우스가 창 위에 없으면" 버린다
@@ -293,6 +294,7 @@ internal static partial class Program
         if (wins.Count == 0) return "조건에 맞는 창을 찾지 못했다.";
         ctx = new VCtx { W = wins[0], Ctrl = a.ContainsKey("ctrl"), Shift = a.ContainsKey("shift"), Alt = a.ContainsKey("alt"), HaltFile = Get(a, "halt-file"), TestCapsOn = a.ContainsKey("test-caps-on") };
         if (ctx.HaltNow()) { ctx.Halted = true; ctx.StepsDone = 0; }
+        else NotifyActive(ctx.W);
         N.GetCursorPos(out ctx.CursorBefore);
         ctx.FgBefore = N.GetForegroundWindow().ToInt64();
         return null;
@@ -324,6 +326,13 @@ internal static partial class Program
         if (frame) System.Threading.Thread.Sleep(FrameForm.GlideMs + 20);
     }
 
+    /// 프레임에 가상 입력이 있었다고 알린다 — 작업 중으로 보고 사람 클릭을 막는다 (키·글자는 커서 알림이 없어서 따로)
+    private static void NotifyActive(Win w)
+    {
+        IntPtr f = V.FindWindowW(null, "zwprobe-vcursor:" + w.Hwnd.ToInt64());
+        if (f != IntPtr.Zero) V.PostMessage(f, V.WM_APP_VACTIVE, IntPtr.Zero, IntPtr.Zero);
+    }
+
     /// 프레임에 눌렀다고 알린다 — 그 자리에 클릭 원이 퍼진다
     private static void NotifyClick(Win w, int sx, int sy)
     {
@@ -350,6 +359,7 @@ internal static partial class Program
     {
         N.POINT after;
         N.GetCursorPos(out after);
+        if (!c.Halted) NotifyActive(c.W);
         var sb = new StringBuilder();
         sb.Append("{\"ok\":true,\"op\":"); AppendStr(sb, op);
         if (h != null)
@@ -637,11 +647,16 @@ internal static partial class Program
         bool exclude = !a.ContainsKey("no-exclude");
         string labelFile = Get(a, "label-file");
         string haltFile = Get(a, "halt-file");
+        int idleMs = 10000;
+        int.TryParse(Get(a, "idle-ms") ?? "10000", out idleMs);
+        string busyDir = Get(a, "busy-dir");
+        int busyFallbackMs = 300000;
+        int.TryParse(Get(a, "busy-fallback-ms") ?? "300000", out busyFallbackMs);
 
         string reason = "stop";
         var t = new System.Threading.Thread(() =>
         {
-            var form = new FrameForm(target, stop, exclude, labelFile, haltFile);
+            var form = new FrameForm(target, stop, exclude, labelFile, haltFile, idleMs, busyDir, busyFallbackMs);
             Application.Run(form);
             reason = form.EndReason;
         });
@@ -753,6 +768,14 @@ internal sealed class FrameForm : Form
     private double mLabelReadAt = -1e9;
     private bool mHalted;
     private readonly StopForm mStopBtn; // 멈춤 파일 경로가 없으면 null — 버튼을 안 띄운다
+    private readonly BlockForm mBlock;
+    private readonly int mIdleMs;
+    private double mActiveAt = NowMs(); // 마지막 가상 입력 (벽시계 unix ms — 훅이 쓴 시각과 견준다). 띄운 순간부터 작업 중
+    private readonly string mBusyDir;      // Claude Code 훅이 세션마다 작업 시작 시각을 쓰는 폴더 (tools/claude-hooks)
+    private readonly int mBusyFallbackMs;  // 작업 표시가 남아 있어도 마지막 입력 뒤 이만큼 지나면 걷는다 (세션이 죽은 경우)
+    private bool mBusyMarked;              // 마지막으로 읽은: 이 창에 입력한 뒤에도 이어지는 작업이 있는가
+    private static double NowMs() { return (DateTime.UtcNow - new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc)).TotalMilliseconds; }
+    private bool mBusy = true;
     private readonly Timer mTimer = new Timer { Interval = 33 };
     private readonly System.Diagnostics.Stopwatch mClock = System.Diagnostics.Stopwatch.StartNew();
     private readonly EdgeForm mEdge;
@@ -762,9 +785,11 @@ internal sealed class FrameForm : Form
     private bool mDirty = true;
     public string EndReason = "stop";
 
-    public FrameForm(Win target, string stop, bool exclude, string labelFile, string haltFile)
+    public FrameForm(Win target, string stop, bool exclude, string labelFile, string haltFile, int idleMs, string busyDir, int busyFallbackMs)
     {
+        mBusyDir = busyDir; mBusyFallbackMs = Math.Max(1000, busyFallbackMs);
         mTarget = target; mStop = stop; mExclude = exclude; mLabelFile = labelFile; mHaltFile = haltFile;
+        mIdleMs = Math.Max(100, idleMs);
         Text = "zwprobe-vcursor:" + target.Hwnd.ToInt64();
         FormBorderStyle = FormBorderStyle.None;
         ShowInTaskbar = false;
@@ -772,6 +797,7 @@ internal sealed class FrameForm : Form
         AutoScaleMode = AutoScaleMode.None;
         TopMost = true;
         mEdge = new EdgeForm(target.Hwnd, exclude);
+        mBlock = new BlockForm(target.Hwnd, exclude);
         mEdge.WithButton = !string.IsNullOrEmpty(haltFile);
         if (mEdge.WithButton) mStopBtn = new StopForm(target.Hwnd, exclude, haltFile, () => { if (ReadHalt()) RenderEdge(); });
         ReadLabel();
@@ -798,6 +824,7 @@ internal sealed class FrameForm : Form
     protected override void OnShown(EventArgs e)
     {
         base.OnShown(e);
+        mBlock.Show(this);
         mEdge.Show(this);
         if (mStopBtn != null) mStopBtn.Show(this);
         mCursor.Show(this);
@@ -845,6 +872,7 @@ internal sealed class FrameForm : Form
         if (min == Visible)
         {
             Visible = !min; mEdge.Visible = !min;
+            if (min) mBlock.Visible = false;
             if (mStopBtn != null) mStopBtn.Visible = !min;
             if (min) mCursor.Visible = false;
             mDirty = true;
@@ -853,17 +881,54 @@ internal sealed class FrameForm : Form
         Measure();
         if (mDirty) Render();
         // 문구가 바뀌면 선·알약 창만 다시 그린다 (4K 빛 그림은 그대로)
-        else if (mClock.Elapsed.TotalMilliseconds - mLabelReadAt >= 500 && (ReadLabel() | ReadHalt())) RenderEdge();
+        else if (mClock.Elapsed.TotalMilliseconds - mLabelReadAt >= 500)
+        {
+            ReadBusy();
+            if (ReadLabel() | ReadHalt()) RenderEdge();
+        }
         // 숨쉬기 — 0.6 ↔ 1, 2초 주기 (CSS ease-in-out 에 가까운 코사인)
         double ph = (mClock.Elapsed.TotalMilliseconds % PulseMs) / PulseMs;
         double o = mHalted ? 0.6 : 0.8 - 0.2 * Math.Cos(2 * Math.PI * ph); // 멈춤이면 숨쉬지 않는다
+        // 작업 중 = 마지막 가상 입력 뒤 idle-ms 안. 아니면 빛을 끄고 알약을 「대기 중」 으로, 사람 클릭을 막지 않는다
+        // 작업 중 = 마지막 가상 입력 뒤 idle-ms 안, 또는 그 입력 전에 시작된 Claude Code 작업이 아직 이어진다(훅 표시, 안전장치 안)
+        double since = NowMs() - mActiveAt;
+        bool busy = since < mIdleMs || (mBusyMarked && since < mBusyFallbackMs);
+        if (busy != mBusy) { mBusy = busy; mEdge.SetIdle(!busy); RenderEdge(); }
+        bool block = busy && !mHalted;
+        if (block != mBlock.Visible) mBlock.Visible = block;
+        if (!busy) o = 0;
         Layered.Alpha(this, (byte)Math.Round(255 * o));
         // 빛 < 선·알약 < 커서 순으로 맨 위에 둔다
         const uint keep = 0x1 | 0x2 | V.SWP_NOACTIVATE;
         V.SetWindowPos(Handle, V.HWND_TOPMOST, 0, 0, 0, 0, keep);
+        if (mBlock.Visible) V.SetWindowPos(mBlock.Handle, V.HWND_TOPMOST, 0, 0, 0, 0, keep);
         V.SetWindowPos(mEdge.Handle, V.HWND_TOPMOST, 0, 0, 0, 0, keep);
         if (mStopBtn != null) V.SetWindowPos(mStopBtn.Handle, V.HWND_TOPMOST, 0, 0, 0, 0, keep);
         V.SetWindowPos(mCursor.Handle, V.HWND_TOPMOST, 0, 0, 0, 0, keep);
+    }
+
+    /// 작업 표시 폴더를 읽는다 — 시작 시각이 마지막 가상 입력 이전인 표시가 하나라도 있으면 그 작업이 이 창을 건드렸다.
+    /// 입력 뒤에 시작된 작업(다른 요청)은 이 창을 건드리기 전까지 막지 않는다
+    private void ReadBusy()
+    {
+        bool marked = false;
+        if (!string.IsNullOrEmpty(mBusyDir))
+        {
+            try
+            {
+                if (Directory.Exists(mBusyDir))
+                    foreach (var f in Directory.GetFiles(mBusyDir))
+                    {
+                        double t;
+                        string txt;
+                        try { txt = File.ReadAllText(f).Trim(); } catch (IOException) { continue; }
+                        if (double.TryParse(txt, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out t) && t <= mActiveAt) { marked = true; break; }
+                    }
+            }
+            catch (IOException) { }
+            catch (UnauthorizedAccessException) { }
+        }
+        mBusyMarked = marked;
     }
 
     /// 멈춤 파일이 있는가. 바뀌었으면 true — 버튼(사람)이나 CLI frame resume 이 바꾼다
@@ -906,6 +971,7 @@ internal sealed class FrameForm : Form
         if (Bounds != mRect) Bounds = mRect;
         using (var bmp = BuildGlow(mRect.Width, mRect.Height, mScale)) Layered.Push(this, bmp, mRect.Location, 255);
         RenderEdge();
+        mBlock.Place(mRect);
         mCursor.SetScale(mScale);
         mDirty = false;
     }
@@ -957,8 +1023,14 @@ internal sealed class FrameForm : Form
 
     protected override void WndProc(ref Message m)
     {
+        if (m.Msg == (int)V.WM_APP_VACTIVE)
+        {
+            mActiveAt = NowMs();
+            return;
+        }
         if (m.Msg == (int)V.WM_APP_VCURSOR)
         {
+            mActiveAt = NowMs();
             if (Visible) mCursor.MoveTo(new Point(m.WParam.ToInt32(), m.LParam.ToInt32()));
             return;
         }
@@ -1019,6 +1091,18 @@ internal sealed class EdgeForm : Form
         return true;
     }
 
+    private bool mIdle;
+
+    /// 대기 중(가상 입력이 한동안 없음)이면 「… 작업 중」 을 「… 대기 중」 으로
+    public void SetIdle(bool idle) { mIdle = idle; }
+
+    private string Shown()
+    {
+        if (mHalted) return HaltedWords;
+        if (!mIdle) return mWords;
+        return mWords.EndsWith("작업 중") ? mWords.Substring(0, mWords.Length - 4) + "대기 중" : mWords + " · 대기 중";
+    }
+
     /// 멈춤이면 알약 글자가 「사람이 멈춤」. 바뀌었으면 true
     public bool SetHalted(bool halted)
     {
@@ -1044,7 +1128,7 @@ internal sealed class EdgeForm : Form
                     g.FillRectangle(band, 0, 0, t, r.Height);
                     g.FillRectangle(band, r.Width - t, 0, t, r.Height);
                 }
-                var btn = DrawPill(g, r.Width, s, mHalted ? HaltedWords : mWords, WithButton);
+                var btn = DrawPill(g, r.Width, s, Shown(), WithButton);
                 ButtonRect = btn.IsEmpty ? Rectangle.Empty : Rectangle.Round(new RectangleF(r.X + btn.X, r.Y + btn.Y, btn.Width, btn.Height));
             }
             Layered.Push(this, bmp, r.Location, 255);
@@ -1087,6 +1171,52 @@ internal sealed class EdgeForm : Form
                 g.DrawString(words, font, white, x0 + padL, cy - ts.Height / 2, StringFormat.GenericTypographic);
         }
         return btn;
+    }
+}
+
+/// 작업 중 막을 창 — 대상 창 전체를 덮어 사람의 클릭·휠을 받아 버린다 (2026-11-17 사용자 "작업하는 동안은 내가 클릭할 수 없게").
+/// 클릭 통과가 아니고(TRANSPARENT 없음) 눌려도 활성화되지 않는다(NOACTIVATE). 눈에 안 보이게 픽셀 투명도 1/255 로 채운다
+/// — 0 이면 레이어드 창은 그 픽셀을 클릭 통과시킨다. 가상 입력은 대상 창에 직접 넣으므로 막히지 않는다.
+/// 프레임이 작업 중(마지막 가상 입력 뒤 idle-ms 안)이고 멈춤이 아닐 때만 보인다.
+internal sealed class BlockForm : Form
+{
+    private readonly bool mExclude;
+
+    public BlockForm(IntPtr target, bool exclude)
+    {
+        mExclude = exclude;
+        Text = "zwprobe-vcursor-block:" + target.ToInt64();
+        FormBorderStyle = FormBorderStyle.None;
+        ShowInTaskbar = false;
+        StartPosition = FormStartPosition.Manual;
+        AutoScaleMode = AutoScaleMode.None;
+        TopMost = true;
+        Cursor = Cursors.No;
+        Size = new Size(1, 1);
+    }
+
+    protected override bool ShowWithoutActivation { get { return true; } }
+    protected override CreateParams CreateParams
+    {
+        get { var cp = base.CreateParams; cp.ExStyle |= Layered.ExStyle & ~0x20; return cp; }
+    }
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        V.SetWindowDisplayAffinity(Handle, mExclude ? V.WDA_EXCLUDEFROMCAPTURE : V.WDA_NONE);
+    }
+    protected override void OnPaintBackground(PaintEventArgs e) { }
+    protected override void OnPaint(PaintEventArgs e) { }
+
+    public void Place(Rectangle r)
+    {
+        if (r.Width <= 0 || r.Height <= 0) return;
+        if (Bounds != r) Bounds = r;
+        using (var bmp = new Bitmap(r.Width, r.Height, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
+        {
+            using (var g = Graphics.FromImage(bmp)) g.Clear(Color.FromArgb(1, 0, 0, 0));
+            Layered.Push(this, bmp, r.Location, 255);
+        }
     }
 }
 

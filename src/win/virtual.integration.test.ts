@@ -458,8 +458,8 @@ test('frame — 클릭 통과·비활성·맨 위 창으로 대상 창을 덮고
       withFrame({ pid, title }, { exclude: true }, async (hwnd, framePid) => {
         const f = listWindows({ title: `zwprobe-vcursor:${win.hwnd}` }).find((w) => w.hwnd === hwnd)!
         // 프레임 프로세스의 창 전부(빛·선·알약·커서, 2026-11-17 Claude in Chrome 디자인)가 클릭 통과·비활성·맨 위여야 한다.
-        // 알약의 중지 버튼 창만 클릭을 받는다 — 그 창은 아래 Stop 시험이 따로 본다
-        const all = listWindows({ pid: framePid }).filter((w) => !w.title.startsWith('zwprobe-vcursor-stop:'))
+        // 알약의 중지 버튼 창과 작업 중 막을 창만 클릭을 받는다 — 그 둘은 아래 시험이 따로 본다
+        const all = listWindows({ pid: framePid }).filter((w) => !w.title.startsWith('zwprobe-vcursor-stop:') && !w.title.startsWith('zwprobe-vcursor-block:'))
         assert.ok(all.length >= 1, '프레임 프로세스 창이 없다')
         for (const w of all) {
           for (const [bit, name] of [[WS_EX_TOPMOST, 'TOPMOST'], [WS_EX_TRANSPARENT, 'TRANSPARENT'], [WS_EX_TOOLWINDOW, 'TOOLWINDOW'], [WS_EX_LAYERED, 'LAYERED'], [WS_EX_NOACTIVATE, 'NOACTIVATE']] as const) {
@@ -910,3 +910,142 @@ test('Qt — 사람이 Caps Lock 을 켜 둬도 vkey A 는 소문자 a', { skip:
     q.cleanup()
   }
 })
+
+// ---- 작업 중에는 사람이 대상 창을 못 누른다 (2026-11-17 사용자) --------------------------
+// 가상 입력이 있은 뒤 일정 시간(기본 10초, 시험은 --idle-ms) 동안 프레임이 "막을 창" 으로 대상 창을 덮어 사람의 클릭·휠을
+// 받아 버린다. 사람이 「중지」 를 누르거나 시간이 지나면 걷힌다. 가상 입력은 대상 창에 직접 넣으므로 막혀도 닿는다.
+// 정답: 사람 마우스가 실제로 갈 창 = Windows WindowFromPoint (구현과 독립, PowerShell 로 모니터별 DPI 인식으로 읽는다).
+
+function rootAt(sx: number, sy: number): number {
+  const ps =
+    `Add-Type -Namespace W -Name P -MemberDefinition '` +
+    `[DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr c);` +
+    `[DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(long p);` +
+    `[DllImport("user32.dll")] public static extern IntPtr GetAncestor(IntPtr h, uint f);'; ` +
+    `[void][W.P]::SetProcessDpiAwarenessContext([IntPtr](-4)); ` +
+    `$p = ([long]${sy} -shl 32) -bor ([long]${sx} -band 0xFFFFFFFF); ` +
+    `[W.P]::GetAncestor([W.P]::WindowFromPoint($p), 2).ToInt64()`
+  const r = spawnSync('powershell', ['-NoProfile', '-Command', ps], { encoding: 'utf8' })
+  const h = Number(r.stdout.trim())
+  assert.ok(Number.isFinite(h) && h > 0, `WindowFromPoint 를 못 읽었다: ${r.stdout} ${r.stderr}`)
+  return h
+}
+
+async function withBlockFrame(name: string, opts: { idleMs?: number; busyDir?: string; busyFallbackMs?: number }, fn: (ctx: { pid: number; title: string; win: WindowInfoLite; framePid: number; halt: string; mid: () => number; dir: string }) => Promise<void>) {
+  const title = `zwprobe-vc-${name}`
+  const { child, pid, win } = await launchWinForms(title, '760,140', ['--topmost', '--dpi-aware'])
+  const dir = mkdtempSync(join(tmpdir(), `zwprobe-f${name}-`))
+  const stop = join(dir, 'stop'), result = join(dir, 'result.json'), halt = join(dir, 'halt')
+  const framePid = startFrame({ pid, title, stop, result, excludeFromCapture: false, haltFile: halt, ...(opts.idleMs !== undefined ? { idleMs: opts.idleMs } : {}), ...(opts.busyDir !== undefined ? { busyDir: opts.busyDir } : {}), ...(opts.busyFallbackMs !== undefined ? { busyFallbackMs: opts.busyFallbackMs } : {}) })
+  try {
+    await sleep(800)
+    // 픽스처 오른쪽 아래(흰 칸) 가운데 — 알약·버튼·커서와 떨어진 곳
+    const mid = () => rootAt(win.x + Math.floor((win.width * 3) / 4), win.y + Math.floor((win.height * 3) / 4))
+    await fn({ pid, title, win, framePid, halt, mid, dir })
+  } finally {
+    writeFileSync(stop, '')
+    await sleep(300)
+    spawnSync('taskkill', ['/F', '/PID', String(framePid)], { stdio: 'ignore' })
+    child.kill()
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
+type WindowInfoLite = { hwnd: number; x: number; y: number; width: number; height: number }
+
+test('frame — 작업 중에는 막을 창이 대상 창을 덮어 사람 클릭이 대상에 안 간다 (클릭 통과 아님·비활성·맨 위·같은 크기)', { skip: winSkip }, async () => {
+  await withBlockFrame('block-on', {}, async ({ win, framePid, mid }) => {
+    const block = listWindows({ pid: framePid, title: `zwprobe-vcursor-block:${win.hwnd}` })[0]
+    assert.ok(block, '막을 창이 없다')
+    assert.equal(block.exStyle & WS_EX_TRANSPARENT, 0, '막을 창이 클릭 통과다')
+    for (const [bit, n] of [[WS_EX_TOPMOST, 'TOPMOST'], [WS_EX_NOACTIVATE, 'NOACTIVATE'], [WS_EX_TOOLWINDOW, 'TOOLWINDOW']] as const) {
+      assert.ok((block.exStyle & bit) !== 0, `막을 창에 WS_EX_${n} 가 없다`)
+    }
+    assert.deepEqual({ x: block.x, y: block.y, w: block.width, h: block.height }, { x: win.x, y: win.y, w: win.width, h: win.height }, '막을 창이 대상 창과 같은 자리·크기가 아니다')
+    assert.equal(mid(), block.hwnd, '작업 중인데 사람 마우스가 대상 창으로 간다')
+  })
+})
+
+test('frame — 막혀 있어도 가상 클릭은 대상에 닿는다', { skip: winSkip }, async () => {
+  await withBlockFrame('block-virtual', {}, async ({ pid, title, win, dir }) => {
+    const cx = Math.floor(win.width / 4), cy = Math.floor((win.height * 3) / 4) // 왼쪽 아래(파랑) 칸
+    virtualInput({ op: 'click', x: cx, y: cy, pid, title })
+    await sleep(1000)
+    const img = capture({ pid, title }, dir, 'virtual', 'screen')
+    assert.ok(isBlack(img, cx + 30, cy + 20), '막을 창 때문에 가상 클릭이 대상에 안 닿았다 (사분면이 안 검다)')
+  })
+})
+
+test('frame — 가상 입력이 없으면 시간이 지나 걷히고, 다시 입력하면 막힌다', { skip: winSkip }, async () => {
+  await withBlockFrame('block-idle', { idleMs: 1500 }, async ({ pid, title, win, mid }) => {
+    await sleep(2500)
+    assert.equal(mid(), win.hwnd, '대기 시간이 지났는데 사람 마우스가 대상 창으로 안 간다')
+    virtualInput({ op: 'move', x: 20, y: 60, pid, title })
+    await sleep(400)
+    assert.notEqual(mid(), win.hwnd, '가상 입력을 했는데 다시 막히지 않았다')
+  })
+})
+
+test('frame — 사람이 「중지」 를 누르면(멈춤 파일) 막을 창이 걷혀 사람이 대상 창을 누를 수 있다', { skip: winSkip }, async () => {
+  await withBlockFrame('block-halt', {}, async ({ win, halt, mid }) => {
+    assert.notEqual(mid(), win.hwnd, '처음부터 막혀 있지 않다')
+    writeFileSync(halt, 'test')
+    await sleep(1000)
+    assert.equal(mid(), win.hwnd, '멈췄는데 사람 마우스가 대상 창으로 안 간다')
+  })
+})
+
+// ---- Claude Code 가 실제로 일하는 동안 막는다 (훅, 2026-11-17) ------------------------------
+// 요청을 보내면 훅이 <busy 폴더>/<session_id> 에 시작 시각을 쓰고, 답을 마치면 지운다(tools/claude-hooks/frame-busy.mjs).
+// 작업 표시가 있고 그 작업이 시작된 뒤 이 창에 가상 입력이 있었으면, 짧은 대기 시간이 지나도 막는다.
+// 안전장치: 마지막 가상 입력 뒤 busyFallbackMs(기본 5분) 가 지나면 표시가 남아 있어도 걷는다(세션이 죽어 파일이 남는 경우).
+
+test('frame — 작업 표시가 있는 동안 입력했으면 대기 시간이 지나도 막고, 표시가 지워지면 걷는다', { skip: winSkip }, async () => {
+  const busy = mkdtempSync(join(tmpdir(), 'zwprobe-busyd-'))
+  try {
+    await withBlockFrame('busy-hold', { idleMs: 1500, busyDir: busy }, async ({ pid, title, win, mid }) => {
+      writeFileSync(join(busy, 'session-a'), String(Date.now()))
+      await sleep(200)
+      virtualInput({ op: 'move', x: 20, y: 60, pid, title })
+      await sleep(2800)
+      assert.notEqual(mid(), win.hwnd, '작업 표시가 있는데 대기 시간이 지나자 걷혔다')
+      rmSync(join(busy, 'session-a'))
+      await sleep(1000)
+      assert.equal(mid(), win.hwnd, '작업 표시를 지웠는데 안 걷혔다')
+    })
+  } finally {
+    rmSync(busy, { recursive: true, force: true })
+  }
+})
+
+test('frame — 작업 표시가 있어도 그 작업 중에 이 창에 입력이 없었으면 막지 않는다', { skip: winSkip }, async () => {
+  const busy = mkdtempSync(join(tmpdir(), 'zwprobe-busyd-'))
+  try {
+    await withBlockFrame('busy-noinput', { idleMs: 1500, busyDir: busy }, async ({ win, mid }) => {
+      await sleep(2500) // 띄운 뒤 대기 시간이 지나 걷힌 상태
+      assert.equal(mid(), win.hwnd, '처음 대기 시간이 지났는데 막혀 있다')
+      writeFileSync(join(busy, 'session-b'), String(Date.now())) // 다른 일(코드 수정 등)을 시작했다
+      await sleep(1000)
+      assert.equal(mid(), win.hwnd, '이 창을 건드리지 않는 작업인데 막았다')
+    })
+  } finally {
+    rmSync(busy, { recursive: true, force: true })
+  }
+})
+
+test('frame — 안전장치: 마지막 입력 뒤 오래 지나면 작업 표시가 남아 있어도 걷는다', { skip: winSkip }, async () => {
+  const busy = mkdtempSync(join(tmpdir(), 'zwprobe-busyd-'))
+  try {
+    await withBlockFrame('busy-fallback', { idleMs: 1000, busyDir: busy, busyFallbackMs: 2000 }, async ({ pid, title, win, mid }) => {
+      writeFileSync(join(busy, 'session-c'), String(Date.now()))
+      await sleep(200)
+      virtualInput({ op: 'move', x: 20, y: 60, pid, title })
+      await sleep(1500)
+      assert.notEqual(mid(), win.hwnd, '안전장치 시간 전인데 걷혔다')
+      await sleep(1500)
+      assert.equal(mid(), win.hwnd, '안전장치 시간이 지났는데 막혀 있다')
+    })
+  } finally {
+    rmSync(busy, { recursive: true, force: true })
+  }
+})
+

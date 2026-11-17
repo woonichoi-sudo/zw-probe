@@ -61,7 +61,7 @@ export async function ensureFrame(filter: WindowFilter, flags?: Map<string, stri
   if (frames().some((f) => f.target === target.hwnd)) return { target, started: false }
   const stop = join(FRAMES_DIR, `${target.hwnd}.stop`)
   rmSync(stop, { force: true })
-  startFrame({ pid: target.pid, title: target.title, stop, result: join(FRAMES_DIR, `${target.hwnd}.json`), labelFile, haltFile: haltFileOf(target.hwnd) })
+  startFrame({ pid: target.pid, title: target.title, stop, result: join(FRAMES_DIR, `${target.hwnd}.json`), labelFile, haltFile: haltFileOf(target.hwnd), busyDir: join(FRAMES_DIR, 'busy') })
   const deadline = Date.now() + 5000
   while (Date.now() < deadline) {
     if (frames().some((f) => f.target === target.hwnd)) return { target, started: true }
