@@ -450,22 +450,27 @@ async function withFrame<T>(filter: { pid: number; title: string }, opts: { excl
   }
 }
 
-test('frame — 클릭 통과·비활성·맨 위 창으로 대상 창을 덮고, 띄워도 포그라운드가 그대로다', { skip: winSkip }, async () => {
+test('frame — 클릭 통과·비활성 창으로 대상 창 바로 위를 덮고, 띄워도 포그라운드가 그대로다', { skip: winSkip }, async () => {
   const title = 'zwprobe-vc-frame'
   const { child, pid, win } = await launchWinForms(title, '760,140')
   try {
     const { seen } = await observe(() =>
       withFrame({ pid, title }, { exclude: true }, async (hwnd, framePid) => {
         const f = listWindows({ title: `zwprobe-vcursor:${win.hwnd}` }).find((w) => w.hwnd === hwnd)!
-        // 프레임 프로세스의 창 전부(빛·선·알약·커서, 2026-11-17 Claude in Chrome 디자인)가 클릭 통과·비활성·맨 위여야 한다.
+        // 프레임 프로세스의 창 전부(빛·선·알약·커서, 2026-11-17 Claude in Chrome 디자인)가 클릭 통과·비활성이어야 한다.
         // 알약의 중지 버튼 창과 작업 중 막을 창만 클릭을 받는다 — 그 둘은 아래 시험이 따로 본다
         const all = listWindows({ pid: framePid }).filter((w) => !w.title.startsWith('zwprobe-vcursor-stop:') && !w.title.startsWith('zwprobe-vcursor-block:'))
         assert.ok(all.length >= 1, '프레임 프로세스 창이 없다')
         for (const w of all) {
-          for (const [bit, name] of [[WS_EX_TOPMOST, 'TOPMOST'], [WS_EX_TRANSPARENT, 'TRANSPARENT'], [WS_EX_TOOLWINDOW, 'TOOLWINDOW'], [WS_EX_LAYERED, 'LAYERED'], [WS_EX_NOACTIVATE, 'NOACTIVATE']] as const) {
+          for (const [bit, name] of [[WS_EX_TRANSPARENT, 'TRANSPARENT'], [WS_EX_TOOLWINDOW, 'TOOLWINDOW'], [WS_EX_LAYERED, 'LAYERED'], [WS_EX_NOACTIVATE, 'NOACTIVATE']] as const) {
             assert.ok((w.exStyle & bit) !== 0, `프레임 창 "${w.title}" 에 WS_EX_${name} 가 없다`)
           }
         }
+        // 프레임은 대상 바로 위 한 칸이다 — 대상과 프레임 사이에 다른 보통 창이 끼지 않는다 (2026-11-17 사용자).
+        // 맨 위 여부는 대상 위에 다른 보통 창이 있을 때만 본다(아래 「다른 보통 창」 시험) — 대상이 보통 창 띠 맨 위면
+        // 백그라운드 프로세스는 그 위로 못 올리므로 덮개는 맨 위일 수밖에 없다
+        await sleep(300)
+        assertFrameRightAbove(win.hwnd, framePid)
         // 테두리를 대상 창 안쪽 가장자리에 그린다 — 밖에 그리면 최대화된 창에서 모니터 밖으로 나가 안 보인다(2026-11-17).
         // 픽스처는 모니터 안에 있으므로 프레임 = 대상 창 그대로다.
         assert.deepEqual(
@@ -931,9 +936,9 @@ function rootAt(sx: number, sy: number): number {
   return h
 }
 
-async function withBlockFrame(name: string, opts: { idleMs?: number; busyDir?: string; busyFallbackMs?: number }, fn: (ctx: { pid: number; title: string; win: WindowInfoLite; framePid: number; halt: string; mid: () => number; dir: string }) => Promise<void>) {
+async function withBlockFrame(name: string, opts: { idleMs?: number; busyDir?: string; busyFallbackMs?: number; topmost?: boolean }, fn: (ctx: { pid: number; title: string; win: WindowInfoLite; framePid: number; halt: string; mid: () => number; dir: string }) => Promise<void>) {
   const title = `zwprobe-vc-${name}`
-  const { child, pid, win } = await launchWinForms(title, '760,140', ['--topmost', '--dpi-aware'])
+  const { child, pid, win } = await launchWinForms(title, '760,140', opts.topmost === false ? ['--dpi-aware'] : ['--topmost', '--dpi-aware'])
   const dir = mkdtempSync(join(tmpdir(), `zwprobe-f${name}-`))
   const stop = join(dir, 'stop'), result = join(dir, 'result.json'), halt = join(dir, 'halt')
   const framePid = startFrame({ pid, title, stop, result, excludeFromCapture: false, haltFile: halt, ...(opts.idleMs !== undefined ? { idleMs: opts.idleMs } : {}), ...(opts.busyDir !== undefined ? { busyDir: opts.busyDir } : {}), ...(opts.busyFallbackMs !== undefined ? { busyFallbackMs: opts.busyFallbackMs } : {}) })
@@ -951,6 +956,75 @@ async function withBlockFrame(name: string, opts: { idleMs?: number; busyDir?: s
   }
 }
 type WindowInfoLite = { hwnd: number; x: number; y: number; width: number; height: number }
+
+// ---- 덮개는 대상 창 바로 위 한 칸 (2026-11-17 사용자) ---------------------------------------
+// 쌓임 순서 [사람이 연 창] > [프레임 = 투명한 덮개] > [대상]. 정답은 Windows 의 쌓임 순서·WindowFromPoint (구현과 독립).
+
+/** 대상 위로 올라가며 (GW_HWNDPREV) 보이는 창의 hwnd·pid 를 n 개 */
+function windowsAbove(hwnd: number, n = 40): { hwnd: number; pid: number; topmost: boolean }[] {
+  const ps =
+    `Add-Type -Namespace W -Name Z -MemberDefinition '` +
+    `[DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr h, uint c);` +
+    `[DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr h);` +
+    `[DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr h, int i);` +
+    `[DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint p);'; ` +
+    `$h = [IntPtr]${hwnd}; $k = 0; while ($k -lt ${n}) { $h = [W.Z]::GetWindow($h, 3); if ($h -eq [IntPtr]::Zero) { break }; ` +
+    `if ([W.Z]::IsWindowVisible($h)) { $p = 0; [void][W.Z]::GetWindowThreadProcessId($h, [ref]$p); "$($h.ToInt64()) $p $([W.Z]::GetWindowLong($h, -20) -band 8)"; $k++ } }`
+  const r = spawnSync('powershell', ['-NoProfile', '-Command', ps], { encoding: 'utf8' })
+  return r.stdout.trim().split(/\r?\n/).filter(Boolean).map((l) => { const [h, p, t] = l.split(' '); return { hwnd: Number(h), pid: Number(p), topmost: t !== '0' } })
+}
+
+/** 그 창을 쌓임 맨 아래로 — 사람이 대상을 앞으로 가져온 것과 같은 순서를 만든다. 백그라운드 프로세스(시험)는 창을 맨 위로
+ *  못 올린다(HWND_TOP 은 성공을 돌려주고도 무시된다, 2026-11-17 실측) — 내리기는 된다. 활성화는 안 한다 */
+function lowerWindow(hwnd: number) {
+  const ps =
+    `Add-Type -Namespace W -Name R -MemberDefinition '` +
+    `[DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr a, int x, int y, int cx, int cy, uint f);'; ` +
+    `[void][W.R]::SetWindowPos([IntPtr]${hwnd}, [IntPtr]1, 0, 0, 0, 0, 0x13)`
+  spawnSync('powershell', ['-NoProfile', '-Command', ps], { encoding: 'utf8' })
+}
+
+/** 대상과 프레임 창 사이에 다른 보통 창이 끼지 않는다 — 대상 위로 올라가며 프레임 창을 다 만나기 전에 남의 창이 나오면
+ *  맨 위 창(작업 표시줄 등 — 덮개가 맨 위일 때 그 사이에 있다)이어야 한다 */
+function assertFrameRightAbove(target: number, framePid: number) {
+  const mine = listWindows({ pid: framePid }).length
+  assert.ok(mine >= 1, '프레임 창이 없다')
+  const above = windowsAbove(target, 200)
+  let seen = 0
+  for (const w of above) {
+    if (seen === mine) break
+    if (w.pid === framePid) { seen++; continue }
+    assert.ok(w.topmost, `대상과 프레임 사이에 다른 보통 창이 있다 (${w.hwnd}, pid ${w.pid}): ${JSON.stringify(above.slice(0, 8))}`)
+  }
+  assert.equal(seen, mine, `대상 위에서 프레임 창을 다 못 찾았다: ${JSON.stringify(above.slice(0, 8))}`)
+}
+
+test('frame — 사람이 다른 보통 창을 대상 위로 올리면 겹친 자리는 그 창이 받고, 대상을 다시 올리면 덮개도 같이 올라온다', { skip: winSkip }, async () => {
+  await withBlockFrame('cover-other', { topmost: false }, async ({ win, framePid }) => {
+    const block = listWindows({ pid: framePid, title: `zwprobe-vcursor-block:${win.hwnd}` })[0]
+    assert.ok(block, '막을 창이 없다')
+    // 사람이 연 다른 창 — 대상의 오른쪽 아래 사분면에 겹친다
+    const other = await launchWinForms('zwprobe-vc-cover-other2', `${win.x + Math.floor(win.width / 2)},${win.y + Math.floor(win.height / 2)}`, ['--dpi-aware'])
+    try {
+      // 새로 뜬 창은 쌓임 맨 위에 온다 (사람이 연 창)
+      await sleep(600)
+      const overlap = () => rootAt(win.x + Math.floor((win.width * 3) / 4), win.y + Math.floor((win.height * 3) / 4))
+      const free = () => rootAt(win.x + Math.floor(win.width / 4), win.y + Math.floor((win.height * 3) / 4))
+      assert.equal(overlap(), other.win.hwnd, '사람이 올린 창과 겹친 자리인데 사람 마우스가 그 창으로 안 간다 (덮개가 그 창까지 덮었다)')
+      assert.equal(free(), block.hwnd, '겹치지 않은 자리는 여전히 막혀야 한다')
+      // 대상 위에 사람의 보통 창이 있으면 덮개는 맨 위가 아니다 (맨 위면 그 창 위에 빛·알약이 그려진다)
+      for (const w of listWindows({ pid: framePid })) assert.equal(w.exStyle & WS_EX_TOPMOST, 0, `사람 창이 대상 위에 있는데 프레임 창 "${w.title}" 이 맨 위다`)
+      assertFrameRightAbove(win.hwnd, framePid)
+      // 사람이 대상을 다시 앞으로 가져온 것과 같은 순서 (다른 창이 대상 밑으로) — 덮개도 다시 그 자리를 덮는다
+      lowerWindow(other.win.hwnd)
+      await sleep(600)
+      assert.equal(overlap(), block.hwnd, '대상이 다시 위로 왔는데 덮개가 그 자리를 안 덮는다')
+      assertFrameRightAbove(win.hwnd, framePid)
+    } finally {
+      other.child.kill()
+    }
+  })
+})
 
 test('frame — 작업 중에는 막을 창이 대상 창을 덮어 사람 클릭이 대상에 안 간다 (클릭 통과 아님·비활성·맨 위·같은 크기)', { skip: winSkip }, async () => {
   await withBlockFrame('block-on', {}, async ({ win, framePid, mid }) => {

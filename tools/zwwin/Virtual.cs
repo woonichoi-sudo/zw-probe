@@ -52,6 +52,10 @@ internal static class V
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern IntPtr FindWindowW(string cls, string title);
     [DllImport("user32.dll")] public static extern bool SetWindowDisplayAffinity(IntPtr hwnd, uint affinity);
     [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
+    [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr hwnd, uint cmd);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hwnd);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
+    [DllImport("user32.dll", EntryPoint = "GetWindowLongW")] public static extern int GetWindowLong(IntPtr hwnd, int index);
     [DllImport("user32.dll")] public static extern uint GetDpiForWindow(IntPtr hwnd);
     [DllImport("user32.dll")] public static extern IntPtr MonitorFromPoint(N.POINT pt, uint flags);
     [DllImport("shcore.dll")] public static extern int GetDpiForMonitor(IntPtr monitor, int type, out uint dpiX, out uint dpiY);
@@ -101,6 +105,8 @@ internal static class V
     public const int GCL_STYLE = -26, CS_DBLCLKS = 0x8;
     public const uint WDA_NONE = 0, WDA_EXCLUDEFROMCAPTURE = 0x11;
     public static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
+    public const uint GW_HWNDPREV = 3;
+    public const int GWL_EXSTYLE = -20, WS_EX_TOPMOST = 0x8;
     public const uint SWP_NOACTIVATE = 0x10, SWP_SHOWWINDOW = 0x40;
 }
 
@@ -795,7 +801,7 @@ internal sealed class FrameForm : Form
         ShowInTaskbar = false;
         StartPosition = FormStartPosition.Manual;
         AutoScaleMode = AutoScaleMode.None;
-        TopMost = true;
+        // 맨 위(TOPMOST)로 두지 않는다 — Tick 이 대상 창 바로 위 한 칸에 둔다 (FrameForm.Restack, 2026-11-17)
         mEdge = new EdgeForm(target.Hwnd, exclude);
         mBlock = new BlockForm(target.Hwnd, exclude);
         mEdge.WithButton = !string.IsNullOrEmpty(haltFile);
@@ -898,13 +904,48 @@ internal sealed class FrameForm : Form
         if (block != mBlock.Visible) mBlock.Visible = block;
         if (!busy) o = 0;
         Layered.Alpha(this, (byte)Math.Round(255 * o));
-        // 빛 < 선·알약 < 커서 순으로 맨 위에 둔다
-        const uint keep = 0x1 | 0x2 | V.SWP_NOACTIVATE;
-        V.SetWindowPos(Handle, V.HWND_TOPMOST, 0, 0, 0, 0, keep);
-        if (mBlock.Visible) V.SetWindowPos(mBlock.Handle, V.HWND_TOPMOST, 0, 0, 0, 0, keep);
-        V.SetWindowPos(mEdge.Handle, V.HWND_TOPMOST, 0, 0, 0, 0, keep);
-        if (mStopBtn != null) V.SetWindowPos(mStopBtn.Handle, V.HWND_TOPMOST, 0, 0, 0, 0, keep);
-        V.SetWindowPos(mCursor.Handle, V.HWND_TOPMOST, 0, 0, 0, 0, keep);
+        Restack();
+    }
+
+    private static readonly uint MyPid = (uint)System.Diagnostics.Process.GetCurrentProcess().Id;
+    private static bool IsMine(IntPtr h) { uint pid; V.GetWindowThreadProcessId(h, out pid); return pid == MyPid; }
+    private static bool IsTopmost(IntPtr h) { return (V.GetWindowLong(h, V.GWL_EXSTYLE) & V.WS_EX_TOPMOST) != 0; }
+
+    /// 덮개를 대상 창 바로 위 한 칸에 둔다 (2026-11-17 사용자): [사람이 연 창] > [빛 < 막을 창 < 선·알약 < 중지 버튼 < 커서] > [대상].
+    /// 전에는 늘 맨 위(TOPMOST)로 33ms 마다 다시 올려서, 사람이 대상 위로 연 다른 창까지 덮고 작업 중엔 그 창을 못 누르게 했다.
+    /// - 대상 위에 남의 보통 창이 있으면: 그 창 바로 밑(= 대상 바로 위)에 넣는다.
+    /// - 대상이 보통 창 띠의 맨 위(사람이 앞으로 가져옴)이거나 대상이 맨 위 창이면: 덮개를 맨 위로 둔다. 백그라운드 프로세스는
+    ///   창을 보통 창 띠 맨 위로 못 올린다(HWND_TOP 은 성공을 돌려주고도 무시된다, 2026-11-17 실측) — 맨 위로는 된다.
+    ///   그래서 이때는 다른 프로그램의 「항상 위」 창 위에도 그려진다. 사람이 새 창을 열면 다음 Tick(33ms) 에 그 밑으로 내려간다.
+    private void Restack()
+    {
+        const uint keep = 0x1 | 0x2 | V.SWP_NOACTIVATE; // NOSIZE | NOMOVE
+        var mine = new List<IntPtr> { Handle, mBlock.Handle, mEdge.Handle };
+        if (mStopBtn != null) mine.Add(mStopBtn.Handle);
+        mine.Add(mCursor.Handle); // 아래 → 위
+        // 대상 위의 첫 남의 보이는 창 (우리 창은 건너뜀). 맨 위 창이거나 없으면 대상이 보통 창 띠의 맨 위다
+        IntPtr above = V.GetWindow(mTarget.Hwnd, V.GW_HWNDPREV);
+        while (above != IntPtr.Zero && (IsMine(above) || !V.IsWindowVisible(above))) above = V.GetWindow(above, V.GW_HWNDPREV);
+        if (IsTopmost(mTarget.Hwnd) || above == IntPtr.Zero || IsTopmost(above))
+        {
+            foreach (var h in mine) V.SetWindowPos(h, V.HWND_TOPMOST, 0, 0, 0, 0, keep);
+            return;
+        }
+        // 이미 제자리면 건드리지 않는다 — 대상 위로 올라가며 보이는 창이 우리 창(보이는 것)을 순서대로 다 만나야 한다
+        var shown = mine.FindAll(V.IsWindowVisible);
+        IntPtr w = mTarget.Hwnd;
+        int i = 0;
+        while (i < shown.Count)
+        {
+            w = V.GetWindow(w, V.GW_HWNDPREV);
+            if (w == IntPtr.Zero) break;
+            if (!V.IsWindowVisible(w)) continue;
+            if (w != shown[i]) break;
+            i++;
+        }
+        if (i == shown.Count && !IsTopmost(Handle)) return;
+        // 아래 것부터 같은 자리(above 바로 밑)에 넣으면 나중 것이 위로 쌓인다. 맨 위였던 창도 보통 창 밑에 넣으면 맨 위가 풀린다
+        foreach (var h in mine) V.SetWindowPos(h, above, 0, 0, 0, 0, keep);
     }
 
     /// 작업 표시 폴더를 읽는다 — 시작 시각이 마지막 가상 입력 이전인 표시가 하나라도 있으면 그 작업이 이 창을 건드렸다.
@@ -1065,7 +1106,7 @@ internal sealed class EdgeForm : Form
         ShowInTaskbar = false;
         StartPosition = FormStartPosition.Manual;
         AutoScaleMode = AutoScaleMode.None;
-        TopMost = true;
+        // 맨 위(TOPMOST)로 두지 않는다 — Tick 이 대상 창 바로 위 한 칸에 둔다 (FrameForm.Restack, 2026-11-17)
     }
 
     protected override bool ShowWithoutActivation { get { return true; } }
@@ -1190,7 +1231,7 @@ internal sealed class BlockForm : Form
         ShowInTaskbar = false;
         StartPosition = FormStartPosition.Manual;
         AutoScaleMode = AutoScaleMode.None;
-        TopMost = true;
+        // 맨 위(TOPMOST)로 두지 않는다 — Tick 이 대상 창 바로 위 한 칸에 둔다 (FrameForm.Restack, 2026-11-17)
         Cursor = Cursors.No;
         Size = new Size(1, 1);
     }
@@ -1250,7 +1291,7 @@ internal sealed class StopForm : Form
         ShowInTaskbar = false;
         StartPosition = FormStartPosition.Manual;
         AutoScaleMode = AutoScaleMode.None;
-        TopMost = true;
+        // 맨 위(TOPMOST)로 두지 않는다 — Tick 이 대상 창 바로 위 한 칸에 둔다 (FrameForm.Restack, 2026-11-17)
         Cursor = Cursors.Hand;
         Size = new Size(1, 1);
     }
@@ -1342,7 +1383,7 @@ internal sealed class CursorForm : Form
         ShowInTaskbar = false;
         StartPosition = FormStartPosition.Manual;
         AutoScaleMode = AutoScaleMode.None;
-        TopMost = true;
+        // 맨 위(TOPMOST)로 두지 않는다 — Tick 이 대상 창 바로 위 한 칸에 둔다 (FrameForm.Restack, 2026-11-17)
         Size = new Size(1, 1);
         mAnim.Tick += (s, e) => Step();
     }
