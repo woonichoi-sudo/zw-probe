@@ -1123,3 +1123,123 @@ test('frame — 안전장치: 마지막 입력 뒤 오래 지나면 작업 표�
   }
 })
 
+
+// ---- 작업 중에는 창 크기를 못 바꾸고, 바뀌면 누르지 않는다 (2026-11-17 사용자) -------------------
+// 좌표는 마지막 캡처의 창 기준이라 사람이 그사이 창 크기를 바꾸면 같은 좌표에 다른 것이 있다.
+// 1) 막기 — 작업 중이면 막을 창이 크기 조절 띠(창 사각형 바깥의 보이지 않는 테두리)까지 덮는다.
+// 2) 알아채기 — shot·uia·가상 입력이 그때 창 크기를 적고, 마우스 입력 전에 크기가 다르면 넣지 않는다(종료 코드 5).
+//    끌기·이동은 단계마다 보고 바뀌면 그 자리에서 버튼을 떼고 끊는다(resized).
+// 정답: 사람 마우스가 갈 창 = WindowFromPoint, Qt 가 실제로 받은 것 = mouseLog (구현과 독립).
+
+/** 다른 프로세스 창 크기만 바꾼다 (자리·쌓임·활성 그대로) — 사람이 테두리를 끈 것 대신 */
+function resizeWindow(hwnd: number, width: number, height: number, delayMs = 0) {
+  const ps =
+    (delayMs > 0 ? `Start-Sleep -Milliseconds ${delayMs}; ` : '') +
+    `Add-Type -Namespace W -Name S -MemberDefinition '` +
+    `[DllImport("user32.dll")] public static extern bool SetProcessDpiAwarenessContext(IntPtr c);` +
+    `[DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr a, int x, int y, int cx, int cy, uint f);'; ` +
+    `[void][W.S]::SetProcessDpiAwarenessContext([IntPtr](-4)); ` +
+    `[void][W.S]::SetWindowPos([IntPtr]${hwnd}, [IntPtr]::Zero, 0, 0, ${width}, ${height}, 0x16)` // NOMOVE|NOZORDER|NOACTIVATE
+  if (delayMs > 0) return spawn('powershell', ['-NoProfile', '-Command', ps], { stdio: 'ignore' })
+  spawnSync('powershell', ['-NoProfile', '-Command', ps], { encoding: 'utf8' })
+  return undefined
+}
+
+test('frame — 작업 중에는 크기 조절 테두리도 막고, 대기 중이면 사람 마우스가 테두리로 간다', { skip: qtSkip }, async () => {
+  const q = await launchQt()
+  const dir = mkdtempSync(join(tmpdir(), 'zwprobe-fborder-'))
+  const stop = join(dir, 'stop'), result = join(dir, 'result.json')
+  const win = listWindows(q.filter)[0]!
+  const framePid = startFrame({ ...q.filter, stop, result, excludeFromCapture: true, idleMs: 6000 }) // 점마다 PowerShell 로 재는 데 ~0.5초 — 세 점을 다 잴 동안 작업 중이어야 한다
+  try {
+    await sleep(900)
+    const block = listWindows({ pid: framePid, title: `zwprobe-vcursor-block:${win.hwnd}` })[0]
+    assert.ok(block, '막을 창이 없다')
+    // 창 사각형(DWM 경계) 바로 바깥 — 왼쪽·오른쪽·아래 크기 조절 띠
+    const pts = {
+      왼쪽: [win.x - 3, win.y + Math.floor(win.height / 2)],
+      오른쪽: [win.x + win.width + 2, win.y + Math.floor(win.height / 2)],
+      아래: [win.x + Math.floor(win.width / 2), win.y + win.height + 2],
+    } as const
+    const blockNow = () => listWindows({ pid: framePid, title: `zwprobe-vcursor-block:${win.hwnd}` })[0]!
+    for (const [name, [x, y]] of Object.entries(pts)) { const got = rootAt(x, y); const b = blockNow(); assert.equal(got, block.hwnd, `작업 중인데 ${name} 크기 조절 띠 (${x},${y}) 가 막혀 있지 않다 — 받은 창 ${got}, 대상 ${win.hwnd} ${JSON.stringify({ x: win.x, y: win.y, w: win.width, h: win.height })}, 막을 창 ${JSON.stringify({ x: b.x, y: b.y, w: b.width, h: b.height })}`) }
+    await sleep(6500)
+    // 대기 중이면 같은 점이 대상 창(크기 조절 띠)으로 간다 — 이 점들이 정말 대상의 테두리라는 것도 이것으로 확인한다
+    for (const [name, [x, y]] of Object.entries(pts)) assert.equal(rootAt(x, y), win.hwnd, `대기 중인데 ${name} 점 (${x},${y}) 이 대상 창으로 안 간다 (테두리 점이 아니거나 안 풀렸다)`)
+  } finally {
+    writeFileSync(stop, '')
+    await sleep(300)
+    spawnSync('taskkill', ['/F', '/PID', String(framePid)], { stdio: 'ignore' })
+    q.cleanup()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('CLI — shot 뒤 창 크기가 바뀌면 click --virtual 은 누르지 않고 종료 코드 5, 다시 shot 하면 누른다', { skip: qtSkip }, async () => {
+  const q = await launchQt()
+  const dir = mkdtempSync(join(tmpdir(), 'zwprobe-vsize-'))
+  const sel = ['--pid', String(q.pid), '--title', 'zwqtfixture']
+  try {
+    const win = listWindows(q.filter)[0]!
+    const s1 = cli('shot', ...sel, '--out', join(dir, 'a.png'))
+    assert.equal(s1.status, 0, `${s1.stdout}\n${s1.stderr}`)
+    resizeWindow(win.hwnd, win.width + 120, win.height + 80)
+    await sleep(500)
+    assert.notEqual(listWindows(q.filter)[0]!.width, win.width, '시험 준비: 창 크기가 안 바뀌었다')
+    const n = (await q.log()).length
+    const p = q.at(40, 50)
+    const r = cli('click', String(p.x), String(p.y), '--virtual', ...sel)
+    assert.equal(r.status, 5, `크기가 바뀌었는데 종료 코드가 5 가 아니다: ${r.status}\n${r.stdout}\n${r.stderr}`)
+    assert.ok(!(await newLines(q.log, n)).some((l) => l.startsWith('press')), '크기가 바뀌었는데 눌렀다')
+    // 다시 캡처하면 그 크기가 기준이 된다
+    const s2 = cli('shot', ...sel, '--out', join(dir, 'b.png'))
+    assert.equal(s2.status, 0, `${s2.stdout}\n${s2.stderr}`)
+    const n2 = (await q.log()).length
+    const p2 = q.at(40, 50)
+    const r2 = cli('click', String(p2.x), String(p2.y), '--virtual', ...sel)
+    assert.equal(r2.status, 0, `다시 찍은 뒤인데 종료 코드 ${r2.status}\n${r2.stdout}\n${r2.stderr}`)
+    assert.ok((await newLines(q.log, n2)).some((l) => l.startsWith('press 40,50 b=L')), '다시 찍은 뒤인데 안 눌렸다')
+  } finally {
+    cli('frame', 'stop', ...sel)
+    q.cleanup()
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('Qt — 끌기 도중 창 크기가 바뀌면 다음 단계에서 끊고 버튼을 뗀다 (resized)', { skip: qtSkip }, async () => {
+  const q = await launchQt()
+  try {
+    const win = listWindows(q.filter)[0]!
+    const n = (await q.log()).length
+    const a = q.at(30, 40), b = q.at(230, 40)
+    // virtualInput 은 끝날 때까지 막으므로 크기는 다른 프로세스가 0.4초 뒤에 바꾼다 (사람이 테두리를 끈 것 대신)
+    resizeWindow(win.hwnd, win.width + 120, win.height + 80, 400)
+    const r = virtualInput({ op: 'drag', ...a, toX: b.x, toY: b.y, steps: 200, ...q.filter, expectSize: { width: win.width, height: win.height } } as Parameters<typeof virtualInput>[0]) as VirtualResultWithResize
+    assert.equal(r.resized, true, '끌기 도중 창 크기가 바뀌었는데 끝까지 갔다')
+    assert.ok(r.stepsDone !== undefined && r.stepsDone > 0 && r.stepsDone < 200, `끊긴 단계가 이상하다: ${r.stepsDone}`)
+    const lines = await newLines(q.log, n)
+    const press = lines.findIndex((l) => l.startsWith('press 30,40 b=L'))
+    const release = lines.findIndex((l, i) => i > press && l.startsWith('release '))
+    assert.ok(press >= 0 && release > press, `끊은 뒤 버튼을 안 뗐다: ${lines.join(' | ')}`)
+    assert.ok(!lines.some((l) => l.startsWith('release 230,40')), '끝점까지 갔다')
+  } finally {
+    q.cleanup()
+  }
+})
+
+test('Qt — 입력 전에 창 크기가 기준과 다르면 가상 클릭을 넣지 않는다 (resized, stepsDone 0)', { skip: qtSkip }, async () => {
+  const q = await launchQt()
+  try {
+    const win = listWindows(q.filter)[0]!
+    const n = (await q.log()).length
+    const p = q.at(40, 50)
+    const r = virtualInput({ op: 'click', ...p, ...q.filter, expectSize: { width: win.width - 50, height: win.height } } as Parameters<typeof virtualInput>[0]) as VirtualResultWithResize
+    assert.equal(r.resized, true, '기준 크기와 다른데 resized 가 아니다')
+    assert.equal(r.stepsDone, 0)
+    assert.ok(!(await newLines(q.log, n)).some((l) => l.startsWith('press')), '기준 크기와 다른데 눌렀다')
+  } finally {
+    q.cleanup()
+  }
+})
+
+type VirtualResultWithResize = ReturnType<typeof virtualInput> & { resized?: boolean; stepsDone?: number }

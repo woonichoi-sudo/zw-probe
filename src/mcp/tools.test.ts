@@ -258,3 +258,11 @@ test('zw_frame 은 멈춤을 풀 수 없다 — 재개는 사람 몫 (resume 없
   const action = findTool('zw_frame')!.params.find((p) => p.name === 'action')!
   assert.ok(!(action.choices ?? []).includes('resume'), 'MCP 로 AI 가 스스로 멈춤을 풀 수 있다')
 })
+
+// ---- 창 크기가 바뀌면 누르지 않는다 (2026-11-17) ----------------------------------------
+test('마우스 가상 입력 도구는 종료 코드 5(창 크기가 바뀜 — 다시 캡처)의 뜻을 갖는다', () => {
+  for (const name of ['zw_click', 'zw_drag', 'zw_wheel', 'zw_move']) {
+    const t = findTool(name)!
+    assert.ok(t.exits[5]?.includes('크기'), `${name} 에 종료 코드 5 의 뜻이 없다`)
+  }
+})

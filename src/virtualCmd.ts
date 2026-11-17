@@ -4,7 +4,7 @@
 // 가상 커서 프레임이 없으면 띄운다 — 사람이 "프로그램 안의 두 번째 커서" 를 보게 하려는 것이다(--no-frame 으로 끈다).
 // 판정은 judgeVirtual, I/O 는 zwwin.ts. 이 파일은 그 둘을 잇고 사람이 읽을 줄을 찍는다.
 
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawnSync } from 'node:child_process'
@@ -28,6 +28,36 @@ export const EXIT_HALTED = 4
 const HALT_HELP =
   '사람이 알약의 「중지」 를 눌렀다 — 사용자에게 묻는다. 스스로 풀지 않는다. ' +
   '재개는 사람이 알약의 「재개」 를 누르거나 (사람이) zwprobe frame resume'
+
+/** 창 크기가 좌표의 기준과 달라 넣지 않았을 때의 종료 코드. MCP 도구의 exits[5] 와 같다 (2026-11-17) */
+export const EXIT_RESIZED = 5
+
+const RESIZE_HELP = '좌표가 어긋났을 수 있다 — 다시 캡처(zwprobe shot)해서 좌표를 새로 잡는다. 사람이 창 크기를 바꿨을 수 있다'
+
+/**
+ * 좌표의 기준이 된 창 크기 — 대상 창마다 하나. shot·uia(좌표를 주는 관찰)와 성공한 가상 입력이 쓰고,
+ * 마우스 가상 입력이 입력 전에 견준다. 위치만 옮긴 것은 좌표가 창 기준이라 상관없어 크기만 본다 (2026-11-17 사용자).
+ */
+export const sizeFileOf = (hwnd: number) => join(FRAMES_DIR, `${hwnd}.size`)
+
+export function recordSize(w: { hwnd: number; width: number; height: number }): void {
+  try {
+    mkdirSync(FRAMES_DIR, { recursive: true })
+    writeFileSync(sizeFileOf(w.hwnd), `${w.width}x${w.height}`, 'utf8')
+  } catch {
+    // 기준을 못 적어도 관찰은 그대로 — 다음 입력은 그때 크기를 기준으로 한다
+  }
+}
+
+/** 적어 둔 기준 크기. 없거나 못 읽으면 undefined */
+export function savedSize(hwnd: number): { width: number; height: number } | undefined {
+  try {
+    const m = /^(\d+)x(\d+)$/.exec(readFileSync(sizeFileOf(hwnd), 'utf8').trim())
+    return m ? { width: Number(m[1]), height: Number(m[2]) } : undefined
+  } catch {
+    return undefined
+  }
+}
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
@@ -71,7 +101,7 @@ export async function ensureFrame(filter: WindowFilter, flags?: Map<string, stri
   return { target, started: false }
 }
 
-/** 입력하고 결과를 찍는다. 0=대상이 받았다 2=의심 4=사람이 멈춤 */
+/** 입력하고 결과를 찍는다. 0=대상이 받았다 2=의심 4=사람이 멈춤 5=창 크기가 기준과 다름 */
 async function runVirtual(req: VirtualRequest, filter: WindowFilter, flags: Map<string, string>): Promise<number> {
   // 사람이 멈췄으면 아무것도 하지 않는다 — --no-frame 이어도 (멈춤은 대상 창에 붙는다)
   const target = targetOf(filter)
@@ -80,17 +110,30 @@ async function runVirtual(req: VirtualRequest, filter: WindowFilter, flags: Map<
     console.log(`멈춤  입력하지 않았다 — ${HALT_HELP}`)
     return EXIT_HALTED
   }
+  // 마우스 입력은 좌표가 창 기준이다 — 마지막 캡처 뒤 창 크기가 바뀌었으면 넣지 않는다 (키·글자는 좌표와 무관)
+  const mouse = req.op === 'click' || req.op === 'drag' || req.op === 'wheel' || req.op === 'move'
+  const saved = mouse && target !== undefined ? savedSize(target.hwnd) : undefined
+  if (mouse && target !== undefined && saved !== undefined && (saved.width !== target.width || saved.height !== target.height)) {
+    console.log(`크기  입력하지 않았다 — 창 크기가 바뀌었다 (기준 ${saved.width}x${saved.height} → 지금 ${target.width}x${target.height}). ${RESIZE_HELP}`)
+    return EXIT_RESIZED
+  }
+  const expectSize = mouse && target !== undefined ? (saved ?? { width: target.width, height: target.height }) : undefined
   if (!flags.has('no-frame')) {
     const f = await ensureFrame(filter, flags)
     if (f.started) console.log(`프레임  대상 창 위에 가상 커서를 띄웠다 (끄기: zwprobe frame stop)`)
   }
   // 누르기 전의 창 목록 — 소유 다이얼로그가 받은 것을 맞다고 판정하려면 필요하다(judgeVirtual)
   const before = listWindows(filter.pid !== undefined ? { pid: filter.pid } : filter)
-  const r: VirtualResult = virtualInput({ ...req, ...filter, ...(halt !== undefined ? { haltFile: halt } : {}) })
+  const r: VirtualResult = virtualInput({ ...req, ...filter, ...(halt !== undefined ? { haltFile: halt } : {}), ...(expectSize !== undefined ? { expectSize } : {}) })
   if (r.halted === true) {
     console.log(`멈춤  ${r.stepsDone === 0 ? '입력하지 않았다' : `${r.stepsDone} 단계에서 끊었다 (끌기면 그 자리에서 버튼을 뗐다)`} — ${HALT_HELP}`)
     return EXIT_HALTED
   }
+  if (r.resized === true) {
+    console.log(`크기  ${r.stepsDone === 0 ? '입력하지 않았다' : `${r.stepsDone} 단계에서 끊었다 (끌기면 그 자리에서 버튼을 뗐다)`} — 창 크기가 바뀌었다. ${RESIZE_HELP}`)
+    return EXIT_RESIZED
+  }
+  if (mouse && target !== undefined && saved === undefined) recordSize({ hwnd: target.hwnd, width: target.width, height: target.height })
   printVirtual(r)
   const v = judgeVirtual(r, before.filter((w) => w.pid === r.window.pid))
   console.log(`판정  ${v.onTarget ? '정상' : '의심'} — ${v.reason}`)

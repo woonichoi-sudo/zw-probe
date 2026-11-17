@@ -28,6 +28,8 @@ export type VirtualResult = {
   op: string
   /** 사람이 알약의 「중지」 를 눌러 입력하지 않았거나 중간에 끊었다 (2026-11-17) */
   halted?: boolean
+  /** 창 크기가 좌표의 기준(expectSize)과 달라 입력하지 않았거나 중간에 끊었다 (2026-11-17) */
+  resized?: boolean
   /** 끊기 전까지 한 단계 수 (끌기·이동 단계, 글자 수). 입력 전에 멈췄으면 0 */
   stepsDone?: number
   /** 창 기준(캡처) 좌표. key·type 에는 없다 */

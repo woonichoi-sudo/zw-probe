@@ -328,11 +328,13 @@ export function startRecord(opts: StartRecordOptions): number {
  * 가상 입력. haltFile 이 있으면 zwwin 이 입력 전과 끌기·이동·글자 단계마다 보고, 생기면 끊는다
  * (결과 halted·stepsDone, 사람이 알약의 「중지」 를 누른 것, 2026-11-17).
  */
-export function virtualInput(opts: VirtualRequest & WindowFilter & { haltFile?: string; testCapsOn?: boolean }): VirtualResult {
+export function virtualInput(opts: VirtualRequest & WindowFilter & { haltFile?: string; testCapsOn?: boolean; expectSize?: { width: number; height: number } }): VirtualResult {
   const halt = opts.haltFile !== undefined ? ['--halt-file', opts.haltFile] : []
+  // 좌표의 기준이 된 창 크기 — 입력 전과 끌기·이동 단계마다 견주고 다르면 넣지 않거나 끊는다 (결과 resized, 2026-11-17)
+  const size = opts.expectSize !== undefined ? ['--expect-size', `${opts.expectSize.width},${opts.expectSize.height}`] : []
   // 시험 전용: 사람이 Caps Lock 을 켜 둔 상태를 흉내 낸다 (2026-11-17)
   const caps = opts.testCapsOn === true ? ['--test-caps-on'] : []
-  return run([...virtualArgs(opts), ...filterArgs(opts), ...halt, ...caps]) as VirtualResult
+  return run([...virtualArgs(opts), ...filterArgs(opts), ...halt, ...caps, ...size]) as VirtualResult
 }
 
 /** 가상 커서 프레임 창의 제목. v* 동사가 이 제목으로 프레임을 찾아 커서 위치를 알린다 */

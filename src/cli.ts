@@ -39,7 +39,7 @@ import {
 import type { Request } from './agent/protocol.ts'
 import { findPopupItem, parsePopup, popupLines } from './agent/popup.ts'
 import { judgeClick } from './input/click.ts'
-import { cmdDrag, cmdFrame, cmdMove, cmdType, cmdWheel, virtualClick, virtualKey } from './virtualCmd.ts'
+import { cmdDrag, cmdFrame, cmdMove, cmdType, cmdWheel, recordSize, virtualClick, virtualKey } from './virtualCmd.ts'
 import { cmdHooks } from './hooks/claudeHooks.ts'
 import { needsWidgetSize, planMouse } from './input/mouseArgs.ts'
 import { toQtKey } from './input/qtKey.ts'
@@ -123,6 +123,8 @@ function cmdShot(flags: Map<string, string>): number {
   // "정상" 이 나오므로 화면을 열어보기 전까지 틀린 것을 모른다.
   const info = shot({ ...targetFilter(flags), png: out, raw, mode })
   const w = info.window
+  // 이 캡처가 좌표의 기준이다 — 가상 마우스 입력은 이 크기와 다르면 넣지 않는다 (virtualCmd.ts, 2026-11-17)
+  recordSize(w)
 
   console.log(`창    ${w.width}x${w.height} pid=${w.pid} "${w.title}"`)
   console.log(`저장  ${info.png}  (${(statSync(info.png).size / 1024).toFixed(0)} KB, mode=${info.mode})`)
@@ -455,6 +457,7 @@ function cmdUia(flags: Map<string, string>): number {
     ...(flags.has('depth') ? { depth: Number(flags.get('depth')) } : {}),
     ...(flags.has('max') ? { max: Number(flags.get('max')) } : {}),
   })
+  recordSize(dump.window) // UIA 좌표도 좌표의 기준이다
 
   const q = queryFrom(flags)
   const shown = q === undefined ? dump.nodes : findNodes(dump.nodes, q)

@@ -53,6 +53,7 @@ internal static class V
     [DllImport("user32.dll")] public static extern bool SetWindowDisplayAffinity(IntPtr hwnd, uint affinity);
     [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
     [DllImport("user32.dll")] public static extern IntPtr GetWindow(IntPtr hwnd, uint cmd);
+    [DllImport("user32.dll")] public static extern bool IsZoomed(IntPtr hwnd);
     [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr hwnd);
     [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint pid);
     [DllImport("user32.dll", EntryPoint = "GetWindowLongW")] public static extern int GetWindowLong(IntPtr hwnd, int index);
@@ -291,6 +292,17 @@ internal static partial class Program
         public bool Halted;
         public int StepsDone = -1;
         public bool HaltNow() { return HaltFile != null && File.Exists(HaltFile); }
+        /// 좌표의 기준이 된 창 크기 (--expect-size w,h, 2026-11-17). 마우스 입력 전과 끌기·이동 단계마다 지금 크기와 견주고,
+        /// 다르면 넣지 않거나 끊는다 — 사람이 그사이 창 크기를 바꾸면 같은 좌표에 다른 것이 있다
+        public int ExpectW = -1, ExpectH = -1;
+        public bool Resized;
+        public bool SizeChanged()
+        {
+            if (ExpectW < 0) return false;
+            N.RECT r;
+            if (!Program.RectOf(W.Hwnd, out r)) return false;
+            return r.Right - r.Left != ExpectW || r.Bottom - r.Top != ExpectH;
+        }
     }
 
     private static string VInit(Dictionary<string, string> a, out VCtx ctx)
@@ -299,7 +311,14 @@ internal static partial class Program
         var wins = Filter(Enumerate(), a);
         if (wins.Count == 0) return "조건에 맞는 창을 찾지 못했다.";
         ctx = new VCtx { W = wins[0], Ctrl = a.ContainsKey("ctrl"), Shift = a.ContainsKey("shift"), Alt = a.ContainsKey("alt"), HaltFile = Get(a, "halt-file"), TestCapsOn = a.ContainsKey("test-caps-on") };
+        string es = Get(a, "expect-size");
+        if (es != null)
+        {
+            var p = es.Split(',');
+            if (p.Length != 2 || !int.TryParse(p[0], out ctx.ExpectW) || !int.TryParse(p[1], out ctx.ExpectH)) return "--expect-size 는 너비,높이 다: " + es;
+        }
         if (ctx.HaltNow()) { ctx.Halted = true; ctx.StepsDone = 0; }
+        else if (ctx.SizeChanged()) { ctx.Resized = true; ctx.StepsDone = 0; }
         else NotifyActive(ctx.W);
         N.GetCursorPos(out ctx.CursorBefore);
         ctx.FgBefore = N.GetForegroundWindow().ToInt64();
@@ -365,7 +384,7 @@ internal static partial class Program
     {
         N.POINT after;
         N.GetCursorPos(out after);
-        if (!c.Halted) NotifyActive(c.W);
+        if (!c.Halted && !c.Resized) NotifyActive(c.W);
         var sb = new StringBuilder();
         sb.Append("{\"ok\":true,\"op\":"); AppendStr(sb, op);
         if (h != null)
@@ -387,6 +406,7 @@ internal static partial class Program
         sb.Append(",\"modsApplied\":").Append(modsApplied ? "true" : "false");
         sb.Append(",\"frame\":").Append(c.Frame ? "true" : "false");
         if (c.Halted) sb.Append(",\"halted\":true,\"stepsDone\":").Append(c.StepsDone);
+        else if (c.Resized) sb.Append(",\"resized\":true,\"stepsDone\":").Append(c.StepsDone);
         sb.Append(",\"window\":"); AppendWin(sb, c.W);
         sb.Append('}');
         Console.Out.Write(sb.ToString());
@@ -400,7 +420,7 @@ internal static partial class Program
         VCtx c;
         string err = VInit(a, out c);
         if (err != null) return Fail(err);
-        if (c.Halted) return VReply(c, "click", 0, 0, 0, 0, null, false); // 사람이 멈춤 — 입력하지 않는다
+        if (c.Halted || c.Resized) return VReply(c, "click", 0, 0, 0, 0, null, false); // 사람이 멈춤·창 크기가 바뀜 — 입력하지 않는다
         int x, y;
         err = Point(a, "x", "y", c.W, out x, out y);
         if (err != null) return Fail(err);
@@ -443,7 +463,7 @@ internal static partial class Program
         VCtx c;
         string err = VInit(a, out c);
         if (err != null) return Fail(err);
-        if (c.Halted) return VReply(c, "drag", 0, 0, 0, 0, null, false); // 사람이 멈춤 — 입력하지 않는다
+        if (c.Halted || c.Resized) return VReply(c, "drag", 0, 0, 0, 0, null, false); // 사람이 멈춤·창 크기가 바뀜 — 입력하지 않는다
         int x, y, tx, ty;
         err = Point(a, "x", "y", c.W, out x, out y);
         if (err != null) return Fail(err);
@@ -477,6 +497,7 @@ internal static partial class Program
             {
                 // 사람이 멈추면 다음 단계에서 끊는다 — 아래에서 지금 자리에서 버튼을 뗀다
                 if (c.HaltNow()) { c.Halted = true; c.StepsDone = i - 1; break; }
+                if (c.SizeChanged()) { c.Resized = true; c.StepsDone = i - 1; break; } // 창 크기가 바뀜 — 지금 자리에서 뗀다
                 int px = sx + (int)Math.Round((double)(tx - x) * i / steps);
                 int py = sy + (int)Math.Round((double)(ty - y) * i / steps);
                 int cx, cy; uint wd, md;
@@ -497,7 +518,7 @@ internal static partial class Program
         VCtx c;
         string err = VInit(a, out c);
         if (err != null) return Fail(err);
-        if (c.Halted) return VReply(c, "wheel", 0, 0, 0, 0, null, false); // 사람이 멈춤 — 입력하지 않는다
+        if (c.Halted || c.Resized) return VReply(c, "wheel", 0, 0, 0, 0, null, false); // 사람이 멈춤·창 크기가 바뀜 — 입력하지 않는다
         int x, y, delta;
         err = Point(a, "x", "y", c.W, out x, out y);
         if (err != null) return Fail(err);
@@ -526,7 +547,7 @@ internal static partial class Program
         VCtx c;
         string err = VInit(a, out c);
         if (err != null) return Fail(err);
-        if (c.Halted) return VReply(c, "move", 0, 0, 0, 0, null, false); // 사람이 멈춤 — 입력하지 않는다
+        if (c.Halted || c.Resized) return VReply(c, "move", 0, 0, 0, 0, null, false); // 사람이 멈춤·창 크기가 바뀜 — 입력하지 않는다
         int x, y;
         err = Point(a, "x", "y", c.W, out x, out y);
         if (err != null) return Fail(err);
@@ -546,6 +567,7 @@ internal static partial class Program
         for (int i = hasFrom ? 0 : steps; i <= steps; i++)
         {
             if (c.HaltNow()) { c.Halted = true; c.StepsDone = i; break; }
+            if (c.SizeChanged()) { c.Resized = true; c.StepsDone = i; break; }
             int px = fx + (int)Math.Round((double)(x - fx) * i / steps);
             int py = fy + (int)Math.Round((double)(y - fy) * i / steps);
             sx = c.W.Rect.Left + px; sy = c.W.Rect.Top + py;
@@ -788,6 +810,8 @@ internal sealed class FrameForm : Form
     private readonly CursorForm mCursor;
     private float mScale = 1f;
     private Rectangle mRect = Rectangle.Empty;
+    /// 막을 창 자리 — 대상 창 + 크기 조절 띠(보이지 않는 바깥 테두리), 모니터 안. 최대화면 mRect (2026-11-17)
+    private Rectangle mBlockRect = Rectangle.Empty;
     private bool mDirty = true;
     public string EndReason = "stop";
 
@@ -868,6 +892,17 @@ internal sealed class FrameForm : Form
             catch (DllNotFoundException) { }
         }
         if (b != mRect) { mRect = b; mDirty = true; }
+        // 작업 중에는 사람이 테두리를 끌어 창 크기를 못 바꾸게 막을 창을 크기 조절 띠까지 넓힌다 (2026-11-17 사용자).
+        // 최대화면 띠가 없고 GetWindowRect 가 모니터 밖·작업 표시줄로 8px 나가므로 보이는 사각형 그대로 둔다
+        var outer = b;
+        N.RECT wr;
+        if (!V.IsZoomed(mTarget.Hwnd) && N.GetWindowRect(mTarget.Hwnd, out wr))
+        {
+            var o = Rectangle.FromLTRB(wr.Left, wr.Top, wr.Right, wr.Bottom);
+            if (mon != IntPtr.Zero && V.GetMonitorInfo(mon, ref mi)) o = Rectangle.Intersect(o, Rectangle.FromLTRB(mi.rcMonitor.Left, mi.rcMonitor.Top, mi.rcMonitor.Right, mi.rcMonitor.Bottom));
+            if (o.Width > 0 && o.Height > 0) outer = Rectangle.Union(o, b);
+        }
+        if (outer != mBlockRect) { mBlockRect = outer; mBlock.Place(outer); }
     }
 
     private void Tick()
@@ -1012,7 +1047,7 @@ internal sealed class FrameForm : Form
         if (Bounds != mRect) Bounds = mRect;
         using (var bmp = BuildGlow(mRect.Width, mRect.Height, mScale)) Layered.Push(this, bmp, mRect.Location, 255);
         RenderEdge();
-        mBlock.Place(mRect);
+        mBlock.Place(mBlockRect.IsEmpty ? mRect : mBlockRect);
         mCursor.SetScale(mScale);
         mDirty = false;
     }
